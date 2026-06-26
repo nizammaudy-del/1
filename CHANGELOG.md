@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+<<<<<<< pr/503-proactive-expansion-xml-tag
+### Fixed
+- Proactive expansion blocks injected into user turns are now wrapped in
+  `<headroom_proactive_expansion>` XML tags, giving downstream consumers
+  (LLMs, loggers, attribution parsers) a machine-readable provenance
+  boundary and preventing misattribution in multi-agent threads.
+
+=======
+>>>>>>> main
 ### Changed
 
 * **telemetry:** anonymous usage telemetry is now **opt-in** (off by default) instead of opt-out. Nothing is collected or sent unless you set `HEADROOM_TELEMETRY=on` or pass `--telemetry` to `headroom proxy` / `headroom install apply`. `is_telemetry_enabled()` is fail-closed — only explicit on-values (`on`/`true`/`1`/`yes`/`enable`/`enabled`) enable it; unset, empty, or unrecognized values stay disabled. The existing `--no-telemetry` flag and `HEADROOM_TELEMETRY=off` remain accepted for back-compat, and install manifests now write the `HEADROOM_TELEMETRY` value explicitly so generated deployments are unambiguous.
