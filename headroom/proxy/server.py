@@ -3791,6 +3791,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
         Request body:
             hash (str): Hash key from compression marker (required)
+            query (str): Optional targeted search query for a concrete gap
 
         Response:
             {"hash": "...", "original_content": "...", ...}
