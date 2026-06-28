@@ -3406,15 +3406,12 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
         Request body:
             hash (str): Hash key from compression marker (required)
-            query (str): Optional search query to filter results
 
         Response:
-            Full retrieval: {"hash": "...", "original_content": "...", ...}
-            Search: {"hash": "...", "query": "...", "results": [...], "count": N}
+            {"hash": "...", "original_content": "...", ...}
         """
         data = await request.json()
         hash_key = data.get("hash")
-        query = data.get("query")
 
         if not hash_key:
             raise HTTPException(status_code=400, detail="hash required")
@@ -3428,36 +3425,24 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 detail=format_retrieval_miss_detail(entry_status),
             )
 
-        if query:
-            # Search within cached content. The get_entry_status check above
-            # (clean_expired=True) already guaranteed availability or raised
-            # 404, so no second exists()/status backend read is needed here.
-            results = store.search(hash_key, query)
+        # Retrieval is by hash: always return the full original content.
+        entry = store.retrieve(hash_key)
+        if entry:
             return {
                 "hash": hash_key,
-                "query": query,
-                "results": results,
-                "count": len(results),
+                "original_content": entry.original_content,
+                "original_tokens": entry.original_tokens,
+                "original_item_count": entry.original_item_count,
+                "compressed_item_count": entry.compressed_item_count,
+                "tool_name": entry.tool_name,
+                "retrieval_count": entry.retrieval_count,
             }
-        else:
-            # Return full original content
-            entry = store.retrieve(hash_key)
-            if entry:
-                return {
-                    "hash": hash_key,
-                    "original_content": entry.original_content,
-                    "original_tokens": entry.original_tokens,
-                    "original_item_count": entry.original_item_count,
-                    "compressed_item_count": entry.compressed_item_count,
-                    "tool_name": entry.tool_name,
-                    "retrieval_count": entry.retrieval_count,
-                }
-            raise HTTPException(
-                status_code=404,
-                detail=format_retrieval_miss_detail(
-                    store.get_entry_status(hash_key, clean_expired=True)
-                ),
-            )
+        raise HTTPException(
+            status_code=404,
+            detail=format_retrieval_miss_detail(
+                store.get_entry_status(hash_key, clean_expired=True)
+            ),
+        )
 
     @app.get("/v1/retrieve/stats", dependencies=[Depends(_require_loopback)])
     async def ccr_stats():
@@ -3739,7 +3724,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         )
 
     @app.get("/v1/retrieve/{hash_key}", dependencies=[Depends(_require_loopback)])
-    async def ccr_retrieve_get(hash_key: str, query: str | None = None):
+    async def ccr_retrieve_get(hash_key: str):
         """GET version of CCR retrieve for easier testing."""
         store = get_compression_store()
         entry_status = store.get_entry_status(hash_key, clean_expired=True)
@@ -3750,32 +3735,24 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 detail=format_retrieval_miss_detail(entry_status),
             )
 
-        if query:
-            results = store.search(hash_key, query)
+        # Retrieval is by hash: always return the full original content.
+        entry = store.retrieve(hash_key)
+        if entry:
             return {
                 "hash": hash_key,
-                "query": query,
-                "results": results,
-                "count": len(results),
+                "original_content": entry.original_content,
+                "original_tokens": entry.original_tokens,
+                "original_item_count": entry.original_item_count,
+                "compressed_item_count": entry.compressed_item_count,
+                "tool_name": entry.tool_name,
+                "retrieval_count": entry.retrieval_count,
             }
-        else:
-            entry = store.retrieve(hash_key)
-            if entry:
-                return {
-                    "hash": hash_key,
-                    "original_content": entry.original_content,
-                    "original_tokens": entry.original_tokens,
-                    "original_item_count": entry.original_item_count,
-                    "compressed_item_count": entry.compressed_item_count,
-                    "tool_name": entry.tool_name,
-                    "retrieval_count": entry.retrieval_count,
-                }
-            raise HTTPException(
-                status_code=404,
-                detail=format_retrieval_miss_detail(
-                    store.get_entry_status(hash_key, clean_expired=True)
-                ),
-            )
+        raise HTTPException(
+            status_code=404,
+            detail=format_retrieval_miss_detail(
+                store.get_entry_status(hash_key, clean_expired=True)
+            ),
+        )
 
     # CCR Tool Call Handler - for agent frameworks to call when LLM uses headroom_retrieve
     @app.post("/v1/retrieve/tool_call", dependencies=[Depends(_require_loopback)])
@@ -3791,7 +3768,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 "tool_call": {
                     "id": "toolu_123",
                     "name": "headroom_retrieve",
-                    "input": {"hash": "abc123", "query": "optional search"}
+                    "input": {"hash": "abc123"}
                 },
                 "provider": "anthropic"
             }
@@ -3820,7 +3797,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         provider = data.get("provider", "anthropic")
 
         # Parse the tool call
-        hash_key, query = parse_tool_call(tool_call, provider)
+        hash_key = parse_tool_call(tool_call, provider)
 
         if hash_key is None:
             raise HTTPException(
@@ -3838,15 +3815,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 "status": entry_status["status"],
                 "ttl_seconds": entry_status.get("ttl_seconds", entry_status["default_ttl_seconds"]),
             }
-        elif query:
-            results = store.search(hash_key, query)
-            retrieval_data = {
-                "hash": hash_key,
-                "query": query,
-                "results": results,
-                "count": len(results),
-            }
         else:
+            # Retrieval is by hash: always return the full original content.
             entry = store.retrieve(hash_key)
             if entry:
                 retrieval_data = {
