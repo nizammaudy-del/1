@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import contextlib
+import hmac
 import json
 import logging
 import os
@@ -90,6 +91,7 @@ from headroom.observability import (
     shutdown_headroom_tracing,
     shutdown_otel_metrics,
 )
+from headroom.offline import apply_offline_env, is_offline
 from headroom.pipeline import PipelineExtensionManager, PipelineStage
 from headroom.providers.proxy_routes import register_provider_routes
 from headroom.providers.registry import (
@@ -104,6 +106,7 @@ from headroom.providers.registry import (
     resolve_api_targets,
 )
 from headroom.proxy import runtime_env
+from headroom.proxy.audit import is_auditable_path, record_admin_action
 from headroom.proxy.auth_mode import should_stamp_codex_client
 from headroom.proxy.background_compression import BackgroundCompressor
 
@@ -134,6 +137,7 @@ from headroom.proxy.helpers import (
     jitter_delay_ms,
     retry_after_ms,
 )
+from headroom.proxy.loopback_guard import is_loopback_host
 from headroom.proxy.memory_handler import MemoryConfig, MemoryHandler
 
 # Data models (extracted to headroom/proxy/models.py for maintainability)
@@ -1073,9 +1077,11 @@ class HeadroomProxy(
                     "hint=bridge_syncs_only_the_legacy_DB_today_per-project_bridge_follow-up_planned"
                 )
 
-        # Usage Reporter (license validation + phone-home for managed/enterprise)
+        # Usage Reporter (license validation + phone-home for managed/enterprise).
+        # Suppressed entirely in offline mode — the air-gap switch must stop all
+        # egress, including license phone-home, even when a key is configured.
         self.usage_reporter: UsageReporter | None = None
-        if config.license_key:
+        if config.license_key and not (config.offline or is_offline()):
             from headroom.telemetry.reporter import UsageReporter
 
             self.usage_reporter = UsageReporter(
@@ -1876,6 +1882,20 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     _setup_file_logging()
 
     config = config or ProxyConfig()
+
+    # Air-gap master switch. Propagate config.offline to the env so the
+    # env-based egress predicates (telemetry, update check, license) all honor
+    # it, force HF/transformers offline before any model code loads, and
+    # announce that every outbound path is disabled.
+    if config.offline:
+        os.environ.setdefault("HEADROOM_OFFLINE", "1")
+    if is_offline():
+        apply_offline_env()
+        logger.warning(
+            "event=proxy_offline_mode air-gap active — all outbound egress disabled "
+            "(telemetry, update check, license reporter, HuggingFace downloads)"
+        )
+
     proxy = HeadroomProxy(config)
 
     # cc-switch reconciler (opt-in: HEADROOM_CC_SWITCH_RECONCILE=1).
@@ -2462,6 +2482,86 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         )
         return response
 
+    # ── Security gate (registered last → runs outermost) ──────────────────
+    # Three concerns, kept together because they all wrap every inbound
+    # request: optional inbound auth on the data plane, response security
+    # headers, and an audit trail for state-mutating admin endpoints.
+    _proxy_token = config.proxy_token or os.environ.get("HEADROOM_PROXY_TOKEN") or None
+    # Pre-encode once for constant-time comparison (compare_digest on str raises
+    # TypeError for non-ASCII input, which would turn a 401 into a 500).
+    _proxy_token_bytes = _proxy_token.encode("utf-8") if _proxy_token else b""
+    # Health/readiness probes must stay reachable without a token so
+    # orchestrators can check a container that binds non-loopback.
+    _AUTH_EXEMPT_PATHS = frozenset({"/health", "/healthz", "/livez", "/readyz"})
+
+    # Loud warning when a non-loopback bind has no token configured: that is the
+    # exact shape (e.g. the Docker 0.0.0.0 image) that exposes unauthenticated
+    # /v1/* routes to the surrounding network.
+    if not _proxy_token and not is_loopback_host(getattr(config, "host", None)):
+        logger.warning(
+            "event=proxy_open_bind host=%s — proxy is bound to a non-loopback "
+            "interface with no HEADROOM_PROXY_TOKEN set; the /v1/* data-plane "
+            "routes are reachable WITHOUT authentication. Set HEADROOM_PROXY_TOKEN "
+            "to require a bearer token from non-loopback callers.",
+            getattr(config, "host", None),
+        )
+
+    def _apply_security_headers(response) -> None:
+        # setdefault: never clobber a header an upstream/handler already set.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+
+    def _extract_proxy_token(headers) -> str | None:
+        auth = str(headers.get("authorization") or "")
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip() or None
+        raw = headers.get("x-headroom-proxy-token")
+        return str(raw) if raw else None
+
+    @app.middleware("http")
+    async def _security_gate(request, call_next):
+        # 1) Optional inbound auth. When a token is configured, require it on
+        #    non-loopback requests; loopback callers and health probes are
+        #    exempt. Loopback is the same trust boundary the admin/debug
+        #    endpoints already use (see loopback_guard).
+        if _proxy_token:
+            path = request.url.path
+            client = getattr(request, "client", None)
+            client_host = getattr(client, "host", None) if client is not None else None
+            if path not in _AUTH_EXEMPT_PATHS and not is_loopback_host(client_host):
+                provided = _extract_proxy_token(request.headers)
+                if provided is None or not hmac.compare_digest(
+                    provided.encode("utf-8", "replace"), _proxy_token_bytes
+                ):
+                    logger.warning(
+                        "event=proxy_auth_rejected path=%s client=%s reason=%s",
+                        path,
+                        client_host,
+                        "missing_token" if provided is None else "bad_token",
+                    )
+                    rejection = JSONResponse(status_code=401, content={"error": "unauthorized"})
+                    _apply_security_headers(rejection)
+                    return rejection
+
+        response = await call_next(request)
+        _apply_security_headers(response)
+
+        # 2) Audit trail for admin / state-mutating endpoints.
+        try:
+            if is_auditable_path(request.url.path):
+                record_admin_action(
+                    request=request,
+                    action="admin_request",
+                    status_code=response.status_code,
+                )
+        except Exception:
+            logger.debug("admin audit emission failed", exc_info=True)
+        return response
+
     # Third-party proxy extensions (Enterprise, custom plugins). Discovered via
     # the `headroom.proxy_extension` entry-point group, but **opt-in only**:
     # only names listed in config.proxy_extensions (CLI: --proxy-extension,
@@ -2582,6 +2682,16 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         applied = runtime_env.set_overrides(body)
         if applied:
             logger.info("runtime-env hot-reload applied: %s", sorted(applied))
+            # Record which runtime-env keys changed (the "what" of a config
+            # change) in addition to the generic admin-request audit emitted by
+            # the security middleware. Values are intentionally omitted — keys
+            # alone avoid logging any secret values that were set.
+            record_admin_action(
+                request=request,
+                action="runtime_env_update",
+                status_code=200,
+                details={"changed_keys": sorted(applied)},
+            )
         return JSONResponse(
             status_code=200,
             content={"applied": applied, "runtime_env": runtime_env.effective_runtime_env()},
@@ -3931,6 +4041,8 @@ def _proxy_config_from_env() -> ProxyConfig:
         keepalive_expiry=_get_env_float("HEADROOM_KEEPALIVE_EXPIRY", 90.0),
         http2=_get_env_bool("HEADROOM_HTTP2", True),
         periodic_toin_stats_enabled=_get_env_bool("HEADROOM_PERIODIC_TOIN_STATS", True),
+        proxy_token=os.environ.get("HEADROOM_PROXY_TOKEN") or None,
+        offline=_get_env_bool("HEADROOM_OFFLINE", False),
         mode=normalize_proxy_mode(_get_env_str("HEADROOM_MODE", PROXY_MODE_TOKEN)),
         read_maturation=_get_env_bool("HEADROOM_READ_MATURATION", False),
         read_maturation_quiesce_turns=_get_env_int("HEADROOM_READ_MATURATION_QUIESCE_TURNS", 5),
