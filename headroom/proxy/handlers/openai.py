@@ -6152,10 +6152,18 @@ class OpenAIHandlerMixin:
             if protect_analysis_context is not None:
                 pipeline_kwargs["protect_analysis_context"] = bool(protect_analysis_context)
 
-            result = self.openai_pipeline.apply(
-                messages=messages,
-                model=model,
-                **pipeline_kwargs,
+            # Offload the CPU-bound pipeline to the bounded compression executor
+            # (mirrors the request handlers above). Running apply() inline blocked
+            # the single event loop on a large payload, so even GET /health stalled
+            # until it finished (#718). The executor also enforces a timeout so a
+            # too-large body fails fast instead of hanging forever.
+            result = await self._run_compression_in_executor(
+                lambda: self.openai_pipeline.apply(
+                    messages=messages,
+                    model=model,
+                    **pipeline_kwargs,
+                ),
+                timeout=COMPRESSION_TIMEOUT_SECONDS,
             )
 
             return JSONResponse(
@@ -6173,6 +6181,23 @@ class OpenAIHandlerMixin:
                     "transforms_summary": result.transforms_summary,
                     "ccr_hashes": result.markers_inserted,
                 }
+            )
+        except TimeoutError:
+            logger.warning(
+                "Compression timed out after %.0fs (payload too large)",
+                COMPRESSION_TIMEOUT_SECONDS,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "type": "compression_timeout",
+                        "message": (
+                            "Compression exceeded "
+                            f"{COMPRESSION_TIMEOUT_SECONDS:.0f}s; payload too large."
+                        ),
+                    }
+                },
             )
         except Exception as e:
             logger.exception("Compression failed: %s", e)
