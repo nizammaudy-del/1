@@ -1519,15 +1519,18 @@ class HeadroomProxy(
                 "(set GITHUB_TOKEN or GITHUB_COPILOT_GITHUB_TOKEN to enable)"
             )
 
-        # Log anonymous telemetry status so operators can see it in the log stream
+        # Log local telemetry status so operators can see it in the log stream.
+        # Nothing is sent externally — telemetry is collected locally only (the
+        # anonymous telemetry beacon was removed); operational metrics export
+        # only to your own OTEL collector via HEADROOM_OTEL_METRICS_*.
         if is_telemetry_enabled():
             logger.info(
-                "Anonymous telemetry: ENABLED (aggregate stats only — no prompts or content). "
-                "Opt out: HEADROOM_TELEMETRY=off or --no-telemetry"
+                "Local telemetry: ENABLED (aggregate stats, local only — nothing sent "
+                "externally). Opt out: HEADROOM_TELEMETRY=off or --no-telemetry"
             )
         else:
             logger.info(
-                "Anonymous telemetry: DISABLED (off by default — opt in: "
+                "Local telemetry: DISABLED (off by default — opt in: "
                 "HEADROOM_TELEMETRY=on or --telemetry)"
             )
 
@@ -1901,21 +1904,10 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             set_upstream=_set_anthropic_upstream,
         )
 
-    # Telemetry beacon (anonymous aggregate stats).
-    # With uvicorn workers > 1, each worker runs the lifespan independently.
-    # We must ensure only ONE beacon runs across all workers — otherwise each
-    # worker creates its own beacon, spamming the telemetry table with N rows
-    # per cycle instead of 1 (all reading the same /stats from the same port).
-    #
-    # Strategy: use a file lock to ensure only the first worker starts the
-    # beacon. Other workers see the lock and skip.
-    from headroom.telemetry.beacon import TelemetryBeacon
-
-    _beacon = TelemetryBeacon(
-        port=config.port if hasattr(config, "port") else 8787,
-        sdk=os.environ.get("HEADROOM_SDK", "proxy").strip() or "proxy",
-        backend=config.backend if hasattr(config, "backend") else "anthropic",
-    )
+    # Single-worker-owner lock. With uvicorn workers > 1, each worker runs the
+    # lifespan independently. A file lock elects ONE owner worker so that
+    # single-instance background tasks (currently the cc-switch reconciler) run
+    # once across all workers instead of N times.
     from headroom import paths as _hr_paths
 
     _beacon_lock_path = _hr_paths.beacon_lock_path(config.port)
@@ -1996,19 +1988,14 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 if proxy._background_compression_enabled:
                     await proxy._background_compressor.start()
 
-                # Only start beacon if we acquire the lock (first worker wins)
+                # Elect the single owner worker (first worker wins the lock).
                 _beacon_is_owner[0] = _try_acquire_beacon_lock()
-                if _beacon_is_owner[0]:
-                    await _beacon.start()
-                else:
-                    logger.debug("Beacon: skipping (another worker owns the lock)")
 
-                # Only the beacon-lock owner runs the reconciler. With
-                # uvicorn workers > 1 each worker runs this lifespan; without
-                # this guard every worker would watch + rewrite settings.json
-                # concurrently and each process would hold its own
-                # HeadroomProxy.ANTHROPIC_API_URL, so workers could disagree on
-                # the upstream. Single-owner mirrors the beacon's reasoning.
+                # Only the owner worker runs the reconciler. With uvicorn
+                # workers > 1 each worker runs this lifespan; without this guard
+                # every worker would watch + rewrite settings.json concurrently
+                # and each process would hold its own HeadroomProxy.ANTHROPIC_API_URL,
+                # so workers could disagree on the upstream.
                 if _cc_reconciler is not None and _beacon_is_owner[0]:
                     await _cc_reconciler.start()
 
@@ -2023,7 +2010,6 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             if _cc_reconciler is not None:
                 await _cc_reconciler.stop()
             if _beacon_is_owner[0]:
-                await _beacon.stop()
                 _release_beacon_lock()
             if proxy.usage_reporter:
                 await proxy.usage_reporter.stop()
@@ -3097,7 +3083,9 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 "ccr_retrievals": compression_stats.get("total_retrievals", 0),
             },
             "compression_cache": compression_cache_stats,
-            "anon_telemetry_shipping": is_telemetry_enabled(),
+            # Always False: the anonymous telemetry beacon was removed, so no
+            # telemetry is ever shipped externally (local collection only).
+            "anon_telemetry_shipping": False,
             "telemetry": {
                 "enabled": telemetry_stats.get("enabled", False),
                 "total_compressions": telemetry_stats.get("total_compressions", 0),

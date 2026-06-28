@@ -900,11 +900,9 @@ class PrometheusMetrics:
             # internally on `self.compressions_by_strategy` and
             # `self.tokens_saved_by_strategy` (populated by
             # `record_compression`) but **deliberately not exported
-            # here**. The proxy's metric→Supabase pipeline treats
-            # each metric name as a column, and we cannot add new
-            # columns. The state is still observable for tests +
-            # programmatic introspection; if/when a non-column-
-            # adding export path exists, surface it there.
+            # here** as individual Prometheus series. The state is
+            # still observable via /stats + tests + programmatic
+            # introspection.
             _append_metric(
                 lines,
                 name="headroom_latency_ms_sum",
