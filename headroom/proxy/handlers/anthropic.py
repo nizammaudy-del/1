@@ -1050,6 +1050,8 @@ class AnthropicHandlerMixin:
                     def should_skip_ccr_request_compression(
                         current_frozen_message_count: int,
                     ) -> bool:
+                        if is_token_mode(self.config.mode):
+                            return False
                         # If the tool is already present, CCR stays reversible even on frozen turns.
                         return (
                             self.config.ccr_inject_tool
