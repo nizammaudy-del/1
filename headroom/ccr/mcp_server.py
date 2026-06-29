@@ -455,15 +455,17 @@ class HeadroomMCPServer:
     async def _retrieve_content(
         self,
         hash_key: str,
+        query: str | None = None,
     ) -> dict[str, Any]:
         """Retrieve content by hash. Checks local store first, then proxy.
 
         Retrieval is by hash and always returns the full original content.
+        Query is feedback context, not a filter.
         """
         # Check local store first
         store = self._get_local_store()
         entry_status = store.get_entry_status(hash_key, clean_expired=False)
-        entry = store.retrieve(hash_key)
+        entry = store.retrieve(hash_key, query=query)
         expired_entry_status = None
         if entry:
             self._stats.record_retrieval(hash_key)
@@ -492,7 +494,7 @@ class HeadroomMCPServer:
         # Fall back to proxy if available
         if self.check_proxy and HTTPX_AVAILABLE:
             try:
-                result = await self._retrieve_via_proxy(hash_key)
+                result = await self._retrieve_via_proxy(hash_key, query=query)
                 if "error" not in result:
                     result["source"] = "proxy"
                     self._stats.record_retrieval(hash_key)
@@ -533,6 +535,7 @@ class HeadroomMCPServer:
     async def _retrieve_via_proxy(
         self,
         hash_key: str,
+        query: str | None = None,
     ) -> dict[str, Any]:
         """Retrieve full content by hash via proxy's HTTP endpoint."""
         if self._http_client is None:
@@ -540,6 +543,8 @@ class HeadroomMCPServer:
 
         url = f"{self.proxy_url}/v1/retrieve"
         payload: dict[str, str] = {"hash": hash_key}
+        if query:
+            payload["query"] = query
 
         response = await self._http_client.post(url, json=payload)
 
@@ -818,7 +823,8 @@ class HeadroomMCPServer:
             ]
 
         logger.info("event=mcp_retrieve_started hash=%s", hash_key)
-        result = await self._retrieve_content(hash_key)
+        query = arguments.get("query")
+        result = await self._retrieve_content(hash_key, query=query)
         logger.info(
             "event=mcp_retrieve_completed hash=%s result=%s",
             hash_key,
