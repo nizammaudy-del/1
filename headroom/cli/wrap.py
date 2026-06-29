@@ -5394,7 +5394,10 @@ def opencode(
     if not no_serena:
         from headroom.mcp_registry import OpencodeRegistrar
 
-        _setup_serena_mcp(OpencodeRegistrar(), context="opencode", verbose=verbose, force=True)
+        # Serena ships no "opencode" context (only agent/codex/claude-code/ide/…);
+        # passing --context opencode crashes Serena on launch (#1549/#1572). Use
+        # the generic "agent" context, which OpenCode is.
+        _setup_serena_mcp(OpencodeRegistrar(), context="agent", verbose=verbose, force=True)
     else:
         from headroom.mcp_registry import OpencodeRegistrar
 
