@@ -2922,7 +2922,8 @@ class OpenAIHandlerMixin:
 
         from headroom.proxy.helpers import (
             MAX_REQUEST_BODY_SIZE,
-            _read_request_json,
+            BodyMutationTracker,
+            read_request_json_with_bytes,
         )
         from headroom.tokenizers import get_tokenizer
         from headroom.utils import extract_user_query
@@ -2954,7 +2955,7 @@ class OpenAIHandlerMixin:
 
         # Parse request
         try:
-            body = await _read_request_json(request)
+            body, original_body_bytes = await read_request_json_with_bytes(request)
         except (json.JSONDecodeError, ValueError) as e:
             return JSONResponse(
                 status_code=400,
@@ -2969,6 +2970,7 @@ class OpenAIHandlerMixin:
 
         model = body.get("model", "unknown")
         stream = body.get("stream", False)
+        body_mutation_tracker = BodyMutationTracker()
         _bypass = self._headroom_bypass_enabled(request.headers)
         if _bypass:
             logger.info(
@@ -3009,6 +3011,10 @@ class OpenAIHandlerMixin:
         headers = dict(request.headers.items())
         headers.pop("host", None)
         headers.pop("content-length", None)
+        # The parsed request body has already been content-decoded. Remove
+        # entity headers that described the client-to-proxy wire body.
+        headers.pop("content-encoding", None)
+        headers.pop("transfer-encoding", None)
         # Strip accept-encoding so httpx negotiates its own encoding.
         # Cloudflare Workers forward "br, zstd" which OpenAI may honor;
         # if httpx lacks brotli support the response body is undecipherable → 502.
@@ -3195,6 +3201,7 @@ class OpenAIHandlerMixin:
                                     if current_input
                                     else memory_context
                                 )
+                                body_mutation_tracker.mark_mutated("responses_memory_context")
                                 log_memory_injection(
                                     request_id=request_id,
                                     session_id=None,
@@ -3208,6 +3215,7 @@ class OpenAIHandlerMixin:
                                 )
                                 if bytes_appended > 0:
                                     body["input"] = new_input
+                                    body_mutation_tracker.mark_mutated("responses_memory_context")
                                     log_memory_injection(
                                         request_id=request_id,
                                         session_id=None,
@@ -3272,12 +3280,14 @@ class OpenAIHandlerMixin:
                 )
                 if mem_tools_injected:
                     body["tools"] = resp_tools
+                    body_mutation_tracker.mark_mutated("responses_memory_tools")
                     logger.info(f"[{request_id}] Memory: Injected memory tools (openai/responses)")
 
                     if _ensure_responses_store_for_memory_tools(
                         body,
                         memory_tools_injected=True,
                     ):
+                        body_mutation_tracker.mark_mutated("responses_memory_store")
                         logger.info(
                             f"[{request_id}] Memory: forced store=true for Responses memory tool continuation"
                         )
@@ -3343,6 +3353,7 @@ class OpenAIHandlerMixin:
                 )
                 attempted_input_tokens = int(_attempted_tokens)
                 if _modified:
+                    body_mutation_tracker.mark_mutated("responses_compression")
                     tokens_saved = int(_tokens_saved)
                     optimized_tokens = max(0, original_tokens - tokens_saved)
                     transforms_applied = [*_transforms, *list(transforms_applied)]
@@ -3468,11 +3479,25 @@ class OpenAIHandlerMixin:
                     optimization_latency,
                     memory_user_id=memory_user_id,
                     memory_request_ctx=memory_request_ctx,
+                    original_body_bytes=original_body_bytes,
+                    body_mutated=body_mutation_tracker.mutated,
+                    mutation_reasons=body_mutation_tracker.reasons,
                     waste_signals=waste_signals_dict,
                 )
             else:
                 headers = await apply_copilot_api_auth(headers, url=url)
-                response = await self._retry_request("POST", url, headers, body)
+                response = await self._retry_request(
+                    "POST",
+                    url,
+                    headers,
+                    body,
+                    original_body_bytes=original_body_bytes,
+                    body_mutated=body_mutation_tracker.mutated,
+                    mutation_reasons=body_mutation_tracker.reasons,
+                    request_id=request_id,
+                    forwarder_name="openai_responses",
+                    path_for_log=url,
+                )
                 _response_body_for_debug: Any = None
                 _response_raw_for_debug: str | None = None
                 try:
