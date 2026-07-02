@@ -16,6 +16,7 @@ from headroom.transforms.content_router import (
     _create_content_signature,
     _detect_content,
     _extract_json_block,
+    _strip_detection_envelope,
     is_mixed_content,
     split_into_sections,
 )
@@ -989,3 +990,37 @@ def test_detect_content_circuit_breaker_skips_native_after_hang(
         assert calls == 1  # breaker tripped: native entered once, 2nd call skipped it
     finally:
         release.set()  # let the lone daemon worker finish
+
+
+def test_strip_detection_envelope_isolates_tool_output_payload() -> None:
+    """Only a whole-string tool-output envelope is unwrapped; content that
+    merely mentions the tags, or has an empty body, is left untouched."""
+    body = "def main():\n    return 1"
+    wrapped = f"<returncode>0</returncode>\n<output>\n{body}\n</output>"
+    assert _strip_detection_envelope(wrapped) == body
+    # <output> alias tags and a bare envelope (no returncode) also unwrap.
+    assert _strip_detection_envelope(f"<stdout>\n{body}\n</stdout>") == body
+    # Non-envelope content is returned verbatim (no "<" fast-path + no match).
+    prose = "see the <output> tag docs for details"
+    assert _strip_detection_envelope(prose) == prose
+    # Empty body never yields an empty probe — falls back to the original.
+    empty = "<output>\n\n</output>"
+    assert _strip_detection_envelope(empty) == empty
+
+
+def test_detect_content_sees_through_tool_output_envelope() -> None:
+    """Regression: a tool-result envelope's tags used to make the detector
+    read the whole payload as markup and misroute code to the HTML extractor.
+    Detection now runs on the inner payload, so the real type wins."""
+    code = "\n".join(
+        [
+            "import os",
+            "from pathlib import Path",
+            "",
+            "def main() -> int:",
+            "    return len(os.listdir(Path.cwd()))",
+        ]
+    )
+    wrapped = f"<returncode>0</returncode>\n<output>\n{code}\n</output>"
+    assert _detect_content(wrapped).content_type is ContentType.SOURCE_CODE
+    assert _detect_content(wrapped).content_type is _detect_content(code).content_type
