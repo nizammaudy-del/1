@@ -1024,3 +1024,48 @@ def test_detect_content_sees_through_tool_output_envelope() -> None:
     wrapped = f"<returncode>0</returncode>\n<output>\n{code}\n</output>"
     assert _detect_content(wrapped).content_type is ContentType.SOURCE_CODE
     assert _detect_content(wrapped).content_type is _detect_content(code).content_type
+
+
+def test_detect_content_overrides_html_misroute_for_grep_and_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the native detector (magika) tags dense grep output and
+    build logs as HTML because file paths and </> read as markup. Routing those
+    to the HTML article-extractor is lossy (it strips code + identifiers). When
+    the structural log/search detectors positively claim the payload they
+    override the HTML verdict (log checked first so tracebacks win); genuine
+    HTML with no such structure is left as HTML."""
+    import headroom._core as _core
+
+    monkeypatch.setenv("HEADROOM_DETECT_BACKEND", "rust")
+    monkeypatch.setattr(
+        _core,
+        "detect_content_type",
+        lambda content: SimpleNamespace(content_type="html", confidence=1.0, metadata={}),
+    )
+
+    # grep over HTML template files: native says html, but it is search results.
+    grep = "\n".join(
+        f'templates/pages/dashboard_{i}.html:{10 + i}:      <div class="card" data-id="{i}">'
+        for i in range(6)
+    )
+    assert _detect_content(grep).content_type is ContentType.SEARCH_RESULTS
+
+    # build/error log misread as html -> LOG wins (checked before search).
+    build_log = "\n".join(
+        [
+            "ERROR failed to compile module widget",
+            "WARNING deprecated call near <template>",
+            "Traceback (most recent call last):",
+            "ERROR build aborted after 2 retries",
+        ]
+    )
+    assert _detect_content(build_log).content_type is ContentType.BUILD_OUTPUT
+
+    # genuine HTML article: no grep/log structure -> override does not fire.
+    html = (
+        "<!DOCTYPE html>\n<html><head><title>x</title></head>"
+        "<body><main><section><p>An article about widgets and gadgets.</p>"
+        "</section></main></body></html>"
+    )
+    assert _detect_content(html).content_type is ContentType.HTML

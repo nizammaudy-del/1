@@ -58,7 +58,7 @@ from ..config import (
 from ..parser import CCR_RETRIEVAL_MARKER_RE
 from ..tokenizer import Tokenizer
 from .base import Transform
-from .content_detector import ContentType, DetectionResult
+from .content_detector import ContentType, DetectionResult, _try_detect_log, _try_detect_search
 from .content_detector import detect_content_type as _regex_detect_content_type
 from .error_detection import content_has_strong_error_indicators
 
@@ -301,6 +301,18 @@ def _detect_content(content: str) -> DetectionResult:
                 type(exc).__name__,
             )
         return _regex_detect_content_type(content)
+
+    # HTML misroute guard (native/magika path): dense punctuation in grep
+    # output and build logs (file paths, </>, brackets) can read as markup, so
+    # the native detector tags real search results / logs as HTML. Routing those
+    # to the HTML article-extractor is lossy — it strips code and identifiers.
+    # When the structural log/search detectors positively claim the payload,
+    # trust them over the HTML verdict: tracebacks/build output win as LOG
+    # (checked first), path:line grep output routes to SEARCH.
+    if content_type is ContentType.HTML:
+        override = _try_detect_log(content) or _try_detect_search(content)
+        if override is not None:
+            return override
 
     if content_type is ContentType.PLAIN_TEXT:
         regex_result = _regex_detect_content_type(content)
