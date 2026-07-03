@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -1220,3 +1221,77 @@ def test_stats_history_includes_cli_filtering(tmp_path, monkeypatch):
     assert data["cli_filtering"]["tool"] == "rtk"
     assert data["cli_filtering"]["label"] == "RTK"
     assert data["cli_filtering"]["lifetime"]["tokens_saved"] == 999
+
+
+def test_coercion_helpers_reject_non_finite_values():
+    """Non-finite inputs fail open to the default -- never raise, never leak NaN/inf.
+
+    _coerce_int raised OverflowError on inf; _coerce_float returned NaN/inf
+    verbatim, poisoning arithmetic and emitting JSON the dashboard's JSON.parse
+    rejects.
+    """
+    ci = savings_tracker_module._coerce_int
+    cf = savings_tracker_module._coerce_float
+
+    # _coerce_int: every non-finite / overflowing input collapses to default.
+    assert ci(float("inf")) == 0
+    assert ci(float("-inf")) == 0
+    assert ci(float("nan")) == 0
+    assert ci(float("inf"), default=7) == 7
+
+    # _coerce_float: nan/inf never raise on float() and must be rejected;
+    # an int too large to convert raises OverflowError and must be caught.
+    assert cf(float("nan")) == 0.0
+    assert math.isfinite(cf(float("nan")))
+    assert cf(float("inf")) == 0.0
+    assert cf(float("-inf")) == 0.0
+    assert cf(10**400) == 0.0
+    assert cf(float("nan"), default=1.5) == 1.5
+
+    # Regression: finite values still coerce unchanged.
+    assert ci(5) == 5
+    assert cf(3.5) == pytest.approx(3.5)
+
+
+def test_savings_tracker_loads_non_finite_persisted_state_without_crashing(tmp_path):
+    """A proxy_savings.json holding NaN/Infinity must not crash construction.
+
+    json.loads accepts bare NaN/Infinity, so a prior bad write leaves them on
+    disk. Before the fix, _coerce_int(inf) in _sanitize_state raised
+    OverflowError out of __init__ and the proxy failed to start.
+    """
+    path = tmp_path / "proxy_savings.json"
+    # json.dumps emits bare NaN/Infinity literals (allow_nan default) -- exactly
+    # what a prior non-finite write would leave on disk.
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "lifetime": {
+                    "requests": 1,
+                    "tokens_saved": float("inf"),
+                    "compression_savings_usd": float("nan"),
+                    "total_input_tokens": float("inf"),
+                    "total_input_cost_usd": float("nan"),
+                },
+                "history": [
+                    {
+                        "timestamp": "2026-03-27T09:00:00Z",
+                        "total_tokens_saved": float("inf"),
+                        "compression_savings_usd": float("nan"),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tracker = SavingsTracker(path=str(path))
+    lifetime = tracker.snapshot()["lifetime"]
+
+    # Non-finite fields fail open to safe defaults, not crash or NaN.
+    for key, value in lifetime.items():
+        assert isinstance(value, int | float)
+        assert math.isfinite(value), f"{key} is non-finite: {value}"
+    assert lifetime["tokens_saved"] == 0
+    assert lifetime["total_input_tokens"] == 0

@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -108,15 +109,20 @@ def _bucket_start(timestamp: datetime, bucket: str) -> datetime:
 def _coerce_int(value: Any, default: int = 0) -> int:
     try:
         return max(int(value), 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
     try:
-        return max(float(value), 0.0)
-    except (TypeError, ValueError):
+        coerced = float(value)
+    except (TypeError, ValueError, OverflowError):
         return default
+    # Reject NaN/inf -- float() accepts them, but they poison arithmetic and
+    # serialize to JSON the dashboard's JSON.parse rejects.
+    if not math.isfinite(coerced):
+        return default
+    return max(coerced, 0.0)
 
 
 PROVIDER_UNKNOWN = "unknown"
