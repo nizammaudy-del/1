@@ -762,6 +762,13 @@ class ContentRouterConfig:
     # Route ALL compressible content to Kompress, skipping per-type selection.
     # Tool exclusion (Read/Glob/...) and reversibility gates still apply.
     force_kompress_all: bool = False
+
+    # No-CCR lossless mode. When True the router compresses LOG/SEARCH/DIFF
+    # content with format-native lossless compaction (headroom.transforms.
+    # lossless_compaction) instead of the lossy Rust drop path, and never
+    # emits a `<<ccr:…>>` / `Retrieve …` retrieval marker. SmartCrusher is
+    # additionally forced marker-free via smart_crusher_lossless_only.
+    lossless: bool = False
     mixed_content_threshold: int = 2  # Min types to consider mixed
     min_section_tokens: int = 20  # Min tokens to compress a section
 
@@ -1115,6 +1122,13 @@ class ContentRouter(Transform):
                 rule in the audit doc.
         """
         self.config = config or ContentRouterConfig()
+        # No-CCR lossless mode is self-consistent regardless of how the config
+        # was built: force marker-free output and marker-free SmartCrusher so
+        # the invariant (no `<<ccr:…>>` / `Retrieve …`) holds even when a caller
+        # constructs ContentRouterConfig(lossless=True) directly.
+        if self.config.lossless:
+            self.config.ccr_inject_marker = False
+            self.config.smart_crusher_lossless_only = True
         self._observer = observer
 
         # Lazy-loaded compressors
@@ -1615,6 +1629,31 @@ class ContentRouter(Transform):
         decision_reason = "strategy_not_enabled_or_unavailable"
         strategy_chain: list[str] = [strategy.value]
         error: str | None = None
+
+        # No-CCR lossless mode: LOG/SEARCH/DIFF get format-native lossless
+        # compaction instead of the lossy Rust drop path, so the output stays
+        # marker-free (no `<<ccr:…>>` / `Retrieve …`) and fully recoverable.
+        # SMART_CRUSHER relies on smart_crusher_lossless_only (wired elsewhere);
+        # KOMPRESS/TEXT/CODE_AWARE/PASSTHROUGH pass through unchanged here in
+        # Stage A. The reversibility + size gate lives in compact_lossless,
+        # which returns the original when it can't safely shrink it.
+        if self.config.lossless and strategy in (
+            CompressionStrategy.LOG,
+            CompressionStrategy.SEARCH,
+            CompressionStrategy.DIFF,
+        ):
+            from headroom.transforms.lossless_compaction import compact_lossless
+
+            kind = {
+                CompressionStrategy.LOG: "log",
+                CompressionStrategy.SEARCH: "search",
+                CompressionStrategy.DIFF: "diff",
+            }[strategy]
+            try:
+                compacted = compact_lossless(content, kind)
+            except Exception:
+                compacted = content
+            return compacted, len(compacted.split()), [f"lossless_{kind}"]
 
         try:
             if strategy == CompressionStrategy.CODE_AWARE:
@@ -2276,7 +2315,11 @@ class ContentRouter(Transform):
                 )
 
                 if is_kompress_available():
-                    return KompressCompressor(config=KompressConfig(model_id=model_id))
+                    return KompressCompressor(
+                        config=KompressConfig(
+                            model_id=model_id, enable_ccr=self.config.ccr_inject_marker
+                        )
+                    )
             except ImportError:
                 pass
             return None
@@ -2284,10 +2327,21 @@ class ContentRouter(Transform):
         # Default path — exactly as before, cached on self
         if self._kompress is None:
             try:
-                from .kompress_compressor import KompressCompressor, is_kompress_available
+                from .kompress_compressor import (
+                    KompressCompressor,
+                    KompressConfig,
+                    is_kompress_available,
+                )
 
                 if is_kompress_available():
-                    self._kompress = KompressCompressor()
+                    # Honor the router's marker policy. In no-CCR / lossless mode
+                    # (ccr_inject_marker=False) Kompress still compresses (lossy),
+                    # but must NOT append a `Retrieve more: hash=` marker or write
+                    # to the CCR store — otherwise the no-MCP guarantee breaks.
+                    # Matches how search/log/diff/code receive enable_ccr.
+                    self._kompress = KompressCompressor(
+                        config=KompressConfig(enable_ccr=self.config.ccr_inject_marker)
+                    )
             except ImportError:
                 logger.debug("Kompress dependencies not available")
         return self._kompress
