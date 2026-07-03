@@ -158,7 +158,11 @@ def test_force_kompress_routes_anthropic_tool_result_to_targeted_kompress(
 
         def compress(self, content, **kwargs):
             captured.update(kwargs)
-            compressed = " ".join(content.split()[:20])
+            # Real Kompress appends a CCR retrieval marker when CCR is enabled,
+            # keeping the lossy result recoverable. Include one so the router's
+            # reversibility gate (tool ground truth must stay recoverable, #1307)
+            # accepts the compression instead of reverting to verbatim.
+            compressed = " ".join(content.split()[:20]) + " Retrieve more: hash=deadbeef"
             return SimpleNamespace(
                 compressed=compressed,
                 compressed_tokens=len(compressed.split()),
@@ -195,6 +199,59 @@ def test_force_kompress_routes_anthropic_tool_result_to_targeted_kompress(
     assert result.messages[0]["content"][0]["content"] != tool_content
     assert result.transforms_applied == ["router:tool_result:kompress"]
     assert captured["target_ratio"] == 0.10
+
+
+def test_anthropic_tool_result_lossy_without_marker_stays_verbatim(router, tokenizer, monkeypatch):
+    """Reversibility gate (#1307): a lossy Kompress result on a tool_result block
+    with no CCR retrieval marker is unrecoverable, so the router must keep the
+    original verbatim rather than hand the agent a fabricated summary. This is
+    the block-path counterpart to the string/`role=="tool"` guard."""
+
+    class FakeKompress:
+        def is_ready(self) -> bool:
+            return True
+
+        def ensure_background_load(self) -> None:
+            pass
+
+        def compress(self, content, **kwargs):
+            # Lossy summary with NO retrieval marker → unrecoverable.
+            compressed = " ".join(content.split()[:20])
+            return SimpleNamespace(
+                compressed=compressed,
+                compressed_tokens=len(compressed.split()),
+            )
+
+    monkeypatch.setattr(router, "_get_kompress", lambda: FakeKompress())
+    tool_content = " ".join(
+        f'{{"file":"src/module_{i}.py","line":{i},"text":"repeated search payload"}}'
+        for i in range(160)
+    )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_search_1",
+                    "content": tool_content,
+                }
+            ],
+        }
+    ]
+
+    result = router.apply(
+        messages,
+        tokenizer,
+        force_kompress=True,
+        target_ratio=0.10,
+        compress_user_messages=True,
+        min_tokens_to_compress=10,
+        read_protection_window=0,
+    )
+
+    # Unrecoverable lossy compression is rejected → original kept verbatim.
+    assert result.messages[0]["content"][0]["content"] == tool_content
 
 
 # =============================================================================

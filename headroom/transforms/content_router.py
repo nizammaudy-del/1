@@ -52,6 +52,7 @@ from typing import Any
 from ..config import (
     DEFAULT_EXCLUDE_TOOLS,
     ReadLifecycleConfig,
+    RelevanceScorerConfig,
     TransformResult,
     is_tool_excluded,
 )
@@ -61,6 +62,7 @@ from .base import Transform
 from .content_detector import ContentType, DetectionResult, _try_detect_log, _try_detect_search
 from .content_detector import detect_content_type as _regex_detect_content_type
 from .error_detection import content_has_strong_error_indicators
+from .relevance_split import build_relevance_query, plan_relevance_split
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,23 @@ _detect_native_unhealthy = False  # circuit breaker: native detect hung once (#5
 
 def _router_debug_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+
+
+def _tool_call_args_text(raw: Any) -> str:
+    """Compact, query-usable text from a tool call's args.
+
+    Anthropic passes ``input`` as a dict ({"command": "grep …"}); OpenAI passes
+    ``arguments`` as a JSON string. Either way we want the scalar values (the
+    grep pattern, the read path) as a short query fragment. Capped so a giant
+    arg blob can't dominate the relevance query.
+    """
+    if isinstance(raw, str):
+        text = raw
+    elif isinstance(raw, dict):
+        text = " ".join(str(v) for v in raw.values() if isinstance(v, (str, int, float, bool)))
+    else:
+        return ""
+    return " ".join(text.split())[:300]
 
 
 def _log_router_debug(event: str, **payload: Any) -> None:
@@ -739,7 +758,6 @@ class ContentRouterConfig:
         enable_tabular_compressor: Enable CSV/TSV/markdown-table compression.
         enable_image_optimizer: Enable image token optimization.
         prefer_code_aware_for_code: Use CodeAware over Kompress for code.
-        mixed_content_threshold: Min distinct types to consider "mixed".
         min_section_tokens: Minimum tokens for a section to compress.
         fallback_strategy: Strategy when no compressor matches.
         skip_user_messages: Never compress user messages (they're the subject).
@@ -769,7 +787,6 @@ class ContentRouterConfig:
     # emits a `<<ccr:…>>` / `Retrieve …` retrieval marker. SmartCrusher is
     # additionally forced marker-free via smart_crusher_lossless_only.
     lossless: bool = False
-    mixed_content_threshold: int = 2  # Min types to consider mixed
     min_section_tokens: int = 20  # Min tokens to compress a section
 
     # Fallback: Kompress handles unknown/mixed content instead of passing through
@@ -816,12 +833,18 @@ class ContentRouterConfig:
         0.0  # 0.0 = protect ALL excluded-tool outputs (safest for coding agents)
     )
 
-    # Adaptive compression ratio: scales with context pressure.
-    # At low pressure (<30% full), use the relaxed threshold (reject marginal).
-    # At high pressure (>80% full), use the aggressive threshold (accept anything helpful).
-    # Linearly interpolates between the two.
-    min_ratio_relaxed: float = 0.85  # when context is mostly empty
-    min_ratio_aggressive: float = 0.65  # when context is nearly full
+    # Adaptive acceptance threshold, scaling with context pressure. The gate
+    # accepts a compression when compression_ratio < min_ratio (ratio =
+    # compressed/original, so LOWER ratio = bigger savings). Thus a HIGHER
+    # min_ratio is MORE lenient (accepts marginal wins) and a LOWER one is
+    # stricter (only big wins clear it). min_ratio is interpolated
+    # 0.85 (empty context) -> 0.65 (full), i.e. acceptance gets STRICTER as
+    # context fills, so only large savings justify busting the prefix cache
+    # under pressure. (Direction is deliberate; whether a full context should
+    # instead accept *more* to reclaim space is a design question flagged for
+    # an eval — do not flip without measuring.)
+    min_ratio_relaxed: float = 0.85  # low pressure: lenient, accept marginal wins
+    min_ratio_aggressive: float = 0.65  # high pressure: strict, big wins only
 
     # CCR (Compress-Cache-Retrieve) settings for SmartCrusher
     ccr_enabled: bool = True  # Enable CCR marker injection for reversible compression
@@ -833,6 +856,28 @@ class ContentRouterConfig:
     # from the proxy's `HEADROOM_LOSSLESS_ONLY` env var so a real session
     # can run marker-free without constructing the crusher by hand.
     smart_crusher_lossless_only: bool | None = None
+
+    # Prompt-conditioned relevance split for the KEEP/DROP tail. When enabled,
+    # LOG/SEARCH output is segmented into records, each scored against the
+    # request's information need (user prompt + triggering tool-call args) via
+    # `relevance` below; high-relevance records are kept verbatim and the
+    # low-relevance tail is Kompressed. Works in both modes: in lossless mode
+    # the tail is marker-free; in CCR mode it carries a retrieval marker (via
+    # ccr_inject_marker) so dropped detail stays retrievable. On by default; the
+    # embedding model is pre-warmed in the background (BM25 scores until it's
+    # cached) so no request ever blocks on the download.
+    relevance_split: bool = True
+    relevance: RelevanceScorerConfig = field(default_factory=RelevanceScorerConfig)
+    # Optional latency guard: skip the split when an output segments into more
+    # than this many records, capping embedding work on the request thread.
+    # 0 = no cap (default): every record is scored regardless of size. Set a
+    # positive value to bound per-request embedding cost on very large outputs.
+    relevance_max_records: int = 0
+    # Adaptive KEEP/DROP cut: when True (default), the threshold is the natural
+    # relevant/irrelevant break in each output's score distribution (Otsu),
+    # floored by relevance.relevance_threshold — it moves with the content
+    # instead of a fixed constant. False uses the fixed threshold exactly.
+    relevance_adaptive_threshold: bool = True
 
     # Tag protection: preserve custom/workflow XML tags from text compression.
     # When False (default), entire <custom-tag>content</custom-tag> blocks are
@@ -1140,6 +1185,13 @@ class ContentRouter(Transform):
         self._html_extractor: Any = None
         self._tabular_compressor: Any = None
         self._kompress: Any = None
+        # Stage B relevance split (lazy; None until first use, sentinel-checked
+        # via _relevance_scorer_tried so a failed load isn't retried per call).
+        self._relevance_scorer: Any = None
+        self._relevance_scorer_tried: bool = False
+        self._relevance_prewarm_started: bool = False
+        # tool_call_id → compact args text, populated by _build_tool_name_map.
+        self._tool_call_args: dict[str, str] = {}
 
         # Phase 0 (#1171): cap the input size handed to kompress (ModernBERT
         # ONNX). Its inference scales O(tokens) and runs synchronously on the
@@ -1630,6 +1682,24 @@ class ContentRouter(Transform):
         strategy_chain: list[str] = [strategy.value]
         error: str | None = None
 
+        # Stage B/C: prompt-conditioned relevance split for LOG/SEARCH — keep
+        # relevant records verbatim, compress the low-value tail. Runs in BOTH
+        # modes; the tail's marker behavior follows the mode automatically via
+        # _try_ml_compressor: lossless → marker-free Kompress; CCR → Kompress
+        # with a retrieval marker so the dropped detail stays retrievable (a
+        # safety net if the scorer is wrong). DIFF is excluded — Kompressing
+        # hunks breaks `git apply`. Returns None (falls through to the normal
+        # path) when disabled, unavailable, or no better than plain compression.
+        if self.config.relevance_split and strategy in (
+            CompressionStrategy.LOG,
+            CompressionStrategy.SEARCH,
+        ):
+            kind = "log" if strategy is CompressionStrategy.LOG else "search"
+            split = self._relevance_split_compress(content, kind, context)
+            if split is not None:
+                label = f"lossless_{kind}" if self.config.lossless else kind
+                return split, len(split.split()), [label, "relevance_split"]
+
         # No-CCR lossless mode: LOG/SEARCH/DIFF get format-native lossless
         # compaction instead of the lossy Rust drop path, so the output stays
         # marker-free (no `<<ccr:…>>` / `Retrieve …`) and fully recoverable.
@@ -2117,6 +2187,112 @@ class ContentRouter(Transform):
                 logger.debug("LogCompressor not available")
         return self._log_compressor
 
+    def _get_relevance_scorer(self) -> Any:
+        """Get the relevance scorer for the split (lazy, cached, non-blocking).
+
+        Tier comes from ``config.relevance``. For ``bm25`` this is instant. For
+        ``hybrid``/``embedding`` the scorer serves **BM25 immediately** and the
+        embedding model is warmed in a background thread; once it's cached the
+        scorer is swapped in (GIL-atomic ref write), so a request never blocks
+        on the ~30MB download. Returns None (cached) on failure. Never raises.
+        """
+        if self._relevance_scorer is not None or self._relevance_scorer_tried:
+            return self._relevance_scorer
+        self._relevance_scorer_tried = True
+        tier = (self.config.relevance.tier or "hybrid").lower()
+        try:
+            from ..relevance import BM25Scorer
+
+            if tier == "bm25":
+                self._relevance_scorer = BM25Scorer()
+            else:
+                # Serve BM25 now; swap to the embedding-backed scorer once warm.
+                self._relevance_scorer = BM25Scorer()
+                self._start_relevance_prewarm(tier)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("relevance scorer unavailable: %s", exc)
+            self._relevance_scorer = None
+        return self._relevance_scorer
+
+    def _start_relevance_prewarm(self, tier: str) -> None:
+        """Warm the embedding model off the request thread, then swap it in.
+
+        Idempotent. On failure (fastembed missing, download error) the router
+        just stays on the BM25 scorer set by ``_get_relevance_scorer``.
+        """
+        if getattr(self, "_relevance_prewarm_started", False):
+            return
+        self._relevance_prewarm_started = True
+
+        def _warm() -> None:
+            try:
+                from ..relevance import create_scorer
+
+                scorer = create_scorer(tier)
+                # Force the model download+load and a first embed here, in the
+                # background — so the first real request finds it warm.
+                scorer.score_batch(["warmup"], "warmup")
+                self._relevance_scorer = scorer  # GIL-atomic ref swap
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("relevance model prewarm failed; staying on BM25: %s", exc)
+
+        threading.Thread(target=_warm, name="relevance-prewarm", daemon=True).start()
+
+    def _relevance_split_compress(self, content: str, kind: str, query: str) -> str | None:
+        """Prompt-conditioned KEEP/DROP split for the compression tail.
+
+        Keeps high-relevance records byte-verbatim (lossless-compacted) and
+        Kompresses the low-relevance tail (identifiers pinned by Kompress
+        MUST_KEEP). Mode-agnostic: the tail's marker behavior is decided by
+        ``_try_ml_compressor`` — marker-free in lossless mode, retrieval-marker
+        in CCR mode. Returns the spliced output, or None to fall back to the
+        normal path when the scorer is unavailable, the query is empty, nothing
+        is dropped, or the split doesn't beat plain compaction. Never raises.
+
+        Embedding cost is bounded two ways: the model is pre-warmed off the
+        request thread (BM25 until it's ready, see _get_relevance_scorer) and
+        outputs segmenting into more than ``relevance_max_records`` records skip
+        the split entirely.
+        """
+        scorer = self._get_relevance_scorer()
+        if scorer is None or not query.strip():
+            return None
+        from .lossless_compaction import compact_lossless
+
+        try:
+            runs = plan_relevance_split(
+                content,
+                query,
+                scorer,
+                threshold=self.config.relevance.relevance_threshold,
+                adaptive=self.config.relevance_adaptive_threshold,
+                max_records=self.config.relevance_max_records,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("relevance split failed (%s); falling back", exc)
+            return None
+
+        # No low-relevance tail → plain compaction is already optimal here.
+        if not any(not keep for keep, _ in runs):
+            return None
+
+        out_parts: list[str] = []
+        for keep, text in runs:
+            if keep:
+                out_parts.append(compact_lossless(text, kind))
+                continue
+            try:
+                compressed, _ = self._try_ml_compressor(text, query)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("kompress tail failed (%s); keeping verbatim", exc)
+                compressed = compact_lossless(text, kind)
+            out_parts.append(compressed)
+
+        result = "".join(out_parts)
+        # Adopt only when it beats plain whole-block lossless compaction.
+        baseline = compact_lossless(content, kind)
+        return result if len(result) < len(baseline) else None
+
     def _get_text_crusher(self) -> Any:
         """Get TextCrusher (Phase 2, lazy load). Returns None when disabled, or
         when the native ``headroom._core`` extension is not built (mirrors the
@@ -2426,9 +2602,15 @@ class ContentRouter(Transform):
         """Build mapping from tool_call_id to tool_name.
 
         Scans assistant messages to find tool calls and extract their names.
-        Supports both OpenAI and Anthropic message formats.
+        Supports both OpenAI and Anthropic message formats. Also populates
+        ``self._tool_call_args`` (id → compact args text) in the same scan, so
+        the relevance split can score a tool output against the *precise* ask
+        that triggered it (grep pattern, read path, …), not just the user
+        prompt. Read-only after build → safe to read from the parallel
+        compression pass.
         """
         mapping: dict[str, str] = {}
+        args_map: dict[str, str] = {}
 
         for msg in messages:
             if msg.get("role") != "assistant":
@@ -2438,9 +2620,13 @@ class ContentRouter(Transform):
             for tc in msg.get("tool_calls", []):
                 if isinstance(tc, dict):
                     tc_id = tc.get("id", "")
-                    name = tc.get("function", {}).get("name", "")
+                    fn = tc.get("function", {})
+                    name = fn.get("name", "")
                     if tc_id and name:
                         mapping[tc_id] = name
+                        args = _tool_call_args_text(fn.get("arguments"))
+                        if args:
+                            args_map[tc_id] = args
 
             # Anthropic format: content blocks with type=tool_use
             content = msg.get("content", [])
@@ -2451,7 +2637,11 @@ class ContentRouter(Transform):
                         name = block.get("name", "")
                         if tc_id and name:
                             mapping[tc_id] = name
+                            args = _tool_call_args_text(block.get("input"))
+                            if args:
+                                args_map[tc_id] = args
 
+        self._tool_call_args = args_map
         return mapping
 
     def _net_cost_allows(
@@ -3350,6 +3540,15 @@ class ContentRouter(Transform):
                 tool_name = (tool_name_map or {}).get(tool_use_id, "")
                 bias = self._get_tool_bias(tool_name) if tool_name else 1.0
 
+                # Enrich the relevance query with the triggering tool call's
+                # args (grep pattern, read path, …) — the sharpest, per-output
+                # signal. Gated so default behavior is byte-identical.
+                block_context = context
+                if self.config.relevance_split and tool_use_id:
+                    call_args = self._tool_call_args.get(tool_use_id, "")
+                    if call_args:
+                        block_context = build_relevance_query(context, tool_name, call_args)
+
                 tool_content = block.get("content", "")
 
                 # Protection: failed tool calls / error outputs stay verbatim
@@ -3394,7 +3593,7 @@ class ContentRouter(Transform):
                         content_key=hash(
                             (tool_content, getattr(self, "_runtime_target_ratio", None))
                         ),
-                        context=context,
+                        context=block_context,
                         bias=bias,
                         min_ratio=min_ratio,
                         compressor_timing=compressor_timing,
@@ -3403,6 +3602,7 @@ class ContentRouter(Transform):
                         compressed_details=compressed_details,
                         strategy_label="tool_result",
                         details_prefix="tool",
+                        enforce_reversibility=True,
                     )
                     if compressed_content is not None:
                         new_blocks.append({**block, "content": compressed_content})
@@ -3479,6 +3679,7 @@ class ContentRouter(Transform):
         compressed_details: list[str] | None,
         strategy_label: str,
         details_prefix: str,
+        enforce_reversibility: bool = False,
     ) -> tuple[str | None, bool]:
         """Apply two-tier cache lookup + compression to a single content string.
 
@@ -3543,6 +3744,23 @@ class ContentRouter(Transform):
             key = f"compressor:{result.strategy_used.value}"
             compressor_timing[key] = compressor_timing.get(key, 0.0) + compress_ms
         if result.compression_ratio < min_ratio:
+            # Tool ground truth must stay reversible: a lossy summarizer
+            # (kompress/text/code) that emitted no CCR retrieve marker is
+            # unrecoverable, so the agent would act on a fabricated summary
+            # (#1307). The string/`role=="tool"` path guards this; mirror it
+            # here for tool_result blocks (never cached, so the Tier-2 path
+            # above can't serve a poisoned entry).
+            if (
+                enforce_reversibility
+                and result.strategy_used in self.LOSSY_UNMARKED_STRATEGIES
+                and not CCR_RETRIEVAL_MARKER_RE.search(result.compressed)
+            ):
+                self._cache.mark_skip(content_key)
+                if route_counts is not None:
+                    route_counts["lossy_unrecoverable_skipped"] = (
+                        route_counts.get("lossy_unrecoverable_skipped", 0) + 1
+                    )
+                return None, False
             # Compressed — store in result cache
             self._cache.put(
                 content_key,
