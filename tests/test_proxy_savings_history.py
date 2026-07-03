@@ -327,8 +327,12 @@ def test_litellm_resolution_and_savings_estimation_fallbacks(monkeypatch):
     ) == pytest.approx(0.2)
 
     fake_litellm.model_cost = {}
-    assert savings_tracker_module._estimate_compression_savings_usd("gpt-4o", 100) == 0.0
-    assert savings_tracker_module._estimate_input_cost_usd("gpt-4o", 100) == 0.0
+    assert savings_tracker_module._estimate_compression_savings_usd("gpt-4o", 100) == pytest.approx(
+        100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    )
+    assert savings_tracker_module._estimate_input_cost_usd("gpt-4o", 100) == pytest.approx(
+        100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    )
 
     monkeypatch.setattr(
         fake_litellm,
@@ -336,11 +340,115 @@ def test_litellm_resolution_and_savings_estimation_fallbacks(monkeypatch):
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert savings_tracker_module._resolve_litellm_model("mystery-model") == "mystery-model"
-    assert savings_tracker_module._estimate_compression_savings_usd("mystery-model", 100) == 0.0
+    assert savings_tracker_module._estimate_compression_savings_usd(
+        "mystery-model", 100
+    ) == pytest.approx(100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN)
+    assert savings_tracker_module._estimate_input_cost_usd("mystery-model", 100) == pytest.approx(
+        100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    )
+    # Explicitly force the unavailable path for the whole tracker.
+    monkeypatch.setattr(savings_tracker_module, "LITELLM_AVAILABLE", False)
+    assert savings_tracker_module._estimate_compression_savings_usd("gpt-4o", 100) == pytest.approx(
+        100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    )
+    assert savings_tracker_module._estimate_input_cost_usd("gpt-4o", 100) == pytest.approx(
+        100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    )
+
+
+def test_fallback_request_pricing_stays_nonzero_with_litellm_unavailable_and_preserves_historic_zeros(
+    tmp_path, monkeypatch
+):
+    # Legacy proxy_savings rows can legitimately store zero-dollar values.
+    savings_path = tmp_path / "proxy_savings.json"
+    savings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "lifetime": {
+                    "requests": 1,
+                    "tokens_saved": 10,
+                    "compression_savings_usd": 0.0,
+                    "total_input_tokens": 120,
+                    "total_input_cost_usd": 0.0,
+                },
+                "display_session": {},
+                "history": [
+                    {
+                        "timestamp": "2026-03-27T09:00:00Z",
+                        "provider": "openai",
+                        "model": "gpt-4o",
+                        "total_tokens_saved": 10,
+                        "compression_savings_usd": 0.0,
+                        "total_input_tokens": 120,
+                        "total_input_cost_usd": 0.0,
+                    }
+                ],
+                "projects": {
+                    "fallback-demo": {
+                        "requests": 1,
+                        "tokens_saved": 10,
+                        "compression_savings_usd": 0.0,
+                        "total_input_tokens": 120,
+                        "total_input_cost_usd": 0.0,
+                        "last_activity_at": "2026-03-27T09:00:00Z",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tracker = SavingsTracker(path=str(savings_path))
+    initial_snapshot = tracker.snapshot()
+    assert initial_snapshot["lifetime"]["compression_savings_usd"] == 0.0
+    assert initial_snapshot["display_session"]["compression_savings_usd"] == 0.0
+    assert initial_snapshot["projects"]["fallback-demo"]["compression_savings_usd"] == 0.0
+    assert initial_snapshot["history"][-1]["compression_savings_usd"] == 0.0
 
     monkeypatch.setattr(savings_tracker_module, "LITELLM_AVAILABLE", False)
-    assert savings_tracker_module._estimate_compression_savings_usd("gpt-4o", 100) == 0.0
-    assert savings_tracker_module._estimate_input_cost_usd("gpt-4o", 100) == 0.0
+    monkeypatch.setattr(savings_tracker_module, "litellm", None)
+    assert tracker.record_request(
+        model="gpt-4o",
+        input_tokens=100,
+        tokens_saved=50,
+        project="fallback-demo",
+        timestamp="2026-03-27T09:10:00Z",
+    )
+    monkeypatch.setattr(
+        savings_tracker_module,
+        "_utc_now",
+        lambda: datetime(2026, 3, 27, 9, 10, 30, tzinfo=timezone.utc),
+    )
+
+    snapshot = tracker.snapshot()
+    expected_savings_fallback = 50 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    expected_input_fallback = 100 * savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    assert snapshot["lifetime"]["compression_savings_usd"] == pytest.approx(
+        expected_savings_fallback
+    )
+    assert snapshot["lifetime"]["total_input_cost_usd"] == pytest.approx(expected_input_fallback)
+    assert snapshot["display_session"]["compression_savings_usd"] == pytest.approx(
+        expected_savings_fallback
+    )
+    assert snapshot["display_session"]["total_input_cost_usd"] == pytest.approx(
+        expected_input_fallback
+    )
+    assert snapshot["projects"]["fallback-demo"]["compression_savings_usd"] == pytest.approx(
+        expected_savings_fallback
+    )
+    assert snapshot["projects"]["fallback-demo"]["total_input_cost_usd"] == pytest.approx(
+        expected_input_fallback
+    )
+    assert snapshot["history"][-1]["compression_savings_usd"] == pytest.approx(
+        expected_savings_fallback
+    )
+
+    persisted = json.loads(savings_path.read_text(encoding="utf-8"))
+    assert persisted["history"][0]["compression_savings_usd"] == 0.0
+    assert persisted["history"][-1]["compression_savings_usd"] == pytest.approx(
+        expected_savings_fallback
+    )
 
 
 def test_input_cost_counts_cache_reads_when_uncached_input_is_zero(monkeypatch):
@@ -372,6 +480,38 @@ def test_input_cost_counts_cache_reads_when_uncached_input_is_zero(monkeypatch):
         cache_read_tokens=1000,
     )
     assert cost == pytest.approx(0.3)
+
+
+def test_fallback_input_cost_uses_breakdown_sum_not_input_tokens_when_litellm_unavailable(
+    monkeypatch,
+):
+    # Regression: when both `input_tokens` and a nonzero cache breakdown are
+    # present and LiteLLM is unavailable, the fallback must price only the
+    # breakdown sum — never input_tokens + breakdown_sum — to avoid
+    # double-counting the tokens that the breakdown already covers.
+    monkeypatch.setattr(savings_tracker_module, "LITELLM_AVAILABLE", False)
+    monkeypatch.setattr(savings_tracker_module, "litellm", None)
+
+    input_tokens = 1000
+    cache_read = 200
+    cache_write = 100
+    uncached = 300
+    breakdown_sum = cache_read + cache_write + uncached  # 600
+
+    result = savings_tracker_module._estimate_input_cost_usd(
+        "gpt-4o",
+        input_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        uncached_input_tokens=uncached,
+    )
+
+    fallback_rate = savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    expected = breakdown_sum * fallback_rate
+    double_counted = (input_tokens + breakdown_sum) * fallback_rate
+
+    assert result == pytest.approx(expected)
+    assert result != pytest.approx(double_counted)
 
 
 def test_display_session_rolls_after_inactivity_and_counts_zero_savings_requests(
