@@ -919,18 +919,18 @@ class ContentRouterConfig:
         0.0  # 0.0 = protect ALL excluded-tool outputs (safest for coding agents)
     )
 
-    # Adaptive acceptance threshold, scaling with context pressure. The gate
-    # accepts a compression when compression_ratio < min_ratio (ratio =
-    # compressed/original, so LOWER ratio = bigger savings). Thus a HIGHER
-    # min_ratio is MORE lenient (accepts marginal wins) and a LOWER one is
-    # stricter (only big wins clear it). min_ratio is interpolated
-    # 0.85 (empty context) -> 0.65 (full), i.e. acceptance gets STRICTER as
-    # context fills, so only large savings justify busting the prefix cache
-    # under pressure. (Direction is deliberate; whether a full context should
-    # instead accept *more* to reclaim space is a design question flagged for
-    # an eval — do not flip without measuring.)
-    min_ratio_relaxed: float = 0.85  # low pressure: lenient, accept marginal wins
-    min_ratio_aggressive: float = 0.65  # high pressure: strict, big wins only
+    # Acceptance threshold. The gate accepts a compression when
+    # compression_ratio < min_ratio (ratio = compressed/original). Default 1.0 at
+    # every pressure = accept ANY real shrink (ratio < 1.0): any token saved is
+    # worth taking. The prefix-cache-bust cost this once guarded against (a small
+    # win can cost more than it saves once the invalidated suffix is re-written)
+    # is instead handled precisely by the opt-in net-cost policy
+    # (HEADROOM_NET_COST_POLICY=1); tool-output accuracy by the reversibility
+    # gate — both independent of this floor. Lower these (e.g. 0.85/0.65) to
+    # restore a savings floor that only accepts wins big enough to justify the
+    # cache bust as context fills.
+    min_ratio_relaxed: float = 1.0  # accept any shrink (no savings floor)
+    min_ratio_aggressive: float = 1.0  # same under pressure; net-cost is the guard
 
     # CCR (Compress-Cache-Retrieve) settings for SmartCrusher
     ccr_enabled: bool = True  # Enable CCR marker injection for reversible compression
