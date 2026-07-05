@@ -455,7 +455,7 @@ class TestCompressionMaxWorkers:
 
     Regression: the field was documented in ProxyConfig and consumed by the
     server, but the CLI never defined the option or passed it through, so it
-    was permanently None (always resolving to the min(32, cpu*4) default).
+    was permanently None (always resolving to the automatic server default).
     """
 
     def test_flag_reaches_config(self, runner: CliRunner, mock_run_server: dict) -> None:

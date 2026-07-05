@@ -906,7 +906,7 @@ class HeadroomProxy(
         #      are sitting on stuck work.
         _compression_max_cfg = config.compression_max_workers
         if _compression_max_cfg is None:
-            _compression_max = min(32, (os.cpu_count() or 1) * 4)
+            _compression_max = max(1, os.cpu_count() or 1)
         else:
             _compression_max = max(1, _compression_max_cfg)
         self.compression_max_workers: int = _compression_max

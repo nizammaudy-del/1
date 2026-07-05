@@ -395,9 +395,9 @@ class ProxyConfig:
     # Bound the dedicated compression threadpool. CPU-bound Rust work runs
     # here; the pool is separate from asyncio's default executor so other
     # ``asyncio.to_thread`` callers (file IO, etc.) are not contended by
-    # compression bursts. ``None`` resolves to ``min(32, (cpu_count or 1) * 4)``,
-    # matching asyncio's default executor sizing today. Lower the cap to
-    # tighten resource use on multi-tenant hosts; raise it to handle larger
+    # compression bursts. ``None`` resolves to ``cpu_count or 1`` so CPU-bound
+    # compression work does not oversubscribe hosts by default. Lower the cap
+    # to tighten resource use on multi-tenant hosts; raise it to handle larger
     # bursts. CLI: ``--compression-max-workers``. Env:
     # ``HEADROOM_COMPRESSION_MAX_WORKERS``.
     #

@@ -434,7 +434,7 @@ def dashboard(port: int, no_open: bool) -> None:
     envvar="HEADROOM_COMPRESSION_MAX_WORKERS",
     help=(
         "Bound the dedicated compression threadpool (CPU-bound Kompress work). "
-        "Default (unset): min(32, (cpu_count or 1) * 4). Lower it to reduce CPU "
+        "Default (unset): cpu_count or 1. Lower it to reduce CPU "
         "oversubscription under concurrent sessions; a value < 1 is clamped to 1. "
         "Env: HEADROOM_COMPRESSION_MAX_WORKERS."
     ),
