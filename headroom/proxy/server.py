@@ -597,6 +597,29 @@ def _apply_stateless_persistence(config: ProxyConfig) -> None:
     get_toin(TOINConfig(storage_path=""))
 
 
+def _provider_httpx_client_options(
+    config: ProxyConfig,
+    verify: Any,
+) -> tuple[bool, dict[str, Any]]:
+    client_kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(
+            connect=config.connect_timeout_seconds,
+            read=config.request_timeout_seconds,
+            write=config.request_timeout_seconds,
+            pool=config.connect_timeout_seconds,
+        ),
+        "limits": httpx.Limits(
+            max_connections=config.max_connections,
+            max_keepalive_connections=config.max_keepalive_connections,
+            keepalive_expiry=config.keepalive_expiry,
+        ),
+        "verify": verify,
+    }
+    if config.http_proxy:
+        client_kwargs["proxy"] = config.http_proxy
+    return config.http2 and not config.http_proxy, client_kwargs
+
+
 class HeadroomProxy(
     StreamingMixin,
     AnthropicHandlerMixin,
@@ -1372,27 +1395,12 @@ class HeadroomProxy(
         # is configured, else a strict-relaxed default context when
         # HEADROOM_TLS_STRICT=0, else httpx's default strict verification.
         _verify = build_httpx_verify()
-        _client_kwargs: dict[str, Any] = {
-            "timeout": httpx.Timeout(
-                connect=self.config.connect_timeout_seconds,
-                read=self.config.request_timeout_seconds,
-                write=self.config.request_timeout_seconds,
-                pool=self.config.connect_timeout_seconds,
-            ),
-            "limits": httpx.Limits(
-                max_connections=self.config.max_connections,
-                max_keepalive_connections=self.config.max_keepalive_connections,
-                keepalive_expiry=self.config.keepalive_expiry,
-            ),
-            "verify": _verify,
-        }
-        self.http_client = httpx.AsyncClient(http2=self.config.http2, **_client_kwargs)
+        _http2, _client_kwargs = _provider_httpx_client_options(self.config, _verify)
+        self.http_client = httpx.AsyncClient(http2=_http2, **_client_kwargs)
         # Reuse the primary client when HTTP/2 is already off; otherwise keep a
         # dedicated HTTP/1.1 client for ChatGPT passthrough.
         self.http_client_h1 = (
-            self.http_client
-            if not self.config.http2
-            else httpx.AsyncClient(http2=False, **_client_kwargs)
+            self.http_client if not _http2 else httpx.AsyncClient(http2=False, **_client_kwargs)
         )
         logger.info("Headroom Proxy started")
         logger.info(f"Optimization: {'ENABLED' if self.config.optimize else 'DISABLED'}")
@@ -1411,7 +1419,7 @@ class HeadroomProxy(
         logger.info(
             f"Connection Pool: max_connections={self.config.max_connections}, "
             f"max_keepalive={self.config.max_keepalive_connections}, "
-            f"http2={'ENABLED' if self.config.http2 else 'DISABLED'}"
+            f"http2={'ENABLED' if _http2 else 'DISABLED'}"
         )
 
         # Unit 4 pre-upstream concurrency announcement. Report the resolved
@@ -4189,6 +4197,7 @@ def _proxy_config_from_env() -> ProxyConfig:
         max_keepalive_connections=_get_env_int("HEADROOM_MAX_KEEPALIVE", 100),
         keepalive_expiry=_get_env_float("HEADROOM_KEEPALIVE_EXPIRY", 90.0),
         http2=_get_env_bool("HEADROOM_HTTP2", True),
+        http_proxy=os.environ.get("HEADROOM_HTTP_PROXY") or None,
         periodic_toin_stats_enabled=_get_env_bool("HEADROOM_PERIODIC_TOIN_STATS", True),
         proxy_token=os.environ.get("HEADROOM_PROXY_TOKEN") or None,
         offline=_get_env_bool("HEADROOM_OFFLINE", False),
@@ -4246,7 +4255,7 @@ def run_server(
 
     # Format connection pool info
     pool_info = f"max={config.max_connections}, keepalive={config.max_keepalive_connections}"
-    http2_status = "ENABLED" if config.http2 else "DISABLED"
+    http2_status = "ENABLED" if (config.http2 and not config.http_proxy) else "DISABLED"
 
     backend_status = format_backend_status(
         backend=config.backend,
@@ -4581,6 +4590,10 @@ if __name__ == "__main__":
         help="Disable HTTP/2 (enabled by default for better throughput)",
     )
     parser.add_argument(
+        "--http-proxy",
+        help=("HTTP proxy URL for upstream provider requests only (env: HEADROOM_HTTP_PROXY)"),
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=1,
@@ -4832,6 +4845,7 @@ if __name__ == "__main__":
         max_keepalive_connections=_get_env_int("HEADROOM_MAX_KEEPALIVE", args.max_keepalive),
         keepalive_expiry=_get_env_float("HEADROOM_KEEPALIVE_EXPIRY", args.keepalive_expiry),
         http2=not args.no_http2 and _get_env_bool("HEADROOM_HTTP2", True),
+        http_proxy=_get_env_str("HEADROOM_HTTP_PROXY", args.http_proxy or "") or None,
         read_maturation=_get_env_bool("HEADROOM_READ_MATURATION", False),
         read_maturation_quiesce_turns=_get_env_int("HEADROOM_READ_MATURATION_QUIESCE_TURNS", 5),
         read_maturation_max_hold_turns=_get_env_int("HEADROOM_READ_MATURATION_MAX_HOLD_TURNS", 25),

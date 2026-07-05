@@ -199,6 +199,15 @@ def dashboard(port: int, no_open: bool) -> None:
     ),
 )
 @click.option(
+    "--http-proxy",
+    default=None,
+    envvar="HEADROOM_HTTP_PROXY",
+    help=(
+        "HTTP proxy URL for upstream provider requests only "
+        "(HTTPS uses CONNECT; env: HEADROOM_HTTP_PROXY)."
+    ),
+)
+@click.option(
     "--keepalive-expiry",
     "keepalive_expiry",
     default=90.0,
@@ -845,6 +854,7 @@ def proxy(
     max_keepalive_connections: int,
     keepalive_expiry: float,
     http2: bool,
+    http_proxy: str | None,
     intercept_tool_results: bool,
     no_optimize: bool,
     no_cache: bool,
@@ -1126,6 +1136,7 @@ def proxy(
         max_keepalive_connections=max_keepalive_connections,
         keepalive_expiry=keepalive_expiry,
         http2=http2,
+        http_proxy=http_proxy,
         log_file=None if is_stateless else log_file,
         log_full_messages=log_messages
         or os.environ.get("HEADROOM_LOG_MESSAGES", "").lower() in ("true", "1", "yes", "on"),

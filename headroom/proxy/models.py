@@ -287,6 +287,7 @@ class ProxyConfig:
     max_keepalive_connections: int = 100
     keepalive_expiry: float = 90.0
     http2: bool = True
+    http_proxy: str | None = None
 
     # Memory System
     memory_enabled: bool = False
