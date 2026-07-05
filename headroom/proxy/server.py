@@ -1649,6 +1649,11 @@ class HeadroomProxy(
         # Stop all quota trackers via the registry
         await get_quota_registry().stop_all()
 
+        # Persist any savings the tracker's write throttle is still holding, so
+        # a graceful shutdown doesn't drop the last few requests' totals.
+        with contextlib.suppress(Exception):
+            self.metrics.savings_tracker.flush()
+
         # Print final stats
         self._print_summary()
 
