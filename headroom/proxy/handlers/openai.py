@@ -67,6 +67,13 @@ _OPENAI_RESPONSES_UNIT_PARALLELISM_MAX = 16
 _OPENAI_RESPONSES_UNIT_CACHE_INIT_LOCK = threading.RLock()
 _OPENAI_RESPONSES_UNIT_EXECUTOR_LOCK = threading.RLock()
 _OPENAI_RESPONSES_UNIT_EXECUTOR: ThreadPoolExecutor | None = None
+_CODEX_WS_COMPRESSION_TIMEOUT_SECONDS = 5.0
+
+
+def _codex_ws_compression_timeout_seconds() -> float:
+    return min(COMPRESSION_TIMEOUT_SECONDS, _CODEX_WS_COMPRESSION_TIMEOUT_SECONDS)
+
+
 _WS_ALLOWED_ORIGINS_ENV = "HEADROOM_WS_ORIGINS"
 _CORS_ALLOWED_ORIGINS_ENV = "HEADROOM_CORS_ORIGINS"
 _CODEX_RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite"
@@ -1756,6 +1763,7 @@ class OpenAIHandlerMixin:
         *,
         model: str,
         request_id: str,
+        timeout: float = COMPRESSION_TIMEOUT_SECONDS,
     ) -> tuple[dict[str, Any], bool, int, list[str], str | None, int, int, int, dict[str, float]]:
         timing: dict[str, float] = {}
 
@@ -1778,7 +1786,7 @@ class OpenAIHandlerMixin:
 
         result = await self._run_compression_in_executor(
             _compress,
-            timeout=COMPRESSION_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
         if len(result) == 8:
             return (*result, timing)
@@ -4864,6 +4872,9 @@ class OpenAIHandlerMixin:
                                 _inner,
                                 model=_model,
                                 request_id=request_id,
+                                timeout=_codex_ws_compression_timeout_seconds()
+                                if client == "codex"
+                                else COMPRESSION_TIMEOUT_SECONDS,
                             )
                             for _timing_name, _timing_ms in _ws_compression_timing.items():
                                 _record_ws_compression_timing(_timing_name, _timing_ms)
@@ -4949,12 +4960,14 @@ class OpenAIHandlerMixin:
                                 bytes_before=_ws_frame_bytes,
                                 failed=True,
                             )
+                    _timeout_failure = isinstance(_ce, asyncio.TimeoutError)
                     logger.warning(
-                        f"[{request_id}] WS /v1/responses compression failed "
+                        f"[{request_id}] WS /v1/responses compression "
+                        f"{'timed out' if _timeout_failure else 'failed'} "
                         f"(bytes={_ws_frame_bytes}): {type(_ce).__name__}: {_ce}"
                     )
                     _log_ws_passthrough(
-                        "compression_exception",
+                        "compression_timeout" if _timeout_failure else "compression_exception",
                         frame_index=1,
                         raw_bytes=_ws_frame_bytes,
                         frame_type="response.create" if body else "unknown",
@@ -5175,12 +5188,45 @@ class OpenAIHandlerMixin:
                                     inner_payload,
                                     model=model_for_frame,
                                     request_id=request_id,
+                                    timeout=_codex_ws_compression_timeout_seconds()
+                                    if client == "codex"
+                                    else COMPRESSION_TIMEOUT_SECONDS,
                                 )
-                                for (
-                                    _timing_name,
-                                    _timing_ms,
-                                ) in frame_compression_timing.items():
+                                for _timing_name, _timing_ms in frame_compression_timing.items():
                                     _record_ws_compression_timing(_timing_name, _timing_ms)
+                            except asyncio.TimeoutError as _frame_err:
+                                frame_compression_elapsed_ms = (
+                                    time.perf_counter() - _compression_started
+                                ) * 1000.0
+                                if frame_compression_elapsed_ms > 0:
+                                    record_frame = getattr(
+                                        getattr(self, "metrics", None),
+                                        "record_codex_ws_frame",
+                                        None,
+                                    )
+                                    if record_frame is not None:
+                                        record_frame(
+                                            elapsed_ms=frame_compression_elapsed_ms,
+                                            bytes_before=len(
+                                                raw_msg.encode("utf-8", errors="replace")
+                                            ),
+                                            failed=True,
+                                        )
+                                logger.warning(
+                                    "[%s] WS /v1/responses frame compression "
+                                    "timed out; forwarding original: %s: %s",
+                                    request_id,
+                                    type(_frame_err).__name__,
+                                    _frame_err,
+                                )
+                                _log_ws_passthrough(
+                                    "compression_timeout",
+                                    frame_index=frame_index,
+                                    raw_bytes=len(raw_msg.encode("utf-8", errors="replace")),
+                                    frame_type="response.create",
+                                    model=str(inner_payload.get("model") or "unknown"),
+                                )
+                                return raw_msg, False, "compression_timeout"
                             finally:
                                 frame_compression_elapsed_ms = (
                                     time.perf_counter() - _compression_started
