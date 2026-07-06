@@ -3689,20 +3689,20 @@ class OpenAIHandlerMixin:
                 "http_upstream_request",
                 request_id=request_id,
                 transport="http",
-            direction="headroom_to_upstream",
-            method="POST",
-            url=url,
-            headers=headers,
-            body=body,
-            metadata={
-                "path": request.url.path,
-                "stream": stream,
-                "auth_mode": auth_mode.value,
-                "is_chatgpt_auth": is_chatgpt_auth,
-                "tokens_saved": tokens_saved,
-                "transforms_applied": transforms_applied,
-            },
-        )
+                direction="headroom_to_upstream",
+                method="POST",
+                url=url,
+                headers=headers,
+                body=body,
+                metadata={
+                    "path": request.url.path,
+                    "stream": stream,
+                    "auth_mode": auth_mode.value,
+                    "is_chatgpt_auth": is_chatgpt_auth,
+                    "tokens_saved": tokens_saved,
+                    "transforms_applied": transforms_applied,
+                },
+            )
 
         # Waste-signal detection for the Responses path (#820). The transform
         # pipeline never runs here (compression goes through CompressionUnits),
@@ -5404,14 +5404,14 @@ class OpenAIHandlerMixin:
                                         _shape_modified,
                                         _shape_labels,
                                         _shape_reason,
-                                ) = _shape_openai_response_create_frame(
-                                    msg,
-                                    input_tokens=_openai_response_create_frame_input_tokens(
+                                    ) = _shape_openai_response_create_frame(
                                         msg,
-                                        self.openai_provider,
-                                    ),
-                                    conversation_key=f"ws:{session_id}",
-                                )
+                                        input_tokens=_openai_response_create_frame_input_tokens(
+                                            msg,
+                                            self.openai_provider,
+                                        ),
+                                        conversation_key=f"ws:{session_id}",
+                                    )
                                     _append_unique_transforms(
                                         transforms_applied,
                                         _shape_labels,

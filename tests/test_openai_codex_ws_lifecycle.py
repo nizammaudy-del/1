@@ -349,10 +349,7 @@ async def test_ws_first_frame_output_shaper_rewrites_without_compression(monkeyp
     payload = sent["response"]
     assert "<headroom_output_shaping>" in payload["instructions"]
     assert payload["text"]["verbosity"] == "low"
-    assert any(
-        t == "output_shaper:verbosity:L2"
-        for t in outcomes[-1].transforms_applied
-    )
+    assert any(t == "output_shaper:verbosity:L2" for t in outcomes[-1].transforms_applied)
 
 
 @pytest.mark.asyncio
@@ -455,6 +452,8 @@ async def test_ws_output_shaper_holdout_labels_without_rewrite(monkeypatch):
     transforms = outcomes[-1].transforms_applied
     assert any(t.startswith("output_shaper:control:") for t in transforms)
     assert not any(t == "output_shaper:verbosity:L2" for t in transforms)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------

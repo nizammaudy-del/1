@@ -301,10 +301,7 @@ class TestOpenAIResponsesClassify:
                 "output": "ok",
             }
         ]
-        assert (
-            classify_openai_responses_input(input_data)
-            == TurnKind.MECHANICAL_CONTINUATION
-        )
+        assert classify_openai_responses_input(input_data) == TurnKind.MECHANICAL_CONTINUATION
 
     def test_mixed_user_message_and_tool_output_is_new_ask(self):
         input_data = [
