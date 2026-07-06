@@ -875,6 +875,7 @@ class HeadroomProxy(
         # HTTP/1.1-only client for ChatGPT passthrough (Cloudflare challenges
         # our HTTP/2 fingerprint on its sensitive account endpoints).
         self.http_client_h1: httpx.AsyncClient | None = None
+        self._shutdown_event: asyncio.Event | None = None
 
         # Shared cold-start warmup registry (populated by startup()).
         # Holds typed slots with loaded / loading / null / error status for
@@ -1386,6 +1387,7 @@ class HeadroomProxy(
 
     async def startup(self):
         """Initialize async resources."""
+        self._get_shutdown_event().clear()
         self.pipeline_extensions.emit(
             PipelineStage.PRE_START,
             operation="proxy.startup",
@@ -1627,6 +1629,7 @@ class HeadroomProxy(
 
     async def shutdown(self):
         """Cleanup async resources."""
+        self._get_shutdown_event().set()
         if self.http_client_h1 and self.http_client_h1 is not self.http_client:
             await self.http_client_h1.aclose()
         self.http_client_h1 = None
@@ -1727,6 +1730,33 @@ class HeadroomProxy(
 
         return extract_tags(headers)
 
+    def _get_shutdown_event(self) -> asyncio.Event:
+        event = getattr(self, "_shutdown_event", None)
+        if event is None:
+            event = asyncio.Event()
+            self._shutdown_event = event
+        return event
+
+    async def _wait_for_retry_delay_or_shutdown(self, delay_seconds: float) -> bool:
+        try:
+            await asyncio.wait_for(self._get_shutdown_event().wait(), timeout=delay_seconds)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def _shutdown_retry_response(self, method: str, url: str) -> httpx.Response:
+        return httpx.Response(
+            503,
+            request=httpx.Request(method, url),
+            headers={"content-type": "application/json", "retry-after": "0"},
+            json={
+                "error": {
+                    "type": "shutdown",
+                    "message": "Proxy is shutting down; retry backoff cancelled.",
+                }
+            },
+        )
+
     async def _retry_request(
         self,
         method: str,
@@ -1822,7 +1852,13 @@ class HeadroomProxy(
                             f"Upstream {response.status_code} (attempt {attempt + 1}), "
                             f"retrying in {delay_ms:.0f}ms"
                         )
-                        await asyncio.sleep(delay_ms / 1000)
+                        if await self._wait_for_retry_delay_or_shutdown(delay_ms / 1000):
+                            logger.info(
+                                "Shutdown interrupted retry backoff for %s %s",
+                                method,
+                                path_for_log or "<upstream-url>",
+                            )
+                            return self._shutdown_retry_response(method, url)
                         continue
 
                     # Don't retry other client errors (4xx)
@@ -1855,7 +1891,13 @@ class HeadroomProxy(
                 logger.warning(
                     f"Request failed (attempt {attempt + 1}), retrying in {delay_with_jitter:.0f}ms: {e}"
                 )
-                await asyncio.sleep(delay_with_jitter / 1000)
+                if await self._wait_for_retry_delay_or_shutdown(delay_with_jitter / 1000):
+                    logger.info(
+                        "Shutdown interrupted retry backoff for %s %s",
+                        method,
+                        path_for_log or "<upstream-url>",
+                    )
+                    return self._shutdown_retry_response(method, url)
 
         if last_error is None:
             raise RuntimeError(

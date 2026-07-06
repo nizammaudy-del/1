@@ -555,6 +555,51 @@ def test_retry_request_retries_connect_timeout() -> None:
     assert proxy.http_client.attempts == 2
 
 
+def test_retry_request_returns_503_when_shutdown_interrupts_retry_sleep() -> None:
+    class _Always429Client:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def post(self, url, **kwargs):  # type: ignore[no-untyped-def]
+            self.attempts += 1
+            return httpx.Response(
+                429,
+                request=httpx.Request("POST", url),
+                json={"error": {"message": "slow down"}},
+                headers={"retry-after": "30"},
+            )
+
+    proxy = object.__new__(HeadroomProxy)
+    proxy.http_client = _Always429Client()
+    proxy.config = SimpleNamespace(
+        retry_enabled=True,
+        retry_max_attempts=3,
+        retry_base_delay_ms=30000,
+        retry_max_delay_ms=30000,
+    )
+    proxy._shutdown_event = asyncio.Event()
+    proxy._shutdown_event.set()
+
+    response = asyncio.run(
+        proxy._retry_request(
+            "POST",
+            "https://api.anthropic.test/v1/messages",
+            {},
+            {"model": "claude-3-5-sonnet"},
+        )
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "type": "shutdown",
+            "message": "Proxy is shutting down; retry backoff cancelled.",
+        }
+    }
+    assert response.headers["retry-after"] == "0"
+    assert proxy.http_client.attempts == 1
+
+
 def test_anthropic_tool_sort_and_context_append_helpers() -> None:
     tools = [
         {"type": "function", "function": {"name": "beta"}},
