@@ -2256,6 +2256,22 @@ class OpenAIHandlerMixin:
                 # Flag compression failure for observability
                 _compression_failed = True
 
+        # Cache-safety (ALL modes): forward the previously-cached (compressed)
+        # prefix byte-identical, so freezing can't bust the prompt cache. See the
+        # matching guard in the Anthropic handler for the full rationale. Append-
+        # only-guarded and idempotent (cache mode already replays).
+        from headroom.cache.prefix_tracker import overlay_cached_prefix
+
+        _ov = overlay_cached_prefix(
+            optimized_messages,
+            original_client_messages,
+            openai_prefix_tracker.get_last_original_messages(),
+            openai_prefix_tracker.get_last_forwarded_messages(),
+        )
+        if _ov != optimized_messages:
+            optimized_messages = _ov
+            optimized_tokens = tokenizer.count_messages(optimized_messages)
+
         # Guard: if "optimization" inflated tokens, revert to originals
         if optimized_tokens > original_tokens:
             logger.warning(
@@ -2352,14 +2368,27 @@ class OpenAIHandlerMixin:
                 optimized_messages = injector.inject_into_system_message(optimized_messages)
 
             if self.config.ccr_inject_tool:
-                from headroom.proxy.helpers import apply_session_sticky_ccr_tool
+                from headroom.proxy.helpers import (
+                    apply_session_sticky_ccr_tool,
+                    has_new_ccr_markers,
+                )
 
+                # #1850: markers replayed from overlay_cached_prefix are
+                # historical; only markers NEW this turn should drive injection,
+                # else we re-inject the tool every frozen turn and bust the
+                # *tools* cache segment (undoing the overlay's messages-prefix
+                # cache-safety).
+                has_new_compressed_content = has_new_ccr_markers(
+                    current_detected_hashes=injector.detected_hashes,
+                    previous_forwarded_messages=openai_prefix_tracker.get_last_forwarded_messages(),
+                    provider="openai",
+                )
                 tools, ccr_tool_injected = apply_session_sticky_ccr_tool(
                     provider="openai",
                     session_id=openai_session_id,
                     request_id=request_id,
                     existing_tools=tools,
-                    has_compressed_content_this_turn=injector.has_compressed_content,
+                    has_compressed_content_this_turn=has_new_compressed_content,
                 )
                 if ccr_tool_injected:
                     logger.debug(

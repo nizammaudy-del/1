@@ -2566,6 +2566,43 @@ def _reset_session_ccr_tracker_for_test() -> None:
         _session_ccr_tracker = None
 
 
+def has_new_ccr_markers(
+    *,
+    current_detected_hashes: list[str],
+    previous_forwarded_messages: list[dict[str, Any]] | None,
+    provider: Literal["anthropic", "openai", "google"],
+) -> bool:
+    """Whether the about-to-forward content carries CCR markers NOT already forwarded.
+
+    ``overlay_cached_prefix`` (#1850) replays the previously-forwarded (compressed)
+    prefix byte-identical to keep the prompt cache warm — which reintroduces the
+    ``hash=…`` markers that prefix already carried. Those markers are *historical*:
+    the agent saw them last turn and the retrieve-tool state was already settled
+    for them. Only markers that are genuinely NEW this turn justify overriding the
+    tool-injection deferral (#1006); counting the replayed ones would re-inject the
+    tool on every frozen turn and bust the *tools* cache segment (undoing the very
+    cache-safety the overlay provides).
+
+    Returns True iff ``current_detected_hashes`` contains a hash that is not present
+    in ``previous_forwarded_messages``.
+    """
+    current = set(current_detected_hashes)
+    if not current:
+        return False
+    if not previous_forwarded_messages:
+        # No prior forward → every marker is new (genuine first CCR turn).
+        return True
+    from headroom.ccr.tool_injection import CCRToolInjector
+
+    prev = CCRToolInjector(
+        provider=provider,
+        inject_tool=False,
+        inject_system_instructions=False,
+    )
+    prev.scan_for_markers(previous_forwarded_messages)
+    return bool(current - set(prev.detected_hashes))
+
+
 def should_inject_ccr_tool(
     *,
     configured_inject_tool: bool,
