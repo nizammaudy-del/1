@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- `headroom wrap claude` no longer leaves a dead `ANTHROPIC_BASE_URL` in a
+  project's `.claude/settings.local.json` after an unclean exit (`SIGKILL`,
+  OOM, reboot, or terminal/tmux close via `SIGHUP`, which was not caught).
+  `_write_claude_wrap_base_url`/`_restore_claude_wrap_base_url` only removed
+  or restored the entry from the wrap process's own `finally` block, so a
+  crash skipped it and every later bare `claude` invocation in that project
+  inherited the stale proxy URL and hung indefinitely retrying a dead port.
+  A wrap session now stamps a sidecar marker (pid, port, prior value); the
+  next `wrap`, `unwrap`, or `headroom doctor` run detects a marker whose pid
+  is dead or reused and restores the recorded prior value automatically.
+  `claude()` also now catches `SIGHUP` alongside the existing `SIGTERM`
+  handler ([#1768](https://github.com/headroomlabs-ai/headroom/issues/1768)).
 - Non-finite values (`NaN`, `Infinity`) in `proxy_savings.json` or in upstream
   cost/token metadata no longer crash the proxy or corrupt the savings
   dashboard. `SavingsTracker`'s numeric coercion caught only `TypeError` and
