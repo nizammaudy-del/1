@@ -181,16 +181,57 @@ def detect_content_type(content: str) -> DetectionResult:
     return DetectionResult(ContentType.PLAIN_TEXT, 0.5, {})
 
 
+def _decode_concatenated_json(content: str) -> list | None:
+    """Decode a run of whitespace-separated top-level JSON values.
+
+    Web search tools (SerpAPI, Tavily, custom backends) commonly emit
+    back-to-back JSON objects separated only by whitespace rather than a real
+    array: ``{"title": ...} {"title": ...} {"title": ...}``. Returns the list
+    of decoded values, or None if the text isn't a clean run of JSON values
+    separated only by whitespace.
+    """
+    decoder = json.JSONDecoder()
+    idx, length = 0, len(content)
+    items: list = []
+    while idx < length:
+        while idx < length and content[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+        try:
+            value, idx = decoder.raw_decode(content, idx)
+        except ValueError:
+            return None
+        items.append(value)
+    return items or None
+
+
+def normalize_concatenated_json(content: str) -> str | None:
+    """Convert whitespace-separated JSON objects into a canonical JSON array.
+
+    SmartCrusher only compresses JSON arrays, so this rewrites the
+    space-separated web_search shape (``{...} {...} {...}``) into
+    ``[{...}, {...}, {...}]``. Returns None unless the content is two or more
+    whitespace-separated JSON objects.
+    """
+    stripped = content.strip()
+    if not stripped.startswith("{"):
+        return None
+    items = _decode_concatenated_json(stripped)
+    if items and len(items) >= 2 and all(isinstance(item, dict) for item in items):
+        return json.dumps(items)
+    return None
+
+
 def _try_detect_json(content: str) -> DetectionResult | None:
     """Try to detect JSON array content."""
     content = content.strip()
 
-    # Quick check: must start with [ for array
-    if not content.startswith("["):
-        return None
-
-    try:
-        parsed = json.loads(content)
+    if content.startswith("["):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return None
         if isinstance(parsed, list):
             # Check if it's a list of dicts (SmartCrusher compatible)
             if parsed and all(isinstance(item, dict) for item in parsed):
@@ -205,8 +246,20 @@ def _try_detect_json(content: str) -> DetectionResult | None:
                 0.8,
                 {"item_count": len(parsed), "is_dict_array": False},
             )
-    except json.JSONDecodeError:
-        pass
+        return None
+
+    # Space-separated JSON objects (typical web_search output) aren't a valid
+    # array, so they'd fall through to PLAIN_TEXT and skip SmartCrusher at 0%
+    # compression. SmartCrusher normalizes this shape to a real array before
+    # crushing (#1741).
+    if content.startswith("{"):
+        items = _decode_concatenated_json(content)
+        if items and len(items) >= 2 and all(isinstance(item, dict) for item in items):
+            return DetectionResult(
+                ContentType.JSON_ARRAY,
+                1.0,
+                {"item_count": len(items), "is_dict_array": True, "concatenated": True},
+            )
 
     return None
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from headroom.transforms.content_detector import (
     ContentType,
     _try_detect_code,
@@ -10,6 +12,7 @@ from headroom.transforms.content_detector import (
     _try_detect_search,
     detect_content_type,
     is_json_array_of_dicts,
+    normalize_concatenated_json,
 )
 from headroom.transforms.error_detection import (
     ERROR_INDICATOR_KEYWORDS,
@@ -57,6 +60,46 @@ def test_json_detection_distinguishes_dict_arrays_and_other_lists() -> None:
     assert _try_detect_json("[not valid json") is None
     assert is_json_array_of_dicts('[{"id": 1}]') is True
     assert is_json_array_of_dicts('["value"]') is False
+
+
+def test_space_separated_json_objects_detected_as_array() -> None:
+    # Typical web_search output: back-to-back JSON objects, no array brackets.
+    content = " ".join(
+        json.dumps({"title": f"Result {i}", "url": f"http://example.com/{i}"}) for i in range(3)
+    )
+    result = _try_detect_json(content)
+    assert result is not None
+    assert result.content_type is ContentType.JSON_ARRAY
+    assert result.confidence == 1.0
+    assert result.metadata == {"item_count": 3, "is_dict_array": True, "concatenated": True}
+
+    # Reaches the same verdict through the top-level detector (not PLAIN_TEXT).
+    assert detect_content_type(content).content_type is ContentType.JSON_ARRAY
+    assert is_json_array_of_dicts(content) is True
+
+    # Newline separation is just as common and must also be recognized.
+    newline_sep = "\n".join(json.dumps({"id": i, "snippet": "x"}) for i in range(2))
+    assert _try_detect_json(newline_sep).content_type is ContentType.JSON_ARRAY
+
+
+def test_space_separated_json_detection_is_conservative() -> None:
+    # A single object is not an array — must not be claimed.
+    assert _try_detect_json('{"id": 1}') is None
+    # Objects interleaved with prose are not clean concatenated JSON.
+    assert _try_detect_json('{"id": 1} then some prose {"id": 2}') is None
+    # Scalars/strings between objects disqualify the run of dicts.
+    assert _try_detect_json('{"id": 1} "loose string"') is None
+
+
+def test_normalize_concatenated_json_roundtrips_to_array() -> None:
+    content = '{"a": 1} {"b": 2}'
+    normalized = normalize_concatenated_json(content)
+    assert normalized is not None
+    assert json.loads(normalized) == [{"a": 1}, {"b": 2}]
+
+    # Already-valid arrays and single objects are left for the caller as-is.
+    assert normalize_concatenated_json('[{"a": 1}]') is None
+    assert normalize_concatenated_json('{"a": 1}') is None
 
 
 def test_diff_detection_tracks_headers_and_changes() -> None:
