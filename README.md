@@ -279,6 +279,7 @@ Platform support note: macOS auth reuse via Copilot CLI Keychain storage has bee
 - **Kompress-v2-base** — our HuggingFace model, trained on agentic traces.
 - **Image compression** — 40–90% reduction via trained ML router.
 - **CacheAligner** — stabilizes prefixes so Anthropic/OpenAI KV caches actually hit.
+- **Live-zone compression** — compress fresh tool output while keeping frozen prefix byte-stable.
 - **CCR** — reversible compression; LLM retrieves originals on demand.
 - **Cross-agent memory** — shared store, agent provenance, auto-dedup.
 - **SharedContext** — compressed context passing across multi-agent workflows.
