@@ -80,7 +80,7 @@ class _ChatGPTAccountRequest:
 class _PassthroughRequest:
     method = "GET"
     headers = {}
-    url = SimpleNamespace(path="/favicon.ico", query="")
+    url = SimpleNamespace(path="/some/other/path", query="")
 
     async def body(self) -> bytes:
         return b""
