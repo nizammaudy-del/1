@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
+import stat
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -294,6 +296,66 @@ def test_savings_tracker_save_does_not_flock_target_inode_before_replace(tmp_pat
     assert flock_calls == []
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["lifetime"]["tokens_saved"] == 15
+
+
+def test_savings_tracker_save_fsyncs_parent_directory(tmp_path, monkeypatch):
+    # The file fsync persists contents, but the rename isn't durable until the
+    # parent directory is fsynced too — without it a crash can drop the last
+    # save. Assert a directory fd is fsynced on save. (FP4b)
+    path = tmp_path / "proxy_savings.json"
+    tracker = SavingsTracker(path=str(path))
+
+    real_fsync = os.fsync
+    dir_fds_synced: list[int] = []
+
+    def _spy_fsync(fd: int) -> None:
+        try:
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                dir_fds_synced.append(fd)
+        except OSError:
+            pass
+        real_fsync(fd)
+
+    monkeypatch.setattr(savings_tracker_module.os, "fsync", _spy_fsync)
+
+    tracker.record_request(
+        model="gpt-4o",
+        input_tokens=120,
+        tokens_saved=10,
+        timestamp="2026-03-27T09:00:00Z",
+    )
+
+    # Parent directory fsynced (rename durable) and the save still landed intact.
+    assert dir_fds_synced, "parent directory was never fsynced after os.replace"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["lifetime"]["tokens_saved"] == 10
+
+
+def test_savings_tracker_save_survives_directory_fsync_failure(tmp_path, monkeypatch):
+    # On Windows and some virtual filesystems the directory fsync fails — the
+    # save must still complete because the file and atomic rename are already
+    # durable on their own. (FP4b)
+    path = tmp_path / "proxy_savings.json"
+    tracker = SavingsTracker(path=str(path))
+
+    real_open = os.open
+
+    def _failing_open(target, *args, **kwargs):
+        if str(target) == str(path.parent):
+            raise OSError("directory fsync unsupported")
+        return real_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(savings_tracker_module.os, "open", _failing_open)
+
+    tracker.record_request(
+        model="gpt-4o",
+        input_tokens=120,
+        tokens_saved=10,
+        timestamp="2026-03-27T09:00:00Z",
+    )
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["lifetime"]["tokens_saved"] == 10
 
 
 def test_litellm_resolution_and_savings_estimation_fallbacks(monkeypatch):
