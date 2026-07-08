@@ -181,6 +181,16 @@ def detect_content_type(content: str) -> DetectionResult:
     return DetectionResult(ContentType.PLAIN_TEXT, 0.5, {})
 
 
+_JSON_DECODER = json.JSONDecoder()
+# The decoded JSON value must be at least this fraction of the content for a
+# WRAPPED payload to still count as JSON: a small structural wrapper (a harness
+# observation shell, an ``Exit code:`` prefix) around a JSON body passes, but a
+# prose/code blob that merely contains a JSON fragment does not. Fraction-based
+# so it is size-correct — a large JSON with a proportionally small wrapper passes,
+# a short mostly-prose string does not. (Pure JSON never reaches this check.)
+_JSON_MIN_BULK_FRACTION = 0.6
+
+
 def _decode_concatenated_json(content: str) -> list | None:
     """Decode a run of whitespace-separated top-level JSON values.
 
@@ -224,44 +234,64 @@ def normalize_concatenated_json(content: str) -> str | None:
 
 
 def _try_detect_json(content: str) -> DetectionResult | None:
-    """Try to detect JSON array content."""
-    content = content.strip()
+    """Detect JSON by PARSING, not by surface patterns.
 
-    if content.startswith("["):
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(parsed, list):
-            # Check if it's a list of dicts (SmartCrusher compatible)
-            if parsed and all(isinstance(item, dict) for item in parsed):
+    JSON is whatever parses as JSON — objects, arrays, and any nesting are all
+    equally JSON, so a leading-``[`` check misses every ``{…}`` config/data file.
+    Tool output is often a JSON value wrapped in a little surrounding text (a
+    harness observation shell, an ``Exit code:`` prefix); we decode one JSON value
+    out of the payload and accept it when it is the bulk of the content, which
+    tolerates ANY wrapper without hard-coding a harness's tags. The whitespace-
+    separated web_search shape (``{...} {...}``, #1741) is detected too and
+    normalized to a real array before crushing (see normalize_concatenated_json).
+    """
+    stripped = content.strip()
+    if not stripped:
+        return None
+
+    try:
+        value = json.loads(stripped)
+    except ValueError:
+        # Not pure JSON. First: a run of whitespace-separated top-level JSON
+        # objects (web_search output, #1741) -> JSON_ARRAY.
+        if stripped.startswith("{"):
+            items = _decode_concatenated_json(stripped)
+            if items and len(items) >= 2 and all(isinstance(item, dict) for item in items):
                 return DetectionResult(
                     ContentType.JSON_ARRAY,
                     1.0,
-                    {"item_count": len(parsed), "is_dict_array": True},
+                    {"item_count": len(items), "is_dict_array": True, "concatenated": True},
                 )
-            # It's a list but not of dicts
-            return DetectionResult(
-                ContentType.JSON_ARRAY,
-                0.8,
-                {"item_count": len(parsed), "is_dict_array": False},
-            )
+        # Otherwise decode one JSON value out of a small wrapped payload.
+        start = min((i for i in (stripped.find("{"), stripped.find("[")) if i >= 0), default=-1)
+        if start < 0:
+            return None
+        try:
+            value, end = _JSON_DECODER.raw_decode(stripped, start)
+        except ValueError:
+            return None
+        # Accept only when the decoded JSON is the BULK of the content (see
+        # _JSON_MIN_BULK_FRACTION) — a small structural wrapper around a JSON body,
+        # not a prose/code blob that merely contains a JSON fragment.
+        if (end - start) < len(stripped) * _JSON_MIN_BULK_FRACTION:
+            return None
+
+    # A bare scalar (42, "s", true) is not structured data worth routing as JSON.
+    if not isinstance(value, (dict, list)):
         return None
 
-    # Space-separated JSON objects (typical web_search output) aren't a valid
-    # array, so they'd fall through to PLAIN_TEXT and skip SmartCrusher at 0%
-    # compression. SmartCrusher normalizes this shape to a real array before
-    # crushing (#1741).
-    if content.startswith("{"):
-        items = _decode_concatenated_json(content)
-        if items and len(items) >= 2 and all(isinstance(item, dict) for item in items):
-            return DetectionResult(
-                ContentType.JSON_ARRAY,
-                1.0,
-                {"item_count": len(items), "is_dict_array": True, "concatenated": True},
-            )
-
-    return None
+    if isinstance(value, list):
+        is_dict_array = bool(value) and all(isinstance(item, dict) for item in value)
+        return DetectionResult(
+            ContentType.JSON_ARRAY,
+            1.0 if is_dict_array else 0.8,
+            {"item_count": len(value), "is_dict_array": is_dict_array},
+        )
+    return DetectionResult(
+        ContentType.JSON_ARRAY,
+        0.9,
+        {"is_dict_array": False, "is_object": True},
+    )
 
 
 def _try_detect_diff(content: str) -> DetectionResult | None:

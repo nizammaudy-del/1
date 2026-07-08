@@ -955,3 +955,33 @@ class TestHasNewCcrMarkers:
             )
             is False
         )
+
+
+def test_strict_frozen_count_tool_and_function_tail_are_mutable():
+    # OpenAI function-calling harnesses (Kimi / fireworks) end each turn with a
+    # role:"tool" (or legacy role:"function") observation — NOT role:"user".
+    # Gating the mutable tail on role=="user" froze the whole conversation on
+    # every such turn => zero compression. Tool/function observations must be
+    # treated as the mutable delta (freeze all-but-last), like a user obs.
+    from headroom.proxy.handlers.openai import OpenAIHandlerMixin as M
+
+    # role:tool tail -> only the last message is mutable (frozen = final_idx)
+    assert (
+        M._strict_previous_turn_frozen_count(
+            [{"role": "user"}, {"role": "assistant"}, {"role": "tool"}], 0
+        )
+        == 2
+    )
+    assert (
+        M._strict_previous_turn_frozen_count(
+            [{"role": "user"}, {"role": "assistant"}, {"role": "function"}], 0
+        )
+        == 2
+    )
+    # assistant/system tail is NOT an observation -> freeze everything
+    assert (
+        M._strict_previous_turn_frozen_count(
+            [{"role": "user"}, {"role": "tool"}, {"role": "assistant"}], 0
+        )
+        == 3
+    )

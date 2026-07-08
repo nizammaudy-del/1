@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -277,6 +278,19 @@ def proxy_pipeline_kwargs(config: object) -> dict[str, object]:
     )
     if smart_crusher_with_compaction is not None:
         kwargs["smart_crusher_with_compaction"] = bool(smart_crusher_with_compaction)
+
+    # Lower the block-compression char floor (default 500) so modest tool outputs
+    # are eligible for the LOSSY path too. Matters in cache mode, where the only
+    # compressible content each turn is a single (often small) delta observation;
+    # a 500-char floor buckets most of them as "small" (skipped). Env-gated so it
+    # only changes behavior when explicitly set; lossless folding has no floor and
+    # is unaffected.
+    _min_chars_block = os.environ.get("HEADROOM_MIN_CHARS_FOR_BLOCK")
+    if _min_chars_block:
+        try:
+            kwargs["min_chars_for_block_compression"] = int(_min_chars_block)
+        except ValueError:
+            pass
 
     return kwargs
 

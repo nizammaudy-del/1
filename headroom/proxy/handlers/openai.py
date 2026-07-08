@@ -985,11 +985,24 @@ class OpenAIHandlerMixin:
         messages: list[dict[str, Any]],
         base_frozen_count: int,
     ) -> int:
-        """Freeze all prior turns in cache mode; only final user turn is mutable."""
+        """Freeze all prior turns in cache mode; only the final OBSERVATION turn
+        is mutable (the newest delta we compress-once-then-freeze).
+
+        The newest observation is the compressible delta. Its role depends on the
+        harness: text/back-tick harnesses (mini-swe-agent, Codex) append it as
+        ``role:"user"``, but OpenAI function-calling harnesses (Kimi / any
+        fireworks/OpenAI-compatible tool-based model) append it as ``role:"tool"``
+        (and legacy function-calling as ``role:"function"``). Gating solely on
+        ``role == "user"`` froze the ENTIRE conversation on every OpenAI
+        tool-based turn — so NOTHING was ever compressed on those models (the
+        delta was frozen before the content router saw it). Treat tool/function
+        observations as the mutable tail too; assistant/system endings still
+        freeze everything (they are not observations).
+        """
         if not messages:
             return base_frozen_count
         final_idx = len(messages) - 1
-        if messages[final_idx].get("role") == "user":
+        if messages[final_idx].get("role") in ("user", "tool", "function"):
             return max(base_frozen_count, final_idx)
         return len(messages)
 
@@ -3086,6 +3099,8 @@ class OpenAIHandlerMixin:
                 # OpenAI has no write penalty — uncached = total - cached
                 uncached_input_tokens = max(0, total_input_tokens - cache_read_tokens)
 
+                # (record_tokens clamps negative savings to 0 universally — the
+                # forwarded request is never larger than the original.)
                 if self.cost_tracker:
                     self.cost_tracker.record_tokens(
                         model,
@@ -4009,6 +4024,7 @@ class OpenAIHandlerMixin:
                         cache_read_tokens,
                     )
                     uncached_input_tokens = max(0, total_input_tokens - cache_read_tokens)
+                    # (record_tokens clamps negative savings to 0 universally.)
                     self.cost_tracker.record_tokens(
                         model,
                         tokens_saved,

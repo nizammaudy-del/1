@@ -738,6 +738,21 @@ class CostTracker:
             uncached_tokens: Non-cached input tokens from API response usage.
             output_tokens: Output tokens from API response usage.
         """
+        # Post-guard invariant (all providers): Headroom never forwards a request
+        # larger than the original (handlers revert any inflation before sending),
+        # so compression savings are >= 0 by construction. A negative here is an
+        # intermediate/hook token-count artifact that never reached the model;
+        # clamp it so `total_tokens_removed` reflects actually-forwarded bytes
+        # instead of surfacing spurious negatives (verified clean on the wire).
+        if tokens_saved < 0:
+            import logging as _lg
+
+            _lg.getLogger(__name__).debug(
+                "record_tokens: clamping negative tokens_saved=%d to 0 for %s (artifact; wire not inflated)",
+                tokens_saved,
+                model,
+            )
+            tokens_saved = 0
         self._tokens_saved_by_model[model] = (
             self._tokens_saved_by_model.get(model, 0) + tokens_saved
         )

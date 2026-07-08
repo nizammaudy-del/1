@@ -362,17 +362,20 @@ class AnthropicHandlerMixin:
         Safe means the prior original request is an exact message-prefix of the
         current original request. This lets us replay the exact forwarded bytes
         for historical context and only transform newly appended message suffixes.
+
+        The append-only check ignores per-turn transport / cache-directive / client
+        annotation noise (cache_control moved to the newest block, litellm caller,
+        provider_specific_fields, streaming index, string<->block content shape, …) via
+        the shared canonicalizer, so that churn doesn't spuriously drop cache mode to raw
+        forwarding. Delegates to the provider-agnostic engine in prefix_tracker so
+        OpenAI / Bedrock share one implementation.
         """
-        if not previous_original_messages or previous_forwarded_messages is None:
-            return None
-        prefix_len = len(previous_original_messages)
-        if len(current_messages) < prefix_len:
-            return None
-        if current_messages[:prefix_len] != previous_original_messages:
-            return None
-        return (
-            copy.deepcopy(previous_forwarded_messages),
-            copy.deepcopy(current_messages[prefix_len:]),
+        from headroom.cache.prefix_tracker import extract_cache_stable_delta
+
+        return extract_cache_stable_delta(
+            current_messages,
+            previous_original_messages,
+            previous_forwarded_messages,
         )
 
     @staticmethod
@@ -1342,13 +1345,52 @@ class AnthropicHandlerMixin:
                                     optimized_messages = messages
                                     optimized_tokens = tokenizer.count_messages(optimized_messages)
                                 else:
+                                    # Compress the delta, with two cache-mode adjustments:
+                                    #
+                                    # fix-5: strip the client's transient cache_control marker so
+                                    #   the router's per-block "never compress an explicit cache
+                                    #   key" guard (content_router.py:4006) doesn't skip the ONLY
+                                    #   compressible content every turn (route_counts had
+                                    #   cache_control_protected == the whole delta -> 0%). In cache
+                                    #   mode that marker is NOT the real forwarded breakpoint: the
+                                    #   compressed delta is frozen + replayed verbatim next turn and
+                                    #   normalize_message_cache_control (AFTER compression, below)
+                                    #   owns the single forwarded breakpoint. Cache-safety is
+                                    #   enforced post-compression, not by protecting the delta.
+                                    #
+                                    # fix-6: the delta is a lone tool_result whose tool_use (tool
+                                    #   NAME + call args) lives in the frozen prefix. Passing only
+                                    #   the delta to the router leaves tool_name="" so
+                                    #   _bash_search_fold (lossless grep/rg folding, no size floor),
+                                    #   per-tool bias, and relevance-query enrichment all degrade.
+                                    #   Pass the FULL current messages with frozen_message_count =
+                                    #   prefix length: _build_tool_name_map scans ALL messages (the
+                                    #   delta resolves its tool_name from the prefix's tool_use) but
+                                    #   the compression loop only touches indices >= frozen count,
+                                    #   so ONLY the delta is compressed. Splice the compressed delta
+                                    #   onto the byte-stable forwarded prefix.
+                                    from headroom.cache.prefix_tracker import _strip_cache_control
+
+                                    # Compression context = the EXACT forwarded (cached) prefix
+                                    # + the stripped delta, with the prefix frozen. Using the
+                                    # forwarded prefix (not the original) keeps _build_tool_name_map
+                                    # AND cross-turn dedup consistent with what is actually cached:
+                                    # dedup can only reference bytes that are truly present in the
+                                    # forwarded context, so no pointer can dangle. The prefix is
+                                    # frozen (never compressed) and we discard the router's copy of
+                                    # it below, so the forwarded prefix stays byte-identical to last
+                                    # turn -> append-only -> no bust.
+                                    prefix_n = len(stable_forwarded_prefix)
+                                    compression_input = list(stable_forwarded_prefix) + list(
+                                        _strip_cache_control(delta_messages)
+                                    )
                                     result = await self._run_compression_in_executor(
                                         lambda: self.anthropic_pipeline.apply(
-                                            messages=delta_messages,
+                                            messages=compression_input,
                                             model=model,
                                             model_limit=context_limit,
-                                            context=extract_user_query(delta_messages),
-                                            frozen_message_count=0,
+                                            context=extract_user_query(compression_input),
+                                            frozen_message_count=prefix_n,
                                             biases=biases,
                                             request_id=request_id,
                                             compression_policy=compression_policy,
@@ -1356,7 +1398,10 @@ class AnthropicHandlerMixin:
                                         ),
                                         timeout=COMPRESSION_TIMEOUT_SECONDS,
                                     )
-                                    optimized_messages = stable_forwarded_prefix + result.messages
+                                    # Only the delta was eligible for compression (prefix frozen);
+                                    # forward the byte-identical cached prefix + the compressed delta.
+                                    compressed_delta = result.messages[prefix_n:]
+                                    optimized_messages = stable_forwarded_prefix + compressed_delta
                                     transforms_applied = result.transforms_applied
                                     pipeline_timing = result.timing
                                     optimized_tokens = tokenizer.count_messages(optimized_messages)
