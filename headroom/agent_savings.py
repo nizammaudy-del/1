@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from typing import Protocol
 
+logger = logging.getLogger(__name__)
+
 AGENT_90_PROFILE = "agent-90"
+FALLBACK_PROFILE = "balanced"
 
 
 class CompressConfigLike(Protocol):
@@ -150,14 +154,29 @@ _PROFILES: dict[str, AgentSavingsProfile] = {
 
 
 def get_agent_savings_profile(name: str | None = None) -> AgentSavingsProfile:
-    """Return a named agent savings profile."""
+    """Return a named agent savings profile.
+
+    An unrecognized name falls back to the ``balanced`` profile with a warning
+    instead of raising. The savings profile is a soft config knob, but it is
+    resolved during proxy startup (``proxy_pipeline_kwargs`` -> ``create_app``),
+    so raising here takes the whole proxy down before it can open its port. That
+    happens on desktop/runtime version skew: a newer client requests a profile
+    (e.g. ``coding``) that an older pinned or fallback runtime predates. Degrade
+    to ``balanced`` rather than leaving the user with no proxy at all.
+    """
 
     key = (name or AGENT_90_PROFILE).strip().lower()
-    try:
-        return _PROFILES[key]
-    except KeyError as exc:
-        valid = ", ".join(sorted(_PROFILES))
-        raise ValueError(f"unknown savings profile {name!r}; expected one of: {valid}") from exc
+    profile = _PROFILES.get(key)
+    if profile is not None:
+        return profile
+    valid = ", ".join(sorted(_PROFILES))
+    logger.warning(
+        "unknown savings profile %r; falling back to %r (known: %s)",
+        name,
+        FALLBACK_PROFILE,
+        valid,
+    )
+    return _PROFILES[FALLBACK_PROFILE]
 
 
 def apply_agent_savings_env_defaults(
