@@ -1055,6 +1055,7 @@ class AnthropicHandlerMixin:
                 headroom_added=[],
                 request_id=request_id,
             )
+            _headroom_beta_added = False
 
             # In cache mode, avoid rewriting any message body bytes. The latest user
             # turn becomes historical on the next request, so even "latest turn only"
@@ -1955,6 +1956,7 @@ class AnthropicHandlerMixin:
                                 continue
                             existing_value = headers.get(key, "")
                             required_tokens = [t.strip() for t in value.split(",") if t.strip()]
+                            _headroom_beta_added = True
                             merged = merge_anthropic_beta(existing_value, required_tokens)
                             _existing_count = (
                                 len([t for t in existing_value.split(",") if t.strip()])
@@ -2117,6 +2119,17 @@ class AnthropicHandlerMixin:
                         body_mutation_tracker.mark_mutated("structural_diff_vs_original")
                 except (json.JSONDecodeError, ValueError):
                     body_mutation_tracker.mark_mutated("original_unparseable")
+
+            if (
+                (upstream_base_url or self.ANTHROPIC_API_URL != "https://api.anthropic.com")
+                and stream
+                and _client_beta_value
+                and _sticky_beta_value
+                and _sticky_beta_value != _client_beta_value
+                and not body_mutation_tracker.mutated
+                and not _headroom_beta_added
+            ):
+                headers["anthropic-beta"] = _client_beta_value
 
             # Forward request - use Bedrock backend if configured, otherwise direct API
             if self.anthropic_backend is not None:
