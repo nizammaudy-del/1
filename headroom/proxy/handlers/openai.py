@@ -84,6 +84,24 @@ _OPENAI_BASE_URL_HEADER = "x-headroom-base-url"
 _OPENCODE_ZEN_HOSTS = {"opencode.ai", "www.opencode.ai"}
 
 
+def _normalize_openai_max_tokens(body: dict[str, Any]) -> None:
+    """Rename the legacy ``max_tokens`` to ``max_completion_tokens`` in-place.
+
+    GPT-5 / o-series chat models reject ``max_tokens`` and require
+    ``max_completion_tokens``; gpt-4o/4.1 accept the latter too. So translating
+    is a safe, one-way shim for current OpenAI models that lets openai-compatible
+    clients (opencode, older SDKs) which still send ``max_tokens`` work unchanged.
+    No-op when there is no ``max_tokens``; keeps an already-set
+    ``max_completion_tokens`` and just drops the rejected legacy key.
+    """
+    if not isinstance(body, dict) or "max_tokens" not in body:
+        return
+    legacy = body.get("max_tokens")
+    if legacy is not None and body.get("max_completion_tokens") is None:
+        body["max_completion_tokens"] = legacy
+    body.pop("max_tokens", None)
+
+
 def _header_get(headers: dict[str, str], name: str) -> str | None:
     """Case-insensitive header lookup for plain dicts."""
     lowered = name.lower()
@@ -2592,6 +2610,15 @@ class OpenAIHandlerMixin:
             headers = presend_event.headers
         optimized_tokens = tokenizer.count_messages(body["messages"])
         tokens_saved = original_tokens - optimized_tokens
+
+        # Compatibility shim: GPT-5 / o-series chat models REJECT the legacy
+        # `max_tokens` ("Unsupported parameter … Use 'max_completion_tokens'
+        # instead"); gpt-4o/4.1 accept `max_completion_tokens` too. openai-
+        # compatible clients (opencode, older SDKs) still send `max_tokens`, so
+        # translate it here — the proxy already owns the outbound body — and
+        # those requests work unchanged. No-op when the caller already set
+        # `max_completion_tokens`.
+        _normalize_openai_max_tokens(body)
 
         # Route through LiteLLM/any-llm backend if configured
         if self.anthropic_backend is not None:
