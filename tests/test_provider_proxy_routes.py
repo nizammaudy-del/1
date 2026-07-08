@@ -173,6 +173,14 @@ def test_provider_passthrough_routes_forward_expected_targets(monkeypatch) -> No
             "model": "claude-3-5-sonnet@20240620",
             "force_stream": False,
         }
+        assert client.post("/anthropic/v1/messages?beta=true").json() == {
+            "handler": "handle_anthropic_messages",
+            "path": "/v1/messages",
+            "upstream_base_url": "https://api.anthropic.test",
+            "provider": "anthropic",
+            "model": None,
+            "force_stream": False,
+        }
         non_anthropic_raw = client.post(
             "/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:rawPredict"
         ).json()
@@ -336,6 +344,11 @@ def test_provider_specific_routes_delegate_to_expected_proxy_handlers(monkeypatc
 
     with TestClient(_app()) as client:
         assert client.post("/v1/messages").json()["handler"] == "handle_anthropic_messages"
+        assert client.post("/anthropic/v1/messages").json() == {
+            "handler": "handle_anthropic_messages",
+            "path": "/v1/messages",
+            "args": ["https://api.anthropic.test"],
+        }
         assert (
             client.post("/v1/messages/batches").json()["handler"] == "handle_anthropic_batch_create"
         )
