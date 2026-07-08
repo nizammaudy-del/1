@@ -87,10 +87,11 @@ Headroom compresses everything your AI agent reads — tool outputs, logs, RAG c
 
 ```bash
 # 1 — Install
+uv tool install "headroom-ai[all]"      # Install `headroom` CLI as a global tool in self-contained virtual env
 pip install "headroom-ai[all]"          # Python — ships the `headroom` CLI
 npm install headroom-ai                 # TypeScript SDK only — no `headroom` CLI
 
-# 2 — Pick your mode  (the `headroom` commands below come from the pip install)
+# 2 — Pick your mode  (the `headroom` commands below come from the uv or pip install)
 headroom wrap claude                    # wrap a coding agent
 headroom proxy --port 8787              # drop-in proxy, zero code changes
 # or: from headroom import compress      # inline library
@@ -100,6 +101,8 @@ headroom doctor                         # health check — confirms routing is w
 headroom perf
 headroom dashboard                      # live savings dashboard (proxy must be running)
 ```
+
+To use headroom, it is recommended you launch a wrapped agent session each time so that all necessary setup is completed. When wrapping a coding agent, headroom starts a local proxy, sets up an MCP server that provides tools such as rtk and tokensave, and launches a coding agent session configured to proxy requests to headroom. 
 
 The `headroom` CLI ships **only** via the PyPI package. The npm `headroom-ai` is the TypeScript SDK — a library you import (`import { compress } from 'headroom-ai'`), not a CLI, so it provides no `headroom` command.
 
