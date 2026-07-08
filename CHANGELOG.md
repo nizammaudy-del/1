@@ -8,6 +8,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- `headroom wrap cursor` no longer injects the `rtk` custom-instructions
+  block into `.cursorrules` when rtk's own native Cursor hook registers
+  successfully. rtk supports a real hook for Cursor via
+  `rtk init --agent cursor` (the same mechanism headroom already uses for
+  Claude Code), which rewrites shell commands transparently — the injected
+  `.cursorrules` text duplicated that guidance for no benefit. `wrap cursor`
+  now tries the native hook first and only falls back to injecting
+  `.cursorrules` if hook registration fails (#756).
+- `headroom wrap claude` no longer leaves a dead `ANTHROPIC_BASE_URL` in a
+  project's `.claude/settings.local.json` after an unclean exit (`SIGKILL`,
+  OOM, reboot, or terminal/tmux close via `SIGHUP`, which was not caught).
+  `_write_claude_wrap_base_url`/`_restore_claude_wrap_base_url` only removed
+  or restored the entry from the wrap process's own `finally` block, so a
+  crash skipped it and every later bare `claude` invocation in that project
+  inherited the stale proxy URL and hung indefinitely retrying a dead port.
+  A wrap session now stamps a sidecar marker (pid, port, prior value); the
+  next `wrap`, `unwrap`, or `headroom doctor` run detects a marker whose pid
+  is dead or reused and restores the recorded prior value automatically.
+  `claude()` also now catches `SIGHUP` alongside the existing `SIGTERM`
+  handler ([#1768](https://github.com/headroomlabs-ai/headroom/issues/1768)).
+- Non-finite values (`NaN`, `Infinity`) in `proxy_savings.json` or in upstream
+  cost/token metadata no longer crash the proxy or corrupt the savings
+  dashboard. `SavingsTracker`'s numeric coercion caught only `TypeError` and
+  `ValueError`, so `int(float('inf'))` raised an uncaught `OverflowError` while
+  loading persisted state (`SavingsTracker.__init__` failed and the proxy would
+  not start), and `float('nan')`/`float('inf')` passed straight through, then
+  serialized to `NaN`/`Infinity` literals that the dashboard's `JSON.parse`
+  rejects. `json.loads` accepts those literals, so one bad write poisoned every
+  later start. Both coercion helpers now also catch `OverflowError` and reject
+  non-finite floats, failing open to safe defaults.
+- `headroom learn` now honors `CLAUDE_CONFIG_DIR`. It resolved the Claude
+  config directory as `~/.claude` and wrote global memory to
+  `~/.claude/CLAUDE.md`, so users who relocate their Claude config via that
+  env var had `learn` scan the wrong directory and detect no projects. The
+  scanner and memory writer now read/write the configured directory
+  ([#1630](https://github.com/headroomlabs-ai/headroom/issues/1630)).
+- `--backend bedrock` now fails fast with an actionable error when temporary
+  AWS credentials (`AWS_SESSION_TOKEN`) are used but botocore is not installed
+  (e.g. the slim default Docker image). litellm's session-token auth path
+  imports botocore, so the missing dependency previously surfaced only at
+  request time as a misleading `authentication_error: No module named
+  'botocore'`. The proxy now tells the user to install the `bedrock` extra up
+  front ([#1551](https://github.com/headroomlabs-ai/headroom/issues/1551)).
+- Content detection no longer crashes the proxy on text containing an
+  orphaned `+++ ` target line with no preceding `--- ` source line (common in
+  `set -x` xtrace output and partial diffs). The bundled `unidiff` 0.4.0 parser
+  panics on that input instead of returning an error; the Rust diff detector now
+  contains the panic and treats the fragment as plain text, so the request is
+  compressed and forwarded normally instead of returning HTTP 500
+  ([#1547](https://github.com/headroomlabs-ai/headroom/issues/1547)).
+- Proactive expansion blocks injected into user turns are now wrapped in
+  `<headroom_proactive_expansion>` XML tags, giving downstream consumers
+  (LLMs, loggers, attribution parsers) a machine-readable provenance
+  boundary and preventing misattribution in multi-agent threads.
+- **cli:** the startup banner no longer advertises
+  `HEADROOM_COMPRESSION_STABLE_AFTER_TURN` and
+  `HEADROOM_STALE_READ_COMPRESS_AFTER_TURNS` as tuning knobs. Both were read
+  only to render the `Performance Tuning` banner section and were never wired
+  into the compression path, so setting them changed the banner but had no
+  effect on behavior. The banner now surfaces only the embedding sidecar,
+  which is a real, consumed setting.
+- **memory/embedder:** cap CPU thread oversubscription in the local
+  torch/sentence-transformers embedder. Concurrent encodes previously each
+  fanned out to ~`os.cpu_count()` BLAS/OpenMP threads, so under load the memory
+  path starved the asyncio event loop and spiked `/livez` latency to several
+  seconds. CPU encodes now run on a dedicated, size-limited executor whose
+  workers each pin their thread pool, bounding total embedding threads to
+  `HEADROOM_EMBED_CONCURRENCY` × `HEADROOM_EMBED_NUM_THREADS` (defaults
+  `min(4, cpu)` × 1). The ONNX embedder already capped its threads; this brings
+  the torch path to parity
+  ([#198](https://github.com/headroomlabs-ai/headroom/issues/198)).
+
 ### Changed
 
 * **telemetry:** anonymous usage telemetry is now **opt-in** (off by default) instead of opt-out. Nothing is collected or sent unless you set `HEADROOM_TELEMETRY=on` or pass `--telemetry` to `headroom proxy` / `headroom install apply`. `is_telemetry_enabled()` is fail-closed — only explicit on-values (`on`/`true`/`1`/`yes`/`enable`/`enabled`) enable it; unset, empty, or unrecognized values stay disabled. The existing `--no-telemetry` flag and `HEADROOM_TELEMETRY=off` remain accepted for back-compat, and install manifests now write the `HEADROOM_TELEMETRY` value explicitly so generated deployments are unambiguous.

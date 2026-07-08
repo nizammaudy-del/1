@@ -4970,14 +4970,32 @@ def cursor(
         headroom wrap cursor --port 9999    # Custom proxy port
     """
     cursorrules: Path | None = Path.cwd() / ".cursorrules" if not no_rtk else None
+    cursor_hook_registered = False
     if not no_rtk:
+
+        def _register_cursor_hook(rtk_path: Path) -> None:
+            # rtk registers a native hook for Cursor (`rtk init --agent cursor`),
+            # same mechanism as Claude Code. Prefer that over injecting the
+            # RTK_INSTRUCTIONS_BLOCK text into .cursorrules — a silent hook makes
+            # the custom-rules text redundant guidance (GH #756).
+            nonlocal cursor_hook_registered
+            from headroom.rtk.installer import register_agent_hooks
+
+            # rtk may exit 0 without writing hooks.json (e.g. an rtk build that
+            # doesn't support --agent cursor), so trust the file, not the exit
+            # code: only skip the .cursorrules fallback if the native hook is
+            # actually on disk (GH #756).
+            cursor_hooks_json = Path.home() / ".cursor" / "hooks.json"
+            if register_agent_hooks(rtk_path, agent="cursor") and cursor_hooks_json.is_file():
+                cursor_hook_registered = True
+            else:
+                _inject_rtk_instructions(cast(Path, cursorrules), verbose=verbose)
+
         _setup_context_tool_for_agent(
             agent="cursor",
             agent_display="Cursor",
             marker_path=cursorrules,
-            on_rtk_ready=lambda _rtk: _inject_rtk_instructions(
-                cast(Path, cursorrules), verbose=verbose
-            ),
+            on_rtk_ready=_register_cursor_hook,
             verbose=verbose,
         )
 
@@ -4991,6 +5009,8 @@ def cursor(
             click.echo()
             if _selected_context_tool() == _CONTEXT_TOOL_LEAN_CTX:
                 click.echo("  lean-ctx configured for Cursor")
+            elif cursor_hook_registered:
+                click.echo("  rtk hook registered for Cursor")
             else:
                 click.echo("  rtk instructions injected into .cursorrules")
             click.echo("  Cursor will use token-optimized commands automatically.")
