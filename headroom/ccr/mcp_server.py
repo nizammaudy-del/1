@@ -253,6 +253,23 @@ def _read_shared_events(window_seconds: int = SESSION_WINDOW_SECONDS) -> list[di
     return events
 
 
+def _build_proxy_unreachable_payload(
+    *,
+    proxy_url: str,
+    error: str,
+    http_status: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "url": proxy_url,
+        "status": "unreachable",
+        "error": error,
+        "warning": f"Configured proxy {proxy_url} is unreachable ({error}).",
+    }
+    if http_status is not None:
+        payload["http_status"] = http_status
+    return payload
+
+
 @dataclass
 class SessionStats:
     """Track compression statistics for the current MCP session."""
@@ -529,6 +546,58 @@ class HeadroomMCPServer:
         result: dict[str, Any] = response.json()
         return result
 
+    async def _probe_proxy_unreachable(self) -> dict[str, Any] | None:
+        """Return explicit proxy-unreachable state when the configured proxy is down."""
+        if not self.check_proxy or not HTTPX_AVAILABLE:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self.proxy_url}/livez")
+        except Exception as exc:
+            return _build_proxy_unreachable_payload(
+                proxy_url=self.proxy_url,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        if response.status_code != 200:
+            detail = None
+            try:
+                payload = response.json()
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                detail = payload.get("status")
+            if detail is None:
+                detail = response.text.strip() or None
+            error = f"HTTP {response.status_code}"
+            if detail:
+                error = f"{error} ({detail})"
+            return _build_proxy_unreachable_payload(
+                proxy_url=self.proxy_url,
+                error=error,
+                http_status=response.status_code,
+            )
+        try:
+            payload = response.json()
+        except Exception as exc:
+            return _build_proxy_unreachable_payload(
+                proxy_url=self.proxy_url,
+                error=f"invalid /livez payload: {type(exc).__name__}: {exc}",
+                http_status=response.status_code,
+            )
+        if not isinstance(payload, dict):
+            return _build_proxy_unreachable_payload(
+                proxy_url=self.proxy_url,
+                error="invalid /livez payload",
+                http_status=response.status_code,
+            )
+        if payload.get("status") != "healthy" or payload.get("alive") is not True:
+            return _build_proxy_unreachable_payload(
+                proxy_url=self.proxy_url,
+                error=f"proxy reported {payload.get('status', 'unhealthy')}",
+                http_status=response.status_code,
+            )
+        return None
+
     def _setup_handlers(self) -> None:
         """Register all MCP tool handlers."""
 
@@ -693,6 +762,11 @@ class HeadroomMCPServer:
         except Exception:
             logger.debug("durable savings recording failed", exc_info=True)
 
+        proxy_status = await self._probe_proxy_unreachable()
+        if proxy_status:
+            result["proxy"] = proxy_status
+            result["warning"] = proxy_status["warning"]
+
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
     def _record_savings(self, result: dict[str, Any]) -> None:
@@ -807,6 +881,11 @@ class HeadroomMCPServer:
                 proxy_stats = self._extract_proxy_stats(proxy_data)
                 if proxy_stats:
                     stats["proxy"] = proxy_stats
+            else:
+                proxy_status = await self._probe_proxy_unreachable()
+                if proxy_status:
+                    stats["proxy"] = proxy_status
+                    stats["warning"] = proxy_status["warning"]
 
         return [TextContent(type="text", text=json.dumps(stats, indent=2))]
 

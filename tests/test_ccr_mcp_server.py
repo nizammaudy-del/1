@@ -92,6 +92,91 @@ def test_compress_savings_percent_tracks_token_counts(fresh_store) -> None:
         assert result["savings_percent"] > 0.0
 
 
+def test_mcp_compress_surfaces_unreachable_proxy(fresh_store) -> None:
+    server = mcp_server.HeadroomMCPServer(
+        proxy_url="http://127.0.0.1:9",
+        check_proxy=True,
+    )
+
+    response = asyncio.run(server._handle_compress({"content": "dead proxy check"}))
+    payload = json.loads(response[0].kwargs["text"])
+
+    assert payload["proxy"]["status"] == "unreachable"
+    assert payload["proxy"]["url"] == "http://127.0.0.1:9"
+    assert "unreachable" in payload["warning"].lower()
+
+
+def test_mcp_stats_surfaces_unreachable_proxy() -> None:
+    server = mcp_server.HeadroomMCPServer(
+        proxy_url="http://127.0.0.1:9",
+        check_proxy=True,
+    )
+
+    response = asyncio.run(server._handle_stats())
+    payload = json.loads(response[0].kwargs["text"])
+
+    assert payload["proxy"]["status"] == "unreachable"
+    assert payload["proxy"]["url"] == "http://127.0.0.1:9"
+    assert "unreachable" in payload["warning"].lower()
+
+
+def test_mcp_proxy_probe_preserves_shared_proxy_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ProbeResponse:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"status": "healthy", "alive": True}
+
+    class ProbeClient:
+        def __init__(self, *, timeout: float) -> None:
+            seen["timeout"] = timeout
+
+        async def __aenter__(self) -> ProbeClient:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            seen["closed"] = True
+
+        async def get(self, url: str) -> ProbeResponse:
+            seen["url"] = url
+            return ProbeResponse()
+
+    seen: dict[str, object] = {}
+    shared_client = object()
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", ProbeClient)
+
+    server = mcp_server.HeadroomMCPServer(
+        proxy_url="http://127.0.0.1:8765",
+        check_proxy=True,
+    )
+    server._http_client = shared_client  # type: ignore[assignment]
+
+    result = asyncio.run(server._probe_proxy_unreachable())
+
+    assert result is None
+    assert seen == {
+        "timeout": 5.0,
+        "url": "http://127.0.0.1:8765/livez",
+        "closed": True,
+    }
+    assert server._http_client is shared_client
+
+
+def test_mcp_local_mode_still_works_without_proxy_checking(fresh_store) -> None:
+    server = mcp_server.HeadroomMCPServer(
+        proxy_url="http://127.0.0.1:9",
+        check_proxy=False,
+    )
+
+    response = asyncio.run(server._handle_compress({"content": "local mode stays available"}))
+    payload = json.loads(response[0].kwargs["text"])
+
+    assert "proxy" not in payload
+    assert "warning" not in payload or "unreachable" not in payload["warning"].lower()
+
+
 def test_mcp_retrieve_returns_full_content(fresh_store) -> None:
     """Retrieval is by hash: a stored, unexpired entry always returns its full
     original content (never empty, never a spurious "not found")."""
