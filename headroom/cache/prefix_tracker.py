@@ -613,20 +613,19 @@ class SessionTrackerStore:
             if session_header:
                 return str(session_header)
 
-        # Fall back to hashing model + system prompt
-        system_content = ""
+        # Fall back to hashing model + all system-text content.
+        system_parts: list[str] = []
         for msg in messages:
             if msg.get("role") == "system":
                 content = msg.get("content", "")
                 if isinstance(content, str):
-                    system_content = content[:500]  # First 500 chars is enough
+                    system_parts.append(content)
                 elif isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
-                            system_content = block.get("text", "")[:500]
-                            break
-                break
+                            system_parts.append(block.get("text", ""))
 
+        system_content = json.dumps(system_parts, ensure_ascii=False, separators=(",", ":"))
         key = f"{model}:{system_content}"
         return hashlib.md5(key.encode()).hexdigest()[:16]  # nosec B324
 
