@@ -186,6 +186,35 @@ def test_redacted_thinking_data_preserved() -> None:
     assert block["data"] == redacted_blob
 
 
+def test_response_to_sse_preserves_server_tool_use_blocks() -> None:
+    parser = _Parser()
+    response = {
+        "id": "msg_1",
+        "model": "claude-opus-4",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "server_tool_use",
+                "id": "srv_1",
+                "name": "web_search",
+                "input": {"query": "headroom"},
+            }
+        ],
+        "stop_reason": "end_turn",
+        "usage": {"output_tokens": 1},
+    }
+
+    sse_events = b"".join(parser._response_to_sse(response, "anthropic")).decode("utf-8")
+
+    assert '"type": "content_block_start"' in sse_events
+    assert '"type": "server_tool_use"' in sse_events
+    assert '"name": "web_search"' in sse_events
+
+    round_tripped = parser._parse_sse_to_response(sse_events, "anthropic")
+    assert round_tripped is not None
+    assert round_tripped["content"][0]["type"] == "server_tool_use"
+
+
 def test_response_to_sse_preserves_thinking_redacted_and_citations() -> None:
     parser = _Parser()
     redacted_blob = "ENC:" + ("y" * 200)

@@ -544,10 +544,15 @@ class StreamingMixin:
                         "data": block.get("data", ""),
                     },
                 }
+            elif block.get("type") == "server_tool_use":
+                block_start = {
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": block,
+                }
             else:
                 raise ValueError(
-                    f"Unsupported Anthropic content block type for SSE conversion: "
-                    f"{block.get('type')!r}"
+                    f"Unsupported Anthropic content block type for SSE conversion: {block.get('type')!r}"
                 )
 
             events.append(
