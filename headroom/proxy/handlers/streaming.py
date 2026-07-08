@@ -945,10 +945,72 @@ class StreamingMixin:
         3. Makes continuation requests until no memory tools remain
         4. Streams the final response to the client
         """
-        from fastapi.responses import Response, StreamingResponse
-
         session_key = session_key or self._get_session_key(body)
         self._active_streams.add(session_key)
+
+        # Guard everything up to the generator's own try/finally (which owns
+        # cleanup once streaming starts): any exception here — including
+        # asyncio.CancelledError from a client disconnect mid-setup — must
+        # still release session_key, or it wedges in _active_streams forever
+        # and every later request on this session gets stuck 202-queued.
+        try:
+            return await self._stream_response_inner(
+                url=url,
+                headers=headers,
+                body=body,
+                provider=provider,
+                model=model,
+                request_id=request_id,
+                original_tokens=original_tokens,
+                optimized_tokens=optimized_tokens,
+                tokens_saved=tokens_saved,
+                transforms_applied=transforms_applied,
+                tags=tags,
+                optimization_latency=optimization_latency,
+                memory_user_id=memory_user_id,
+                pipeline_timing=pipeline_timing,
+                prefix_tracker=prefix_tracker,
+                original_messages=original_messages,
+                original_body_bytes=original_body_bytes,
+                body_mutated=body_mutated,
+                mutation_reasons=mutation_reasons,
+                memory_request_ctx=memory_request_ctx,
+                outcome_provider=outcome_provider,
+                waste_signals=waste_signals,
+                session_key=session_key,
+            )
+        except (Exception, asyncio.CancelledError):
+            self._cleanup_mid_turn_stream(session_key)
+            raise
+
+    async def _stream_response_inner(
+        self,
+        url: str,
+        headers: dict,
+        body: dict,
+        provider: str,
+        model: str,
+        request_id: str,
+        original_tokens: int,
+        optimized_tokens: int,
+        tokens_saved: int,
+        transforms_applied: list[str],
+        tags: dict[str, str],
+        optimization_latency: float,
+        memory_user_id: str | None,
+        pipeline_timing: dict[str, float] | None,
+        prefix_tracker: Any | None,
+        original_messages: list[dict] | None,
+        original_body_bytes: bytes | None,
+        body_mutated: bool,
+        mutation_reasons: list[str] | None,
+        memory_request_ctx: Any | None,
+        outcome_provider: str | None,
+        waste_signals: dict[str, int] | None,
+        session_key: str,
+    ) -> Response | StreamingResponse:
+        """Actual streaming implementation, guarded by _stream_response's cleanup wrapper."""
+        from fastapi.responses import Response, StreamingResponse
 
         from headroom.proxy.helpers import MAX_SSE_BUFFER_SIZE
 
