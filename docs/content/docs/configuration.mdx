@@ -186,6 +186,39 @@ response = client.chat.completions.create(
 
 The `RollingWindowConfig`, `IntelligentContextConfig`, and `ScoringWeights` classes are no longer part of Headroom. Context management now happens automatically inside the pipeline (live-zone-only compression).
 
+## Pipeline Extensions
+
+Use a `headroom.pipeline_extension` entry point when you need to normalize or annotate requests before they leave Headroom. The `PRE_SEND` stage is the right place for provider-specific request cleanup, such as turning `content: null` into `content: ""` for upstreams that reject OpenAI-spec tool-call messages.
+
+```python
+from headroom.pipeline import PipelineEvent, PipelineStage
+
+
+class NormalizeNullContent:
+    def on_pipeline_event(self, event: PipelineEvent) -> PipelineEvent:
+        if event.stage is not PipelineStage.PRE_SEND or not event.messages:
+            return event
+
+        for message in event.messages:
+            if (
+                message.get("role") == "assistant"
+                and message.get("content") is None
+                and message.get("tool_calls")
+            ):
+                message["content"] = ""
+
+        return event
+```
+
+Register it in `pyproject.toml`:
+
+```toml
+[project.entry-points."headroom.pipeline_extension"]
+normalize_null_content = "my_pkg.normalize:NormalizeNullContent"
+```
+
+If the upstream base URL itself must vary per request, use the `x-headroom-base-url` override header in addition to the normalization hook.
+
 ## Proxy Configuration
 
 ### Command Line Options
