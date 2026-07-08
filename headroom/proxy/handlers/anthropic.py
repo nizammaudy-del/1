@@ -38,6 +38,33 @@ from headroom.proxy.outcome import RequestOutcome
 logger = logging.getLogger("headroom.proxy")
 
 
+def _strip_streaming_only_content_fields(messages: Any) -> None:
+    """Remove streaming-only ``index`` keys from request content blocks, in place.
+
+    ``index`` is a field Anthropic emits on streaming RESPONSE content-block deltas
+    (see proxy/handlers/streaming.py). It is not part of the request-message schema, so
+    forwarding it upstream triggers a 400 ("...content.N.text.index: Extra inputs are
+    not permitted") that aborts multi-turn sessions once a client echoes a reconstructed
+    assistant turn back. Strip it (including nested tool_result content) so requests are
+    always schema-valid.
+    """
+    if not isinstance(messages, list):
+        return
+    for message in messages:
+        if isinstance(message, dict):
+            _strip_index_from_content_blocks(message.get("content"))
+
+
+def _strip_index_from_content_blocks(content: Any) -> None:
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if isinstance(block, dict):
+            block.pop("index", None)
+            # tool_result blocks nest their own content list of blocks.
+            _strip_index_from_content_blocks(block.get("content"))
+
+
 class AnthropicHandlerMixin:
     """Mixin providing Anthropic API handler methods for HeadroomProxy."""
 
@@ -680,6 +707,16 @@ class AnthropicHandlerMixin:
                 body["model"] = model
                 body_mutation_tracker.mark_mutated("sanitize_model_id")
             messages = body.get("messages", [])
+            # Strip streaming-only "index" keys from request content blocks BEFORE any
+            # prefix-cache tracking or compression. The proxy's streaming reconstruction
+            # tags assistant blocks with an "index" for SSE re-emission; clients (e.g.
+            # opencode) persist that assistant message and echo it back next turn, but
+            # "index" is a response-delta field that Anthropic REJECTS in a request
+            # ("messages.N.content.0.text.index: Extra inputs are not permitted", 400),
+            # aborting multi-turn sessions. Canonicalizing here (in place, so body,
+            # original, forwarded, and the recorded/replayed prefix are all identical)
+            # keeps it cache-safe: overlay_cached_prefix replays the same stripped bytes.
+            _strip_streaming_only_content_fields(messages)
             pipeline_provider = provider_name
             pipeline_path = request.url.path if upstream_base_url else "/v1/messages"
             pipeline_stream = bool(body.get("stream", False) or force_stream)
@@ -2044,6 +2081,14 @@ class AnthropicHandlerMixin:
                 if remembered_event.headers is not None:
                     headers = remembered_event.headers
 
+            # Final sanitization of the FORWARDED body: strip streaming-only "index"
+            # keys from content blocks. In cache mode the forwarded prefix is replayed
+            # from Headroom's own recorded/reconstructed messages (streaming.py tags
+            # blocks with "index"), so the inbound-side strip above doesn't cover it —
+            # this catches both the client-echoed and the cache-replayed forms. Applied
+            # deterministically to the exact bytes forwarded (and thus recorded as the
+            # next prefix), so Anthropic always caches/matches the same stripped prefix.
+            _strip_streaming_only_content_fields(optimized_messages)
             # Update body
             body["messages"] = optimized_messages
             if tools or _original_tools is not None:
@@ -2084,6 +2129,51 @@ class AnthropicHandlerMixin:
             if presend_event.messages is not previous_presend_messages:
                 optimized_tokens = tokenizer.count_messages(body["messages"])
                 tokens_saved = max(0, original_tokens - optimized_tokens)
+
+            # Server-side Tool Search (opt-in HEADROOM_TOOL_SEARCH): defer the
+            # non-core tool schemas behind a tool_search tool so Anthropic excludes
+            # them from the context window — they stop counting as input tokens until
+            # the model searches for one — while every tool stays callable.
+            # Deterministic → the tools prefix still prompt-caches. Safe for opencode:
+            # its @ai-sdk/anthropic parses the server_tool_use / tool_search_tool_result
+            # round-trip natively, and its cache breakpoints sit on messages (never
+            # tools), so defer_loading cannot collide with cache_control. We COUNT the
+            # deferred tool-schema tokens as the tool-search input-token saving (those
+            # bytes are excluded from context this turn); the response usage confirms it.
+            #
+            # FIRST-PARTY ANTHROPIC ONLY: the tool_search_tool_* type + defer_loading
+            # here use the first-party Claude API shape (GA, no beta header). Bedrock
+            # (``anthropic_backend``) and Vertex/gateway providers gate tool search
+            # differently, so scope the injection to provider "anthropic" over the
+            # direct API and leave those paths untouched.
+            if (
+                provider_name == "anthropic"
+                and getattr(self, "anthropic_backend", None) is None
+                and os.environ.get("HEADROOM_TOOL_SEARCH", "").strip().lower()
+                in ("1", "true", "yes", "on", "auto")
+            ):
+                from headroom.proxy.helpers import inject_tool_search_deferral
+
+                _ts_before = body.get("tools")
+                _ts_after = inject_tool_search_deferral(_ts_before)
+                if _ts_after is not _ts_before:
+                    _ts_deferred = [
+                        t for t in _ts_after if isinstance(t, dict) and t.get("defer_loading")
+                    ]
+                    try:
+                        _ts_saved_tokens = tokenizer.count_text(
+                            json.dumps(_ts_deferred, default=str)
+                        )
+                    except Exception:
+                        _ts_saved_tokens = 0
+                    body["tools"] = _ts_after
+                    tools = _ts_after
+                    tags["tool_search_deferred_tools"] = len(_ts_deferred)
+                    tags["tool_search_deferred_tokens"] = _ts_saved_tokens
+                    transforms_applied.append(
+                        f"router:tool_search_deferral:{len(_ts_deferred)}tools:"
+                        f"{_ts_saved_tokens}tok"
+                    )
 
             # Output shaping (opt-in via HEADROOM_OUTPUT_SHAPER): verbosity
             # steering appended to the system-prompt tail + effort routing on

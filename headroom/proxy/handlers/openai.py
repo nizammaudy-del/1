@@ -1691,6 +1691,24 @@ class OpenAIHandlerMixin:
                     tools_bytes_saved=tools_before_bytes - tools_after_bytes,
                 )
 
+        # Server-side Tool Search deferral (OpenAI Responses, gpt-5.4+): mark
+        # non-core function/MCP tools defer_loading + inject {"type": "tool_search"}
+        # so OpenAI keeps their heavy parameter schemas out of the model's context
+        # until searched (every tool stays callable, cache preserved). No-op for
+        # older models / small tool sets / clients already using tool search. The
+        # deferred defs still ride in the request body (OpenAI needs them to load
+        # on demand), so this is a provider-side context saving, not a request-byte
+        # one — hence a transform tag but no tokens_saved claim.
+        from headroom.proxy.helpers import inject_tool_search_deferral_openai
+
+        _deferred_tools = inject_tool_search_deferral_openai(working.get("tools"), model)
+        if _deferred_tools is not working.get("tools"):
+            if working is payload:
+                working = copy.deepcopy(payload)
+            working["tools"] = _deferred_tools
+            modified = True
+            transforms.append("openai:responses:tool_search_deferral")
+
         live_units_started = time.perf_counter()
         (
             router_payload,
