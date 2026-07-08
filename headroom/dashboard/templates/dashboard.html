@@ -109,7 +109,7 @@
     <header class="border-b border-border px-6 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="flex items-center gap-4">
             <h1 class="text-xl font-semibold tracking-tight">HEADROOM</h1>
-            <span class="text-xs text-gray-500 font-mono" x-text="'v' + version"></span>
+            <span class="text-xs text-gray-500 font-mono" x-text="formatVersion(version)"></span>
         </div>
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:gap-6">
             <div class="inline-flex rounded-lg border border-border bg-surface p-1">
@@ -1795,7 +1795,7 @@
                 stats: {},
                 historyStats: {},
                 healthy: true,
-                version: '0.3.0',
+                version: 'loading',
                 lastUpdate: 'never',
                 viewMode: 'session',
                 historyGranularity: 'daily',
@@ -1862,6 +1862,12 @@
                     }
                 },
 
+                formatVersion(value) {
+                    const label = String(value || 'unknown').trim();
+                    if (label === 'loading' || label === 'unknown') return label;
+                    return /^\d+\.\d+\.\d+$/.test(label) ? 'v' + label : label;
+                },
+
                 async fetchStats() {
                     try {
                         const [statsRes, healthRes] = await Promise.all([
@@ -1872,7 +1878,7 @@
                         this.stats = await statsRes.json();
                         const health = await healthRes.json();
                         this.healthy = health.status === 'healthy';
-                        this.version = health.version || '0.3.0';
+                        this.version = health.version || 'unknown';
                         this.log_full_messages = this.stats.log_full_messages || false;
 
                         // Update history for sparklines

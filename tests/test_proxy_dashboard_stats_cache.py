@@ -591,6 +591,12 @@ def test_dashboard_uses_cached_stats_and_lazy_history_feed_polling() -> None:
     html = get_dashboard_html()
 
     assert "fetch('/stats?cached=1')" in html
+    assert "version: 'loading'" in html
+    assert 'x-text="formatVersion(version)"' in html
+    assert "return /^\\d+\\.\\d+\\.\\d+$/.test(label)" in html
+    assert "return /^\\d/.test(value)" not in html
+    assert "this.version = health.version || 'unknown'" in html
+    assert "0.3.0" not in html
     assert "@click=\"setViewMode('history')\"" in html
     assert '@click="toggleFeed()"' in html
     assert "this.viewMode === 'history'" in html

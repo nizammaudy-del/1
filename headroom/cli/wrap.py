@@ -45,6 +45,7 @@ import click
 
 from headroom import fsutil
 from headroom._version import __version__ as _HEADROOM_VERSION
+from headroom._version import normalize_release_version as _normalize_release_version
 from headroom.agent_savings import (
     apply_agent_savings_env_defaults,
 )
@@ -2531,11 +2532,12 @@ def _proxy_version(payload: dict[str, Any] | None) -> str | None:
 def _proxy_needs_version_restart(payload: dict[str, Any] | None) -> bool:
     """Return True when a running Headroom proxy uses a different package version."""
     running_version = _proxy_version(payload)
+    running_release = _normalize_release_version(running_version)
+    current_release = _normalize_release_version(_HEADROOM_VERSION)
     return (
-        running_version is not None
-        and running_version != "unknown"
-        and _HEADROOM_VERSION != "unknown"
-        and running_version != _HEADROOM_VERSION
+        running_release is not None
+        and current_release is not None
+        and running_release != current_release
     )
 
 

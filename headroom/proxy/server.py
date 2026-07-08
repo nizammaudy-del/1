@@ -1405,7 +1405,7 @@ class HeadroomProxy(
         self.http_client_h1 = (
             self.http_client if not _http2 else httpx.AsyncClient(http2=False, **_client_kwargs)
         )
-        logger.info("Headroom Proxy started")
+        logger.info("Headroom Proxy started (version %s)", __version__)
         logger.info(f"Optimization: {'ENABLED' if self.config.optimize else 'DISABLED'}")
         self.config.mode = normalize_proxy_mode(self.config.mode)
         logger.info(f"Mode: {self.config.mode}")
