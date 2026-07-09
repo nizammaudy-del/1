@@ -106,23 +106,18 @@
 
         [x-cloak] { display: none !important; }
 
-        /* Help sidebar (Logic Pro style): fixed left rail, instant, theme-aware */
+        /* Help sidebar (Logic Pro style): RIGHT-side overlay drawer docked BELOW the
+           header. Overlay (not push) so opening it never dislocates/cramps the nav bar. */
         #help-rail {
-            position: fixed; top: 0; left: 0; bottom: 0; width: 260px;
+            position: fixed; top: var(--header-h, 60px); right: 0; bottom: 0; width: 260px;
             background: var(--color-surface);
-            border-right: 1px solid var(--color-border);
-            z-index: 40; display: flex; flex-direction: column;
+            border-left: 1px solid var(--color-border);
+            box-shadow: 0 0 40px rgba(0,0,0,0.35);
+            z-index: 50; display: flex; flex-direction: column;
         }
-        #help-rail-toggle {
-            position: fixed; top: 12px; left: 12px; z-index: 41;
-        }
-        body.help-open { padding-left: 260px; }
         @media (max-width: 1024px) {
             #help-rail { width: 220px; }
-            body.help-open { padding-left: 0; }
-            body.help-open #help-rail { box-shadow: 0 0 40px rgba(0,0,0,0.4); }
         }
-        [data-help] { cursor: help; }
 
         /* Collapsible pane chevron */
         .pane-chevron { transition: transform 0.2s ease; }
@@ -149,13 +144,6 @@
             Hover metrics, headers, and controls for a live explanation.
         </div>
     </aside>
-    <button id="help-rail-toggle" x-show="helpCollapsed" x-cloak @click="toggleHelp()"
-            class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-            data-help-title="Help sidebar" data-help="Open the help rail, then hover any metric for an instant explanation.">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-    </button>
 
     <!-- Header -->
     <header class="border-b border-border px-6 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -168,13 +156,32 @@
             <template x-if="showStatusCluster">
                 <div class="flex items-center gap-2 text-xs text-gray-500">
                     <span class="text-gray-700">|</span>
-                    <span class="flex items-center gap-1.5"
-                          :data-help-title="healthy ? 'Proxy healthy' : 'Proxy error'"
-                          :data-help="healthy ? 'The proxy answered /health and /stats normally on the last poll.' : (healthErrorReason || 'The last poll to the proxy failed.')">
-                        <span class="w-2 h-2 rounded-full pulse-live"
-                              :class="healthy ? 'bg-emerald-400' : 'bg-red-400'"></span>
-                        <span class="text-sm" :class="healthy ? 'text-gray-300' : 'text-red-400'"
-                              x-text="healthy ? 'Healthy' : 'Error'"></span>
+                    <span class="relative" x-data="{ hcOpen: false }" @mouseenter="hcOpen = true" @mouseleave="hcOpen = false">
+                        <span class="flex items-center gap-1.5"
+                              :data-help-title="healthy ? 'Proxy healthy' : 'Proxy error'"
+                              :data-help="healthy ? 'The proxy answered /health and /stats normally on the last poll.' : (healthErrorReason || 'The last poll to the proxy failed.')">
+                            <span class="w-2 h-2 rounded-full pulse-live"
+                                  :class="healthy ? 'bg-emerald-400' : 'bg-red-400'"></span>
+                            <span class="text-sm" :class="healthy ? 'text-gray-300' : 'text-red-400'"
+                                  x-text="healthy ? 'Healthy' : 'Error'"></span>
+                        </span>
+                        <!-- Instant System Health popover: reuses doctor.checks, no new fetch -->
+                        <div x-show="hcOpen && doctor.checks.length > 0" x-cloak
+                             class="absolute left-0 top-full mt-2 w-80 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface shadow-xl p-2 text-left"
+                             style="z-index: 60;">
+                            <div class="text-[10px] uppercase tracking-wide text-gray-500 px-1 pb-1">System Health</div>
+                            <template x-for="check in doctor.checks" :key="check.name">
+                                <div class="flex items-start gap-2 px-1 py-1">
+                                    <span class="text-sm leading-none mt-0.5"
+                                          :class="check.status === 'pass' ? 'text-emerald-400' : (check.status === 'fail' ? 'text-red-400' : 'text-amber-400')"
+                                          x-text="check.status === 'pass' ? '✓' : (check.status === 'fail' ? '✗' : '!')"></span>
+                                    <div class="min-w-0">
+                                        <div class="text-xs font-medium text-gray-300 uppercase tracking-wide" x-text="check.name"></div>
+                                        <div class="text-[11px] text-gray-500 break-words" x-text="check.summary"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
                     </span>
                     <span class="text-gray-700">·</span>
                     <span data-help-title="Last update" data-help="Wall-clock time of the last successful stats poll from your browser.">Updated <span x-text="lastUpdate"></span></span>
@@ -297,6 +304,14 @@
                     </svg>
                     <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                </button>
+                <button @click="toggleHelp()" id="help-toggle"
+                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                        aria-label="Toggle help sidebar"
+                        data-help-title="Help sidebar" data-help="Open the help rail, then hover any metric for an instant explanation of what it means.">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
                 </button>
             </div>
@@ -2103,6 +2118,8 @@
                 async init() {
                     this.loadUiPrefs();
                     this.applyHelpBodyClass();
+                    requestAnimationFrame(() => this.updateHeaderHeightVar());
+                    window.addEventListener('resize', () => this.updateHeaderHeightVar());
                     await this.fetchStats();
                     this.fetchMcpDashboards();
                     this.fetchDoctor();
@@ -2200,6 +2217,13 @@
                 },
                 applyHelpBodyClass() {
                     document.body.classList.toggle('help-open', !this.helpCollapsed);
+                },
+
+                // The help drawer docks below the header via the --header-h CSS var.
+                // Measure the real header height so it never overlaps the nav bar.
+                updateHeaderHeightVar() {
+                    const h = document.querySelector('header');
+                    if (h) document.documentElement.style.setProperty('--header-h', h.offsetHeight + 'px');
                 },
 
                 // Load saved poll intervals from /config at startup so the
