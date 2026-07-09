@@ -615,6 +615,73 @@ def _responses_input_to_waste_messages(instructions: Any, input_data: Any) -> li
     return messages
 
 
+def _has_headroom_retrieve_tool_responses(tools: Any) -> bool:
+    """Return True when the Responses API tool list includes CCR retrieve.
+
+    Responses API tool defs are flat (``{"type": "function", "name": ...}``)
+    rather than nested under a "function" key like chat-completions
+    tool_calls, so this can't reuse the chat-completions tool-list check.
+    Mirrors ``AnthropicHandler._has_headroom_retrieve_tool``.
+    """
+    from headroom.ccr import CCR_TOOL_NAME
+
+    if not isinstance(tools, list):
+        return False
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("name") == CCR_TOOL_NAME:
+            return True
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name") == CCR_TOOL_NAME:
+            return True
+    return False
+
+
+def _responses_input_to_items(input_data: Any) -> list[dict[str, Any]]:
+    """Normalize a Responses ``input`` field into an item list for CCR continuation.
+
+    ``input`` is either a plain string or an already-item-shaped list; the
+    CCR continuation loop needs a list it can append output/tool-result
+    items onto.
+    """
+    if isinstance(input_data, list):
+        return list(input_data)
+    if isinstance(input_data, str) and input_data:
+        return [{"role": "user", "content": input_data}]
+    return []
+
+
+def _openai_responses_to_sse(response: dict[str, Any]) -> list[bytes]:
+    """Convert a complete Responses API JSON body into a minimal SSE stream.
+
+    Used only for the buffered-CCR path: the client asked for
+    ``stream: true`` but we forced a non-streaming upstream call so CCR
+    retrieval could be resolved server-side. This reconstructs just enough
+    of the real event sequence (``response.created`` + ``response.completed``)
+    for Responses API clients that key off the terminal event's full
+    response object — it does not replay incremental output-item/text
+    deltas. Mirrors the equivalent simplification in
+    ``StreamingMixin._response_to_sse`` for the Anthropic buffered path.
+    """
+    created_response = {**response, "status": "in_progress", "output": []}
+    events: list[bytes] = []
+    for seq, (event_type, event_response) in enumerate(
+        (
+            ("response.created", created_response),
+            ("response.completed", response),
+        )
+    ):
+        payload = {
+            "type": event_type,
+            "sequence_number": seq,
+            "response": event_response,
+        }
+        events.append(f"event: {event_type}\ndata: {json.dumps(payload)}\n\n".encode())
+    events.append(b"data: [DONE]\n\n")
+    return events
+
+
 def _output_shaping_holdout_fraction() -> float:
     from headroom.proxy import runtime_env
 
@@ -3338,7 +3405,7 @@ class OpenAIHandlerMixin:
         - Built-in tools: web_search, file_search, code_interpreter
         """
         from fastapi import HTTPException
-        from fastapi.responses import JSONResponse, Response
+        from fastapi.responses import JSONResponse, Response, StreamingResponse
 
         from headroom.proxy.helpers import (
             MAX_REQUEST_BODY_SIZE,
@@ -3919,8 +3986,34 @@ class OpenAIHandlerMixin:
             except Exception:
                 pass
 
+        # CCR: a stream:true request whose tool list carries headroom_retrieve
+        # can't be intercepted mid-SSE-stream without full event-level
+        # splicing (#1877 proposals B/C, out of scope here). Instead, force
+        # a buffered stream:false upstream call so retrieval can be resolved
+        # server-side, then reconstruct a minimal SSE stream for the client.
+        # Mirrors AnthropicHandler's buffered_stream_ccr decision.
+        _ccr_response_handler = getattr(self, "ccr_response_handler", None)
+        _ccr_handler_config = getattr(_ccr_response_handler, "config", None)
+        _ccr_response_handler_enabled = bool(
+            _ccr_response_handler and getattr(_ccr_handler_config, "enabled", True)
+        )
+        buffered_stream_ccr = bool(
+            stream
+            and _ccr_response_handler_enabled
+            and _has_headroom_retrieve_tool_responses(body.get("tools"))
+        )
+        if buffered_stream_ccr:
+            if body.get("stream") is not False:
+                body["stream"] = False
+                body_mutation_tracker.mark_mutated("ccr_streaming_retrieve_buffered_non_stream")
+            logger.info(
+                f"[{request_id}] CCR: stream:true /v1/responses request has "
+                "headroom_retrieve available; using buffered stream:false "
+                "upstream request for server-side retrieval handling"
+            )
+
         try:
-            if stream:
+            if stream and not buffered_stream_ccr:
                 # Streaming for Responses API uses semantic events
                 return await self._stream_response(
                     url,
@@ -4005,6 +4098,106 @@ class OpenAIHandlerMixin:
                     logger.debug(
                         f"[{request_id}] Failed to extract cached tokens from OpenAI passthrough response: {e}"
                     )
+
+                # CCR Response Handling: intercept headroom_retrieve tool
+                # calls server-side so a Responses API function_call the
+                # downstream caller can't resolve (e.g. Strands, or a
+                # buffered-stream request) never reaches the client. Mirrors
+                # the chat-completions backend-path block (handle_openai_chat
+                # ~2775-2848), adapted for the Responses API's flat
+                # function_call / output[] shape instead of Messages API
+                # tool_calls. Runs before memory tool handling below so a
+                # retrieve call never gets treated as an unresolved tool_call
+                # by the memory-tool branch.
+                if (
+                    _ccr_response_handler
+                    and resp_json
+                    and response.status_code == 200
+                    and _ccr_response_handler.has_ccr_tool_calls(resp_json, "openai_responses")
+                ):
+                    logger.info(
+                        f"[{request_id}] CCR: Detected retrieval tool call (responses), handling..."
+                    )
+
+                    async def api_call_fn(
+                        items: list[dict[str, Any]],
+                        tls: list[dict[str, Any]] | None,
+                    ) -> dict[str, Any]:
+                        continuation_body = {**body, "input": items}
+                        if tls is not None:
+                            continuation_body["tools"] = tls
+                        # Fresh stateless continuation: resend the full
+                        # item history rather than chaining through
+                        # previous_response_id, matching how
+                        # CCRResponseHandler accumulates `current_messages`
+                        # for every other provider. `body["stream"]` is
+                        # left as-is: for a buffered_stream_ccr request it
+                        # was already forced False above, and continuations
+                        # must stay non-streaming so this handler (not
+                        # `_stream_response`) can parse the JSON reply.
+                        continuation_body.pop("previous_response_id", None)
+                        continuation_body["stream"] = False
+
+                        continuation_headers = {
+                            k: v
+                            for k, v in headers.items()
+                            if k.lower()
+                            not in (
+                                "content-encoding",
+                                "transfer-encoding",
+                                "accept-encoding",
+                                "content-length",
+                            )
+                        }
+                        logger.info(
+                            f"[{request_id}] CCR: Issuing Responses continuation "
+                            f"({len(items)} input items)"
+                        )
+                        cont_response = await self._retry_request(
+                            "POST",
+                            url,
+                            continuation_headers,
+                            continuation_body,
+                            request_id=request_id,
+                            forwarder_name="openai_responses_ccr_continuation",
+                            path_for_log=url,
+                        )
+                        return cont_response.json()
+
+                    try:
+                        final_resp_json = await _ccr_response_handler.handle_response(
+                            resp_json,
+                            _responses_input_to_items(body.get("input")),
+                            body.get("tools"),
+                            api_call_fn,
+                            provider="openai_responses",
+                        )
+                        resp_json = final_resp_json
+                        # Remove encoding headers since content is now
+                        # uncompressed JSON we synthesized.
+                        ccr_response_headers = {
+                            k: v
+                            for k, v in response.headers.items()
+                            if k.lower() not in ("content-encoding", "content-length")
+                        }
+                        response = httpx.Response(
+                            status_code=200,
+                            content=json.dumps(final_resp_json).encode(),
+                            headers=ccr_response_headers,
+                        )
+                        logger.info(
+                            f"[{request_id}] CCR: Retrieval handled successfully (responses)"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[{request_id}] CCR: Response handling failed (responses): {e}"
+                        )
+                        # NO SILENT FALLBACK: re-raise so the client sees a
+                        # clear failure instead of an unresolved tool_call
+                        # it can't act on. Matches the OpenAI backend-path
+                        # block in handle_openai_chat; see
+                        # feedback_no_silent_fallbacks.
+                        raise
 
                 # Memory: handle memory tool calls in Responses API response
                 if (
@@ -4164,6 +4357,52 @@ class OpenAIHandlerMixin:
                 response_headers = dict(response.headers)
                 response_headers.pop("content-encoding", None)
                 response_headers.pop("content-length", None)
+
+                if buffered_stream_ccr and response.status_code == 200 and resp_json:
+                    sse_headers = {
+                        k: v
+                        for k, v in response_headers.items()
+                        if k.lower() not in ("content-length", "content-type")
+                    }
+                    if _ccr_response_handler and _ccr_response_handler.has_ccr_tool_calls(
+                        resp_json, "openai_responses"
+                    ):
+                        # Handling above didn't fully resolve the retrieve
+                        # call (e.g. max rounds hit, or it was mixed with a
+                        # non-CCR tool call). Fail closed rather than stream
+                        # a response the client can't act on — matches the
+                        # Anthropic buffered path's residual-CCR guard.
+                        logger.warning(
+                            f"[{request_id}] CCR: Buffered streaming Responses "
+                            "reply still contains headroom_retrieve after "
+                            "handling; failing closed"
+                        )
+
+                        async def _residual_ccr_error_sse():
+                            error_event = {
+                                "type": "error",
+                                "error": {
+                                    "message": "Unable to safely complete streamed CCR retrieval.",
+                                },
+                            }
+                            yield f"event: error\ndata: {json.dumps(error_event)}\n\n".encode()
+
+                        return StreamingResponse(
+                            _residual_ccr_error_sse(),
+                            media_type="text/event-stream",
+                            headers=sse_headers,
+                            status_code=502,
+                        )
+
+                    async def _buffered_ccr_sse():
+                        for event in _openai_responses_to_sse(resp_json):
+                            yield event
+
+                    return StreamingResponse(
+                        _buffered_ccr_sse(),
+                        media_type="text/event-stream",
+                        headers=sse_headers,
+                    )
 
                 return Response(
                     content=response.content,

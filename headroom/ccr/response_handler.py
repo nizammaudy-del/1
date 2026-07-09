@@ -146,6 +146,19 @@ class CCRResponseHandler:
             parts = candidates[0].get("content", {}).get("parts", [])
             return [part for part in parts if "functionCall" in part]
 
+        elif provider == "openai_responses":
+            # OpenAI Responses API format: top-level `output[]` array with
+            # flat `function_call` items (no nested "function" object, no
+            # `choices[].message.tool_calls` wrapper like chat completions).
+            output = response.get("output", [])
+            if isinstance(output, list):
+                return [
+                    item
+                    for item in output
+                    if isinstance(item, dict) and item.get("type") == "function_call"
+                ]
+            return []
+
         return []
 
     def _parse_ccr_tool_calls(
@@ -172,6 +185,11 @@ class CCRResponseHandler:
                     # Google uses function name as identifier for matching responses
                     # The functionResponse.name must match the functionCall.name
                     tool_call_id = tc.get("functionCall", {}).get("name", CCR_TOOL_NAME)
+                elif provider == "openai_responses":
+                    # Responses API function_call items key off `call_id`,
+                    # which is what the matching `function_call_output` item
+                    # must echo back (its own `id` is a separate item id).
+                    tool_call_id = tc.get("call_id", tc.get("id", ""))
                 else:
                     # Anthropic and OpenAI use explicit IDs
                     tool_call_id = tc.get("id", "")
@@ -318,6 +336,23 @@ class CCRResponseHandler:
                 ]
             }
 
+        elif provider == "openai_responses":
+            # Responses API: `function_call_output` items, echoed back into
+            # `input[]` alongside (not nested under) the preceding
+            # function_call items. Sentinel key mirrors the "openai"
+            # multi-message pattern above — handle_response() extends
+            # rather than appends when it sees this key.
+            return {
+                "_openai_responses_tool_results": [
+                    {
+                        "type": "function_call_output",
+                        "call_id": result.tool_call_id,
+                        "output": result.content,
+                    }
+                    for result in results
+                ]
+            }
+
         elif provider == "google":
             # Google/Gemini: user message with functionResponse parts
             # Format: {"role": "user", "parts": [{"functionResponse": {"name": "...", "response": {...}}}]}
@@ -376,6 +411,13 @@ class CCRResponseHandler:
                 "content": message.get("content"),
                 "tool_calls": message.get("tool_calls"),
             }
+        elif provider == "openai_responses":
+            # Responses API: the model's turn is the full `output[]` array
+            # (function_call items, message items, reasoning items, ...),
+            # echoed back verbatim as `input[]` items — not a single
+            # role/content dict like chat completions. Sentinel key mirrors
+            # `_openai_tool_results`; handle_response() extends on it.
+            return {"_openai_responses_output_items": response.get("output", [])}
         elif provider == "google":
             # Google/Gemini format: role is "model", content is in candidates[0].content.parts
             candidates = response.get("candidates", [])
@@ -466,9 +508,18 @@ class CCRResponseHandler:
             )
 
             # Build continuation messages
-            # Add assistant message (the response that had tool calls)
+            # Add assistant message (the response that had tool calls).
+            # Responses API turns are a list of output items rather than a
+            # single role/content dict, so extend on that sentinel instead
+            # of appending it as one entry.
             assistant_msg = self._extract_assistant_message(current_response, provider)
-            current_messages.append(assistant_msg)
+            if (
+                isinstance(assistant_msg, dict)
+                and "_openai_responses_output_items" in assistant_msg
+            ):
+                current_messages.extend(assistant_msg["_openai_responses_output_items"])
+            else:
+                current_messages.append(assistant_msg)
 
             # Add tool results
             tool_result_msg = self._create_tool_result_message(results, provider)
@@ -476,6 +527,8 @@ class CCRResponseHandler:
             if provider == "openai" and "_openai_tool_results" in tool_result_msg:
                 # OpenAI uses multiple messages for tool results
                 current_messages.extend(tool_result_msg["_openai_tool_results"])
+            elif "_openai_responses_tool_results" in tool_result_msg:
+                current_messages.extend(tool_result_msg["_openai_responses_tool_results"])
             else:
                 current_messages.append(tool_result_msg)
 
