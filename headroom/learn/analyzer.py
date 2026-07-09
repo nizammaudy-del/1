@@ -73,6 +73,24 @@ _CLI_TIMEOUT = 300
 _CLI_IDLE_TIMEOUT = 60
 
 
+def _resolve_windows_cli_shim(cmd: list[str]) -> list[str] | None:
+    """Resolve an npm-installed CLI shim to its real executable on Windows.
+
+    ``subprocess`` launches via ``CreateProcess`` on Windows, which — unlike a
+    shell — does not apply the ``PATHEXT`` extension search. An npm-installed
+    CLI's PATH entry is usually a ``.cmd``/``.bat`` shim, so the bare command
+    name raises ``FileNotFoundError`` even though ``shutil.which`` (which does
+    apply ``PATHEXT``) resolves it fine. Re-resolve through ``shutil.which``
+    and retry with the resolved path.
+    """
+    if os.name != "nt":
+        return None
+    resolved = shutil.which(cmd[0])
+    if resolved is None:
+        return None
+    return [resolved, *cmd[1:]]
+
+
 def _resolve_timeout_secs(env_var: str, default: int) -> int:
     """Resolve a positive-integer timeout from *env_var* or fall back to *default*.
 
@@ -528,10 +546,20 @@ def _call_cli_llm(digest: str, model: str) -> dict:
             timeout=hard_cap,
         )
     except FileNotFoundError:
-        raise RuntimeError(
-            f"`{cmd[0]}` not found in PATH. Install it or use a different backend "
-            "with --model <litellm-model-name>."
-        ) from None
+        shim_cmd = _resolve_windows_cli_shim(cmd)
+        if shim_cmd is None:
+            raise RuntimeError(
+                f"`{cmd[0]}` not found in PATH. Install it or use a different backend "
+                "with --model <litellm-model-name>."
+            ) from None
+        cmd = shim_cmd
+        try:
+            result = run(cmd, input=prompt, capture_output=True, text=True, timeout=hard_cap)
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"`{cmd[0]}` not found in PATH. Install it or use a different backend "
+                "with --model <litellm-model-name>."
+            ) from None
     except subprocess.TimeoutExpired:
         raise RuntimeError(
             f"`{' '.join(cmd)}` did not respond within {hard_cap}s. "
@@ -573,8 +601,9 @@ def _call_claude_cli_streaming(
     Threads (rather than ``select``) drain stdout/stderr so the watchdog works
     on Windows too, where ``select`` does not support pipe handles.
     """
-    try:
-        proc = Popen(
+
+    def _popen(cmd: list[str]) -> subprocess.Popen:
+        return Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -582,11 +611,24 @@ def _call_claude_cli_streaming(
             text=True,
             bufsize=1,  # line-buffered
         )
+
+    try:
+        proc = _popen(cmd)
     except FileNotFoundError:
-        raise RuntimeError(
-            f"`{cmd[0]}` not found in PATH. Install it or use a different backend "
-            "with --model <litellm-model-name>."
-        ) from None
+        shim_cmd = _resolve_windows_cli_shim(cmd)
+        if shim_cmd is None:
+            raise RuntimeError(
+                f"`{cmd[0]}` not found in PATH. Install it or use a different backend "
+                "with --model <litellm-model-name>."
+            ) from None
+        cmd = shim_cmd
+        try:
+            proc = _popen(cmd)
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"`{cmd[0]}` not found in PATH. Install it or use a different backend "
+                "with --model <litellm-model-name>."
+            ) from None
 
     assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
     try:

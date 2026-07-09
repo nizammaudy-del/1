@@ -8,26 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Fixed
-- The Anthropic Messages route (`POST /v1/messages`) now honors the
-  `x-headroom-base-url` per-request upstream override. It previously ignored the
-  header and always forwarded to `api.anthropic.com`, so clients that speak the
-  Anthropic Messages wire format while authenticating against a non-Anthropic
-  gateway (e.g. OpenCode Zen) were rejected upstream with `401 invalid
-  x-api-key`. The route now forwards to `<x-headroom-base-url>/v1/messages`,
-  consistent with the OpenAI-compatible and passthrough routes
-  ([#1760](https://github.com/headroomlabs-ai/headroom/issues/1760)).
-- **proxy:** the savings store now fsyncs its parent directory after the
-  atomic rename, so the most recent `proxy_savings.json` write survives a
-  power-loss or crash. `_save_locked` fsynced the temp file's contents but
-  never the directory entry the rename created, leaving the rename itself
-  non-durable on POSIX. Best-effort — a no-op on Windows and virtual
-  filesystems where directory fsync is unsupported.
-
-### Features
-
-* **transforms:** add opt-in audit-safe mode to `SmartCrusher` — `SmartCrusherConfig(audit_safe=True, protected_patterns=[...], fail_closed_on_protected_loss=True)`. Rows matching a protected pattern are scanned before JSON-array compression and guaranteed to survive the compressed output verbatim afterward (never dropped, never replaced by an opaque `<<ccr:...>>` marker only). Applies on both the `crush_array_json` convenience API and the `_smart_crush_content` path `apply()` uses for real tool-output compression. If a protected row still can't be preserved after the splice-back pass, the crusher fails closed by returning the original uncompressed content (or ships a best-effort result with a warning when `fail_closed_on_protected_loss=False`). Default is `audit_safe=False` — no behavior change for existing callers ([#1705](https://github.com/chopratejas/headroom/issues/1705)).
-
 ### Changed
 
 * **telemetry:** anonymous usage telemetry is now **opt-in** (off by default) instead of opt-out. Nothing is collected or sent unless you set `HEADROOM_TELEMETRY=on` or pass `--telemetry` to `headroom proxy` / `headroom install apply`. `is_telemetry_enabled()` is fail-closed — only explicit on-values (`on`/`true`/`1`/`yes`/`enable`/`enabled`) enable it; unset, empty, or unrecognized values stay disabled. The existing `--no-telemetry` flag and `HEADROOM_TELEMETRY=off` remain accepted for back-compat, and install manifests now write the `HEADROOM_TELEMETRY` value explicitly so generated deployments are unambiguous.
@@ -48,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **proxy:** cross-region Bedrock inference-profile detection — geo-prefixed model IDs (`eu.`/`us.`/`apac.`/`global.`) are now resolved to their canonical vendor, so Anthropic cross-region profiles (e.g. `eu.anthropic.claude-haiku-4-5-20251001-v1:0`) receive live-zone compression instead of being silently skipped ([#999](https://github.com/chopratejas/headroom/pull/999)).
 * **proxy:** Converse-body compression on the native Bedrock route — the live-zone dispatcher now recognizes Bedrock Converse content blocks (typeless `{"text": …}`, not only Anthropic `{"type":"text", …}`), so Converse user-message text compresses; `run_anthropic_compression` no longer bails to passthrough when the body lacks an InvokeModel `anthropic_version` envelope, and envelope re-emit stays gated on successful parse ([#999](https://github.com/chopratejas/headroom/pull/999)).
 * **docker:** bundle `headroom-proxy` binary in published `runtime` and `runtime-slim` images — closes [#976](https://github.com/chopratejas/headroom/issues/976) ([#999](https://github.com/chopratejas/headroom/pull/999)).
+* **transforms:** add opt-in audit-safe mode to `SmartCrusher` — `SmartCrusherConfig(audit_safe=True, protected_patterns=[...], fail_closed_on_protected_loss=True)`. Rows matching a protected pattern are scanned before JSON-array compression and guaranteed to survive the compressed output verbatim afterward (never dropped, never replaced by an opaque `<<ccr:...>>` marker only). Applies on both the `crush_array_json` convenience API and the `_smart_crush_content` path `apply()` uses for real tool-output compression. If a protected row still can't be preserved after the splice-back pass, the crusher fails closed by returning the original uncompressed content (or ships a best-effort result with a warning when `fail_closed_on_protected_loss=False`). Default is `audit_safe=False` — no behavior change for existing callers ([#1705](https://github.com/chopratejas/headroom/issues/1705)).
 
 ### Bug Fixes
 
@@ -121,6 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **ccr:** buffered Anthropic CCR re-streaming now preserves adaptive-thinking response shape, including empty `thinking` blocks, `signature_delta`, `redacted_thinking.data`, verbatim `stop_reason` values such as `refusal`, and `stop_details`.
 * **cursor:** `headroom wrap cursor` no longer injects the `rtk` custom-instructions block into `.cursorrules` when rtk's own native Cursor hook registers successfully. rtk supports a real hook for Cursor via `rtk init --agent cursor` (the same mechanism headroom already uses for Claude Code), which rewrites shell commands transparently — the injected `.cursorrules` text duplicated that guidance for no benefit. `wrap cursor` now tries the native hook first and only falls back to injecting `.cursorrules` if hook registration fails (#756).
 * **proxy:** The Headroom dashboard no longer tunnels `GET /favicon.ico` to the wrapped upstream provider. No route matched that path, so it fell through to the proxy's catch-all passthrough route and was forwarded to the configured Anthropic/OpenAI/etc. backend — burning a real upstream request (and possibly failing auth) for a browser's automatic favicon fetch on `/dashboard`. A dedicated `/favicon.ico` route now answers with `204 No Content` directly, registered ahead of the passthrough catch-all (#1787).
+* **learn:** fix three Windows-specific failures in `headroom learn --verbosity` and CLI-backed analysis ([#1624](https://github.com/headroomlabs-ai/headroom/issues/1624)). `verbosity.py` read transcripts and profiles with the platform-default text codec instead of UTF-8, so non-ASCII content raised a silently-caught `UnicodeDecodeError`, producing `Sessions: 0, human turns: 0` for every project. `_greedy_path_decode` listed a directory's children with `is_dir()` inline in the same expression as `iterdir()`, so a single `PermissionError` on an inaccessible sibling (e.g. the `AppData\Local\Temporary Internet Files` junction present on most Windows profiles) aborted the whole listing and silently mis-decoded any project path that walked through it, causing `--project <path>` to report "No matching project" or resolve the wrong directory. `_call_cli_llm` launched CLI backends via `Popen`/`run`, which use `CreateProcess` on Windows and don't apply the shell's `PATHEXT` extension search, so an npm-installed `.cmd` shim (e.g. `claude`, `codex`) raised `FileNotFoundError` even though it was on `PATH`; a `shutil.which`-based retry now resolves the shim.
+* **proxy:** The Anthropic Messages route (`POST /v1/messages`) now honors the `x-headroom-base-url` per-request upstream override. It previously ignored the header and always forwarded to `api.anthropic.com`, so clients that speak the Anthropic Messages wire format while authenticating against a non-Anthropic gateway (e.g. OpenCode Zen) were rejected upstream with `401 invalid x-api-key`. The route now forwards to `<x-headroom-base-url>/v1/messages`, consistent with the OpenAI-compatible and passthrough routes ([#1760](https://github.com/headroomlabs-ai/headroom/issues/1760)).
+* **proxy:** the savings store now fsyncs its parent directory after the atomic rename, so the most recent `proxy_savings.json` write survives a power-loss or crash. `_save_locked` fsynced the temp file's contents but never the directory entry the rename created, leaving the rename itself non-durable on POSIX. Best-effort — a no-op on Windows and virtual filesystems where directory fsync is unsupported.
 
 ## [0.31.0](https://github.com/headroomlabs-ai/headroom/compare/v0.30.0...v0.31.0) (2026-07-09)
 

@@ -824,6 +824,87 @@ class TestCallCliLlm:
             _call_cli_llm("test digest", "codex-cli")
 
 
+class TestWindowsCliShimFallback:
+    """npm-installed CLIs on Windows are ``.cmd``/``.bat`` shims, not directly
+    executable — ``subprocess`` uses ``CreateProcess``, which (unlike a shell)
+    does not apply the ``PATHEXT`` extension search, so ``Popen`` raises
+    ``FileNotFoundError`` even though the shell (and ``shutil.which``) finds
+    the CLI fine (issue #1624). A FileNotFoundError on Windows should trigger
+    one ``shutil.which``-based retry with the resolved executable path.
+    """
+
+    def test_streaming_cli_retries_with_resolved_shim(self, monkeypatch):
+        monkeypatch.setattr("headroom.learn.analyzer.os.name", "nt")
+        monkeypatch.setattr(
+            "headroom.learn.analyzer.shutil.which",
+            lambda name: r"C:\npm\claude.cmd" if name == "claude" else None,
+        )
+        stdout = [_result_event('{"context_file_rules": [], "memory_file_rules": []}')]
+        fake_popen = _fake_claude_popen(stdout_lines=stdout)
+        calls: list[list[str]] = []
+
+        def _construct(cmd, *args, **kwargs):
+            calls.append(cmd)
+            if cmd[0] == "claude":
+                raise FileNotFoundError("No such file or directory: 'claude'")
+            return fake_popen.side_effect(cmd, *args, **kwargs)
+
+        popen = MagicMock(side_effect=_construct)
+        with patch("headroom.learn.analyzer.subprocess.Popen", popen):
+            result = _call_cli_llm("test digest", "claude-cli")
+
+        assert result == {"context_file_rules": [], "memory_file_rules": []}
+        assert calls[0][0] == "claude"
+        assert calls[1][0] == r"C:\npm\claude.cmd"
+        assert calls[1][1:] == calls[0][1:]  # remaining args preserved
+
+    def test_non_streaming_cli_retries_with_resolved_shim(self, monkeypatch):
+        monkeypatch.setattr("headroom.learn.analyzer.os.name", "nt")
+        monkeypatch.setattr(
+            "headroom.learn.analyzer.shutil.which",
+            lambda name: r"C:\npm\codex.cmd" if name == "codex" else None,
+        )
+        calls: list[list[str]] = []
+
+        def _run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            if cmd[0] == "codex":
+                raise FileNotFoundError("No such file or directory: 'codex'")
+            return MagicMock(
+                returncode=0,
+                stdout='{"context_file_rules": [], "memory_file_rules": []}',
+                stderr="",
+            )
+
+        with patch("headroom.learn.analyzer.subprocess.run", side_effect=_run):
+            result = _call_cli_llm("test digest", "codex-cli")
+
+        assert result == {"context_file_rules": [], "memory_file_rules": []}
+        assert calls[0][0] == "codex"
+        assert calls[1][0] == r"C:\npm\codex.cmd"
+
+    def test_shim_unresolvable_still_raises_not_found_in_path(self, monkeypatch):
+        monkeypatch.setattr("headroom.learn.analyzer.os.name", "nt")
+        monkeypatch.setattr("headroom.learn.analyzer.shutil.which", lambda name: None)
+        mock_run = MagicMock(side_effect=FileNotFoundError("No such file or directory: 'codex'"))
+        with patch("headroom.learn.analyzer.subprocess.run", mock_run):
+            with pytest.raises(RuntimeError, match="not found in PATH"):
+                _call_cli_llm("test digest", "codex-cli")
+        # shutil.which couldn't resolve anything — no retry attempted.
+        assert mock_run.call_count == 1
+
+    def test_non_windows_skips_shim_resolution(self, monkeypatch):
+        monkeypatch.setattr("headroom.learn.analyzer.os.name", "posix")
+        which = MagicMock(return_value=r"/usr/local/bin/codex")
+        monkeypatch.setattr("headroom.learn.analyzer.shutil.which", which)
+        mock_run = MagicMock(side_effect=FileNotFoundError("No such file or directory: 'codex'"))
+        with patch("headroom.learn.analyzer.subprocess.run", mock_run):
+            with pytest.raises(RuntimeError, match="not found in PATH"):
+                _call_cli_llm("test digest", "codex-cli")
+        which.assert_not_called()
+        assert mock_run.call_count == 1
+
+
 class TestParseStreamEvent:
     def test_returns_none_for_empty_line(self):
         from headroom.learn.analyzer import _parse_stream_event
