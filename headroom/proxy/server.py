@@ -2012,6 +2012,24 @@ def _is_known_websocket_callback_failure(context: dict[str, Any]) -> bool:
     )
 
 
+def _tool_schema_saved_from_tags(tags: object) -> int:
+    """Tool-definition tokens Headroom kept out of context for one request by
+    deferring heavy tool schemas: the native tool-search injection
+    (``tool_search_deferred_tokens``) plus any registered turn-hook tools
+    rewrite (``turn_hook_tools_saved_tokens``). Both tags are set only on the
+    path where Headroom performed the deferral, so a client that already had
+    tool search enabled (e.g. Claude Code / Codex) contributes zero here."""
+    if not isinstance(tags, dict):
+        return 0
+    total = 0
+    for key in ("tool_search_deferred_tokens", "turn_hook_tools_saved_tokens"):
+        try:
+            total += int(tags.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def create_app(config: ProxyConfig | None = None) -> FastAPI:
     """Create FastAPI application."""
     if not FASTAPI_AVAILABLE:
@@ -2945,6 +2963,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 "total_latency_ms": log.get("total_latency_ms"),
                 "transforms_applied": log.get("transforms_applied", []),
                 "waste_signals": log.get("waste_signals"),
+                "tool_schema_saved_tokens": _tool_schema_saved_from_tags(log.get("tags")),
             }
             for log in recent_request_logs
             if log.get("input_tokens_original") is not None
@@ -3129,6 +3148,19 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         display_session = persistent_savings.get("display_session", {})
         recent_request_logs = proxy.logger.get_recent(10_000) if proxy.logger else []
         recent_request_payload = _build_recent_request_payload()
+
+        # Tool-schema deferral savings: tool-definition tokens kept out of the
+        # model's context by deferring heavy schemas until they're needed
+        # (native tool-search injection + any registered turn-hook tools
+        # rewrite). Attributed to Headroom only — see _tool_schema_saved_from_tags.
+        # Aggregated over the recent request-log window.
+        tool_schema_tokens = 0
+        tool_schema_requests = 0
+        for _ts_log in recent_request_logs:
+            _ts_saved = _tool_schema_saved_from_tags(_ts_log.get("tags"))
+            if _ts_saved > 0:
+                tool_schema_tokens += _ts_saved
+                tool_schema_requests += 1
         agent_usage = _build_agent_usage_summary(
             recent_request_logs,
             requests_by_provider=dict(m.requests_by_provider),
@@ -3227,6 +3259,20 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                             "steered verbosity / routed effort down. Counterfactual — "
                             "shown as an estimate (vs a learned baseline) or measured "
                             "(A/B holdout), always with a confidence band."
+                        ),
+                    },
+                    "tool_search": {
+                        "tokens": tool_schema_tokens,
+                        "tokens_saved": tool_schema_tokens,
+                        "requests": tool_schema_requests,
+                        "window": len(recent_request_logs),
+                        "description": (
+                            "Tool-definition tokens kept out of the model's context "
+                            "by deferring heavy tool schemas until they're searched "
+                            "for. Counted only when Headroom performed the deferral — "
+                            "not when the client (e.g. Claude Code / Codex) already "
+                            "had tool search enabled. Aggregated over the recent "
+                            "request window."
                         ),
                     },
                 },

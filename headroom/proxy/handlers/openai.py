@@ -2758,6 +2758,52 @@ class OpenAIHandlerMixin:
         optimized_tokens = tokenizer.count_messages(body["messages"])
         tokens_saved = original_tokens - optimized_tokens
 
+        # Turn hooks (opt-in extensions): a registered hook may rewrite the
+        # outbound tools/messages before we send. Buffered requests only — a
+        # streamed turn can't be re-driven to resolve whatever the model asks to
+        # load. Gated on the registry so it is a no-op when none are registered;
+        # the net tool-schema token delta is recorded so it shows up as a saving.
+        from headroom.proxy.turn_hooks import (
+            TurnContext,
+            registered_turn_hooks,
+            run_request_hooks,
+        )
+
+        if registered_turn_hooks() and not stream:
+            _th_tools_before = body.get("tools")
+            _th_tok_before = (
+                tokenizer.count_text(json.dumps(_th_tools_before, default=str))
+                if _th_tools_before
+                else 0
+            )
+            _th_ctx = TurnContext(
+                provider="openai",
+                model=str(model),
+                messages=body["messages"],
+                tools=_th_tools_before,
+                config=self.config,
+            )
+            run_request_hooks(_th_ctx)
+            # A hook may either replace ctx.messages/ctx.tools or mutate them in
+            # place (the contract allows both). Use object identity only to decide
+            # whether body needs reassignment; measure the saving from the FINAL
+            # tools object regardless, so an in-place shrink is still counted.
+            if _th_ctx.messages is not body["messages"]:
+                optimized_messages = _th_ctx.messages
+                body["messages"] = optimized_messages
+            if _th_ctx.tools is not _th_tools_before:
+                tools = _th_ctx.tools
+                body["tools"] = tools
+            _th_tok_after = (
+                tokenizer.count_text(json.dumps(_th_ctx.tools, default=str)) if _th_ctx.tools else 0
+            )
+            _th_saved = max(0, _th_tok_before - _th_tok_after)
+            if _th_saved > 0:
+                tags["turn_hook_tools_saved_tokens"] = (
+                    int(tags.get("turn_hook_tools_saved_tokens", 0) or 0) + _th_saved
+                )
+                transforms_applied.append(f"turn_hook:tools:{_th_saved}tok")
+
         # Compatibility shim: GPT-5 / o-series chat models REJECT the legacy
         # `max_tokens` ("Unsupported parameter … Use 'max_completion_tokens'
         # instead"); gpt-4o/4.1 accept `max_completion_tokens` too. openai-
@@ -3071,6 +3117,54 @@ class OpenAIHandlerMixin:
             else:
                 headers = await apply_copilot_api_auth(headers, url=url)
                 response = await self._retry_request("POST", url, headers, body)
+
+                # Turn hooks: a registered extension may re-drive this turn
+                # (e.g. resolve a tool the model asked to load) before we treat
+                # the response as final. Buffered path only; no-op when no hook
+                # is registered.
+                from headroom.proxy.turn_hooks import (
+                    TurnContext as _TurnContext,
+                )
+                from headroom.proxy.turn_hooks import (
+                    registered_turn_hooks as _registered_turn_hooks,
+                )
+                from headroom.proxy.turn_hooks import (
+                    run_response_hooks,
+                )
+
+                if _registered_turn_hooks() and response.status_code == 200:
+                    try:
+                        _hook_resp_json = response.json()
+                    except (ValueError, json.JSONDecodeError):
+                        _hook_resp_json = None
+                    if isinstance(_hook_resp_json, dict):
+                        _hook_ctx = _TurnContext(
+                            provider="openai",
+                            model=str(model),
+                            messages=body["messages"],
+                            tools=body.get("tools"),
+                            config=self.config,
+                        )
+
+                        async def _hook_call_model(_msgs):
+                            body["messages"] = _msgs
+                            _r = await self._retry_request("POST", url, headers, body)
+                            return _r.json()
+
+                        _hook_final = await run_response_hooks(
+                            _hook_ctx, _hook_resp_json, _hook_call_model
+                        )
+                        if _hook_final is not _hook_resp_json:
+                            response = httpx.Response(
+                                status_code=200,
+                                headers={
+                                    k: v
+                                    for k, v in response.headers.items()
+                                    if k.lower() not in ("content-encoding", "content-length")
+                                },
+                                content=json.dumps(_hook_final).encode(),
+                            )
+
                 self.pipeline_extensions.emit(
                     PipelineStage.POST_SEND,
                     operation="proxy.request",
