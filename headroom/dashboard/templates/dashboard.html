@@ -81,9 +81,9 @@
         html:not(.dark) body { color: #1f2937; }
         html:not(.dark) .text-gray-200 { color: #1f2937; }
         html:not(.dark) .text-gray-300 { color: #374151; }
-        html:not(.dark) .text-gray-400 { color: #6b7280; }
-        html:not(.dark) .text-gray-500 { color: #9ca3af; }
-        html:not(.dark) .text-gray-600 { color: #6b7280; }
+        html:not(.dark) .text-gray-400 { color: #4b5563; }
+        html:not(.dark) .text-gray-500 { color: #6b7280; }
+        html:not(.dark) .text-gray-600 { color: #4b5563; }
         html:not(.dark) .hover\:text-gray-200:hover { color: #111827; }
         html:not(.dark) .hover\:text-white:hover { color: #111827; }
         /* Light mode overrides for dark-specific utility classes */
@@ -123,6 +123,11 @@
                         @click="setViewMode('history')">
                     Historical
                 </button>
+                <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
+                        :class="viewMode === 'mcp' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
+                        @click="setViewMode('mcp')">
+                    MCP
+                </button>
             </div>
             <template x-if="stats.anon_telemetry_shipping">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1"
@@ -159,6 +164,10 @@
             <div class="text-xs text-gray-500">
                 Updated <span x-text="lastUpdate"></span>
             </div>
+            <div class="text-xs text-gray-500" x-show="uptimeSeconds > 0"
+                 title="How long the Headroom proxy process has been running">
+                Up <span class="text-gray-300 font-mono" x-text="uptimeText"></span>
+            </div>
             <button onclick="toggleTheme()" id="theme-toggle"
                     class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
                     title="Toggle light/dark mode">
@@ -175,17 +184,79 @@
                     :class="feedOpen ? 'bg-accent text-black' : ''">
                 Live Feed
             </button>
+            <div class="relative" x-data="{ open: false }" @click.outside="open = false"
+                 x-show="mcpDashboards.length > 0">
+                <button @click="open = !open" id="mcp-dashboards-toggle"
+                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-gray-100 transition-colors flex items-center gap-1"
+                        title="Open installed MCP server dashboards">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                    </svg>
+                    MCP Dashboards
+                </button>
+                <div x-show="open" x-transition
+                     class="absolute right-0 mt-2 w-64 z-20 bg-surface border border-border rounded-lg shadow-lg p-2">
+                    <template x-for="d in mcpDashboards" :key="d.name">
+                        <a :href="d.url" target="_blank" rel="noopener"
+                           class="flex items-center justify-between px-3 py-2 rounded-md text-sm text-gray-300 hover:bg-black/20 transition-colors">
+                            <span x-text="d.label"></span>
+                            <span class="w-2 h-2 rounded-full"
+                                  :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
+                                  :title="d.available ? 'Reachable' : 'Not reachable — is the server running?'"></span>
+                        </a>
+                    </template>
+                </div>
+            </div>
+            <a href="https://github.com/headroomlabs-ai/headroom" target="_blank" rel="noopener"
+               class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+               title="View Headroom on GitHub" aria-label="View Headroom on GitHub">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 .5C5.73.5.5 5.73.5 12a11.5 11.5 0 007.86 10.92c.575.106.785-.25.785-.556 0-.274-.01-1-.015-1.965-3.196.695-3.87-1.54-3.87-1.54-.523-1.33-1.276-1.684-1.276-1.684-1.043-.713.08-.699.08-.699 1.153.081 1.76 1.184 1.76 1.184 1.026 1.758 2.69 1.25 3.346.956.104-.744.402-1.25.73-1.538-2.552-.29-5.236-1.276-5.236-5.68 0-1.255.448-2.28 1.183-3.084-.119-.29-.513-1.46.112-3.045 0 0 .965-.309 3.163 1.178a10.98 10.98 0 015.76 0c2.196-1.487 3.16-1.178 3.16-1.178.626 1.585.232 2.755.114 3.045.737.804 1.182 1.83 1.182 3.084 0 4.415-2.688 5.386-5.248 5.67.413.356.78 1.057.78 2.13 0 1.54-.014 2.78-.014 3.158 0 .308.207.667.79.554A11.5 11.5 0 0023.5 12C23.5 5.73 18.27.5 12 .5z"/>
+                </svg>
+            </a>
+            <a href="https://github.com/headroomlabs-ai/headroom/issues/new" target="_blank" rel="noopener"
+               class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+               title="Report an issue" aria-label="Report an issue on GitHub">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                </svg>
+            </a>
         </div>
     </header>
 
     <main class="p-6 max-w-7xl mx-auto">
         <template x-if="viewMode === 'session'">
             <div>
+        <!-- Doctor status: reuses `headroom doctor` checks via /doctor -->
+        <div class="bg-surface rounded-lg p-4 border border-border mb-6" x-show="doctor.checks.length > 0">
+            <div class="flex justify-between items-center mb-3">
+                <div class="text-sm font-medium text-gray-300 cursor-help"
+                     title="Live results of the same checks headroom doctor runs on the CLI: proxy liveness, version drift, client routing, savings flow and budget.">
+                    System Health <span class="text-gray-600">&#9432;</span>
+                </div>
+                <span class="text-xs font-mono px-2 py-0.5 rounded"
+                      :class="doctor.exit_code === 0 ? 'bg-emerald-500/15 text-emerald-400' : (doctor.exit_code === 2 ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400')"
+                      x-text="doctor.exit_code === 0 ? 'all good' : (doctor.exit_code === 2 ? 'action needed' : 'warnings')"></span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
+                <template x-for="check in doctor.checks" :key="check.name">
+                    <div class="flex items-start gap-2 text-sm" :title="check.hint || ''">
+                        <span class="mt-0.5"
+                              :class="{'text-emerald-400': check.status === 'pass', 'text-amber-400': check.status === 'warn', 'text-red-400': check.status === 'fail', 'text-gray-500': check.status === 'skip'}"
+                              x-text="check.status === 'pass' ? '✓' : (check.status === 'fail' ? '✗' : (check.status === 'warn' ? '⚠' : '·'))"></span>
+                        <div class="min-w-0">
+                            <span class="text-gray-300 uppercase text-xs tracking-wide" x-text="check.name"></span>
+                            <span class="text-gray-500 block truncate" x-text="check.summary"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
         <!-- Hero Metrics: Savings $ -> Input Compression -> Output Reduction -> Overhead -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <!-- Savings ($) - proxy compression only, priced at model list rate -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Proxy $ Saved</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Estimated money saved by the proxy compressing tool outputs before they reach the model, priced at the model's list input rate. Compression only — excludes cache and other effects.">Proxy $ Saved <span class="text-gray-600">&#9432;</span></div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.persistent_savings?.lifetime?.compression_savings_usd || 0)"></span>
                 </div>
@@ -206,7 +277,7 @@
 
             <!-- Token Savings (%) -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Token Savings</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Percentage of input tokens removed by compression: how much smaller the prompt got after the proxy shrank tool outputs, versus the original size.">Token Savings <span class="text-gray-600">&#9432;</span></div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums text-accent" x-text="formatNumber(stats.tokens?.saved || 0)"></span>
                     <!-- Active compression ratio: savings as a fraction of tokens we
@@ -241,7 +312,7 @@
 
             <!-- Output Tokens Saved (counterfactual) -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Output Tokens Saved</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Fewer output tokens the model generated because prompts were compressed, measured against a holdout baseline (counterfactual). 'measured' = A/B holdout; 'estimated' = vs a learned baseline.">Output Tokens Saved <span class="text-gray-600">&#9432;</span></div>
                 <template x-if="stats.tokens?.output_reduction?.available">
                     <div>
                         <div class="flex items-baseline gap-2">
@@ -271,7 +342,7 @@
 
             <!-- Headroom Overhead -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Overhead</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Extra latency the proxy adds per request while compressing. Lower is better; this is the cost you pay for the token savings above.">Overhead <span class="text-gray-600">&#9432;</span></div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms'"></span>
                 </div>
@@ -966,7 +1037,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <!-- What Headroom Removed -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300">What Headroom Removed</div>
+                <div class="text-sm font-medium mb-4 text-gray-300 cursor-help" title="Breakdown of which kinds of prompt waste the proxy compressed away (verbose tool output, redundant file listings, minifiable JSON, etc.), by tokens removed.">What Headroom Removed <span class="text-gray-600">&#9432;</span></div>
                 <template x-if="Object.keys(stats.waste_signals || {}).length > 0">
                     <div class="space-y-3">
                         <template x-for="[signal, tokens] in sortedWasteSignals" :key="signal">
@@ -985,8 +1056,13 @@
                     </div>
                 </template>
                 <template x-if="Object.keys(stats.waste_signals || {}).length === 0">
-                    <div class="text-sm text-gray-500 italic py-8 text-center">
-                        No waste signals detected yet. Data appears after requests are processed.
+                    <div class="text-sm text-gray-500 py-8 text-center space-y-1">
+                        <div class="text-gray-400">Nothing removed yet.</div>
+                        <div>Once you route a client through the proxy and make a request,
+                        this breaks down the waste Headroom compressed away &mdash; bloated tool
+                        output, repeated file listings, minifiable JSON.</div>
+                        <div class="text-gray-600">Point a client at
+                        <span class="font-mono">ANTHROPIC_BASE_URL=http://127.0.0.1:8787</span> to start.</div>
                     </div>
                 </template>
             </div>
@@ -1335,6 +1411,58 @@
             </div>
         </template>
 
+        <template x-if="viewMode === 'mcp'">
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <div class="text-lg font-medium text-gray-200">MCP Usage</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Per-server tool-call activity by Claude and other agents.</div>
+                    </div>
+                    <span class="text-xs px-2 py-0.5 rounded font-mono"
+                          :class="mcpUsage.log_full_messages ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'"
+                          x-text="mcpUsage.log_full_messages ? 'logging on' : 'log-full-messages off'"></span>
+                </div>
+
+                <template x-if="(mcpUsage.servers || []).length > 0">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <template x-for="s in mcpUsage.servers" :key="s.server">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="flex justify-between items-baseline mb-3">
+                                    <span class="text-sm font-medium text-gray-200 font-mono" x-text="s.server"></span>
+                                    <span class="text-2xl font-light tabular-nums text-accent" x-text="formatNumber(s.calls)"></span>
+                                </div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">calls by tool</div>
+                                <div class="space-y-1">
+                                    <template x-for="t in s.tools" :key="t.tool">
+                                        <div class="flex justify-between text-sm">
+                                            <span class="text-gray-400 font-mono truncate mr-2" x-text="t.tool"></span>
+                                            <span class="text-gray-300 tabular-nums" x-text="formatNumber(t.calls)"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <template x-if="(mcpUsage.servers || []).length === 0">
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-sm text-gray-500 py-8 text-center space-y-1">
+                            <div class="text-gray-400">No MCP tool calls seen yet.</div>
+                            <div>This tab counts <span class="font-mono">mcp__&lt;server&gt;__&lt;tool&gt;</span> calls
+                            from requests that flowed through the proxy.</div>
+                            <div class="text-gray-600" x-show="!mcpUsage.log_full_messages">
+                                Full-message logging is off, so tool calls can't be counted.
+                                Start the proxy with <span class="font-mono">--log-full-messages</span> and make a request.
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <div class="text-xs text-gray-600 mt-4" x-text="mcpUsage.note"></div>
+            </div>
+        </template>
+
         <template x-if="viewMode === 'history'">
             <div>
                 <div class="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
@@ -1360,7 +1488,7 @@
 
                 <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Lifetime Compression Savings</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Total money saved by compression across every session since Headroom was installed, persisted to disk.">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums text-emerald-400"
                                   x-text="'$' + formatCurrency(historyStats.lifetime?.compression_savings_usd || 0)"></span>
@@ -1371,7 +1499,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Lifetime Tokens Saved</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Total input tokens removed by compression across all sessions since install.">Lifetime Tokens Saved <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums text-accent"
                                   x-text="formatNumber(historyStats.lifetime?.tokens_saved || 0)"></span>
@@ -1381,7 +1509,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Active Days</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Number of distinct days on which at least one request flowed through the proxy.">Active Days <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums"
                                   x-text="formatNumber((historyStats.series?.daily || []).length)"></span>
@@ -1783,13 +1911,28 @@
                 feedItemHeight: 160,
                 feedBuffer: 5,
                 log_full_messages: false,
+                uptimeSeconds: 0,
+                uptimeText: '',
+                mcpDashboards: [],
+                mcpUsage: { servers: [], note: '', log_full_messages: false },
+                doctor: { checks: [], exit_code: 0 },
 
                 async init() {
                     await this.fetchStats();
+                    this.fetchMcpDashboards();
+                    this.fetchDoctor();
 
                     this.pollInterval = setInterval(() => {
                         this.pollDashboard();
                     }, this.statsPollMs);
+
+                    // Live-tick the uptime between /health polls.
+                    setInterval(() => {
+                        if (this.uptimeSeconds > 0) {
+                            this.uptimeSeconds += 1;
+                            this.uptimeText = this.formatUptime(this.uptimeSeconds);
+                        }
+                    }, 1000);
 
                     // Keyboard shortcuts
                     document.addEventListener('keydown', (e) => {
@@ -1811,12 +1954,64 @@
                     if (this.feedOpen && (force || now - this.lastFeedFetchMs >= this.feedPollMs)) {
                         await this.fetchTransformations();
                     }
+                    if (this.viewMode === 'mcp') {
+                        await this.fetchMcpUsage();
+                    }
                 },
 
                 async setViewMode(mode) {
                     this.viewMode = mode;
                     if (mode === 'history') {
                         await this.fetchHistoryStats();
+                    }
+                    if (mode === 'mcp') {
+                        await this.fetchMcpUsage();
+                    }
+                },
+
+                formatUptime(total) {
+                    total = Math.floor(total);
+                    const d = Math.floor(total / 86400);
+                    const h = Math.floor((total % 86400) / 3600);
+                    const m = Math.floor((total % 3600) / 60);
+                    const s = total % 60;
+                    if (d > 0) return `${d}d ${h}h ${m}m`;
+                    if (h > 0) return `${h}h ${m}m`;
+                    if (m > 0) return `${m}m ${s}s`;
+                    return `${s}s`;
+                },
+
+                async fetchMcpDashboards() {
+                    try {
+                        const res = await fetch('/mcp/dashboards');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.mcpDashboards = data.dashboards || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch MCP dashboards:', e);
+                    }
+                },
+
+                async fetchMcpUsage() {
+                    try {
+                        const res = await fetch('/mcp/usage?limit=100');
+                        if (res.ok) {
+                            this.mcpUsage = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch MCP usage:', e);
+                    }
+                },
+
+                async fetchDoctor() {
+                    try {
+                        const res = await fetch('/doctor');
+                        if (res.ok) {
+                            this.doctor = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch doctor status:', e);
                     }
                 },
 
@@ -1839,6 +2034,11 @@
                         this.healthy = health.status === 'healthy';
                         this.version = health.version || '0.3.0';
                         this.log_full_messages = this.stats.log_full_messages || false;
+
+                        if (typeof health.uptime_seconds === 'number') {
+                            this.uptimeSeconds = health.uptime_seconds;
+                            this.uptimeText = this.formatUptime(this.uptimeSeconds);
+                        }
 
                         // Update history for sparklines
                         this.requestHistory.push(this.stats.requests?.total || 0);
