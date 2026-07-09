@@ -2175,6 +2175,32 @@ class AnthropicHandlerMixin:
                         f"{_ts_saved_tokens}tok"
                     )
 
+            # Turn hooks (opt-in extensions): a registered hook may inspect or
+            # rewrite the outbound tools/messages before we send upstream — the
+            # extensible counterpart to the built-in deferral above. A single
+            # registry check keeps this a no-op when no hook is registered.
+            from headroom.proxy.turn_hooks import (
+                TurnContext,
+                registered_turn_hooks,
+                run_request_hooks,
+            )
+
+            if registered_turn_hooks():
+                _req_ctx = TurnContext(
+                    provider="anthropic",
+                    model=str(model),
+                    messages=optimized_messages,
+                    tools=body.get("tools"),
+                    config=self.config,
+                )
+                run_request_hooks(_req_ctx)
+                if _req_ctx.messages is not optimized_messages:
+                    optimized_messages = _req_ctx.messages
+                    body["messages"] = optimized_messages
+                if _req_ctx.tools is not body.get("tools"):
+                    tools = _req_ctx.tools
+                    body["tools"] = tools
+
             # Output shaping (opt-in via HEADROOM_OUTPUT_SHAPER): verbosity
             # steering appended to the system-prompt tail + effort routing on
             # mechanical tool_result continuations. Runs after every other
@@ -2781,6 +2807,26 @@ class AnthropicHandlerMixin:
                                 provider="anthropic",
                             )
                             # Update response content with final response
+                            resp_json = final_resp_json
+                            # Turn hooks (opt-in extensions) may inspect the turn or
+                            # re-drive the model before we hand back the response.
+                            # Inert when no hook is registered.
+                            from headroom.proxy.turn_hooks import (
+                                TurnContext,
+                                run_response_hooks,
+                            )
+
+                            final_resp_json = await run_response_hooks(
+                                TurnContext(
+                                    provider="anthropic",
+                                    model=str(model),
+                                    messages=optimized_messages,
+                                    tools=tools,
+                                    config=self.config,
+                                ),
+                                final_resp_json,
+                                api_call_fn,
+                            )
                             resp_json = final_resp_json
                             # Remove encoding headers since content is now uncompressed JSON
                             ccr_response_headers = {
