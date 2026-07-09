@@ -169,6 +169,14 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
                 </svg>
             </button>
+            <button @click="openSettings()" id="settings-toggle"
+                    class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                    title="Settings">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+            </button>
             <button x-show="log_full_messages" id="feed-toggle"
                     class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
                     @click="toggleFeed()"
@@ -1784,8 +1792,17 @@
                 feedBuffer: 5,
                 log_full_messages: false,
 
+                // Settings menu state
+                settingsOpen: false,
+                settingsSaving: false,
+                settingsMessage: '',
+                settingsError: false,
+                settingsRestartKeys: [],
+                settingsForm: { settings: {}, pricingRows: [] },
+
                 async init() {
                     await this.fetchStats();
+                    await this.loadSettingsIntoPoll();
 
                     this.pollInterval = setInterval(() => {
                         this.pollDashboard();
@@ -1797,6 +1814,105 @@
                             this.pollDashboard(true);
                         }
                     });
+                },
+
+                // Load saved poll intervals from /config at startup so the
+                // dashboard honors user-set cadences without a page rebuild.
+                async loadSettingsIntoPoll() {
+                    try {
+                        const res = await fetch('/config');
+                        if (!res.ok) return;
+                        const cfg = await res.json();
+                        const s = cfg.settings || {};
+                        if (s.dashboard_stats_poll_ms) this.statsPollMs = s.dashboard_stats_poll_ms;
+                        if (s.dashboard_history_poll_ms) this.historyPollMs = s.dashboard_history_poll_ms;
+                        if (s.dashboard_feed_poll_ms) this.feedPollMs = s.dashboard_feed_poll_ms;
+                    } catch (e) { /* keep defaults */ }
+                },
+
+                async openSettings() {
+                    this.settingsMessage = '';
+                    this.settingsError = false;
+                    try {
+                        const res = await fetch('/config');
+                        const cfg = await res.json();
+                        this.settingsRestartKeys = cfg.restart_required_settings || [];
+                        const settings = Object.assign({}, cfg.setting_defaults || {}, cfg.settings || {});
+                        const pricingRows = Object.entries(cfg.pricing || {}).map(([model, p]) => ({
+                            model,
+                            input_per_1m: p.input_per_1m ?? null,
+                            output_per_1m: p.output_per_1m ?? null,
+                            cache_read_per_1m: p.cache_read_per_1m ?? null,
+                            cache_write_per_1m: p.cache_write_per_1m ?? null,
+                        }));
+                        this.settingsForm = { settings, pricingRows };
+                        this.settingsOpen = true;
+                    } catch (e) {
+                        this.settingsError = true;
+                        this.settingsMessage = 'Failed to load config: ' + e;
+                        this.settingsOpen = true;
+                    }
+                },
+
+                addPricingRow() {
+                    this.settingsForm.pricingRows.push({
+                        model: '', input_per_1m: null, output_per_1m: null,
+                        cache_read_per_1m: null, cache_write_per_1m: null,
+                    });
+                },
+
+                async saveSettings() {
+                    this.settingsSaving = true;
+                    this.settingsMessage = '';
+                    this.settingsError = false;
+
+                    // Build pricing map, dropping empty rows/fields.
+                    const pricing = {};
+                    for (const row of this.settingsForm.pricingRows) {
+                        const model = (row.model || '').trim();
+                        if (!model) continue;
+                        const entry = {};
+                        for (const f of ['input_per_1m', 'output_per_1m', 'cache_read_per_1m', 'cache_write_per_1m']) {
+                            if (row[f] !== null && row[f] !== '' && row[f] !== undefined) entry[f] = Number(row[f]);
+                        }
+                        if (Object.keys(entry).length) pricing[model] = entry;
+                    }
+
+                    // Normalize settings: blank strings -> null for nullable fields.
+                    const s = Object.assign({}, this.settingsForm.settings);
+                    for (const k of ['savings_profile', 'target_ratio', 'budget_limit_usd']) {
+                        if (s[k] === '' || s[k] === undefined) s[k] = null;
+                    }
+
+                    try {
+                        const res = await fetch('/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pricing, settings: s }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            this.settingsError = true;
+                            this.settingsMessage = data.error || 'Save failed';
+                            return;
+                        }
+                        // Apply poll intervals live.
+                        if (s.dashboard_stats_poll_ms) this.statsPollMs = s.dashboard_stats_poll_ms;
+                        if (s.dashboard_history_poll_ms) this.historyPollMs = s.dashboard_history_poll_ms;
+                        if (s.dashboard_feed_poll_ms) this.feedPollMs = s.dashboard_feed_poll_ms;
+                        if (this.pollInterval) {
+                            clearInterval(this.pollInterval);
+                            this.pollInterval = setInterval(() => { this.pollDashboard(); }, this.statsPollMs);
+                        }
+                        this.settingsError = false;
+                        this.settingsMessage = 'Saved. Profile/budget changes need a proxy restart to take effect.';
+                        await this.fetchStats();
+                    } catch (e) {
+                        this.settingsError = true;
+                        this.settingsMessage = 'Save failed: ' + e;
+                    } finally {
+                        this.settingsSaving = false;
+                    }
                 },
 
                 async pollDashboard(force = false) {
@@ -2650,5 +2766,112 @@
             localStorage.setItem('headroom-theme', isDark ? 'dark' : 'light');
         }
     </script>
+    <!-- ============================================================ -->
+    <!-- Settings overlay (self-contained; Alpine x-show) -->
+    <!-- ============================================================ -->
+    <div x-show="settingsOpen" x-cloak
+         class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
+         @keydown.escape.window="settingsOpen = false"
+         style="display: none;">
+        <div @click.away="settingsOpen = false"
+             class="w-full max-w-2xl rounded-lg border border-border bg-surface shadow-xl">
+            <div class="flex items-center justify-between border-b border-border px-6 py-4">
+                <h2 class="text-lg font-semibold text-gray-100">Settings</h2>
+                <button @click="settingsOpen = false" class="text-gray-500 hover:text-gray-200" title="Close">&#10005;</button>
+            </div>
+
+            <div class="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-6">
+                <!-- feedback banner -->
+                <template x-if="settingsMessage">
+                    <div class="rounded-md px-3 py-2 text-sm"
+                         :class="settingsError ? 'bg-red-500/15 text-red-300 border border-red-500/30' : 'bg-green-500/15 text-green-300 border border-green-500/30'"
+                         x-text="settingsMessage"></div>
+                </template>
+
+                <!-- Polling / Display -->
+                <section>
+                    <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Polling &amp; Display</h3>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <label class="text-sm text-gray-300">Stats poll (ms)
+                            <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_stats_poll_ms"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                        </label>
+                        <label class="text-sm text-gray-300">History poll (ms)
+                            <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_history_poll_ms"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                        </label>
+                        <label class="text-sm text-gray-300">Feed poll (ms)
+                            <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_feed_poll_ms"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Profiles / Budget (restart required) -->
+                <section>
+                    <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Profiles &amp; Budget</h3>
+                    <p class="mb-2 text-xs text-amber-400">Changes here take effect after a proxy restart.</p>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label class="text-sm text-gray-300">Savings profile
+                            <input type="text" placeholder="(default)" x-model="settingsForm.settings.savings_profile"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                        </label>
+                        <label class="text-sm text-gray-300">Target ratio (0-1)
+                            <input type="number" min="0" max="1" step="0.05" x-model.number="settingsForm.settings.target_ratio"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                        </label>
+                        <label class="text-sm text-gray-300">Budget limit (USD)
+                            <input type="number" min="0" step="0.01" x-model.number="settingsForm.settings.budget_limit_usd"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                        </label>
+                        <label class="text-sm text-gray-300">Budget period
+                            <select x-model="settingsForm.settings.budget_period"
+                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                                <option value="hourly">hourly</option>
+                                <option value="daily">daily</option>
+                                <option value="monthly">monthly</option>
+                            </select>
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Pricing overrides -->
+                <section>
+                    <div class="mb-2 flex items-center justify-between">
+                        <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400">Token Pricing Overrides</h3>
+                        <button @click="addPricingRow()" class="rounded border border-border px-2 py-1 text-xs text-gray-300 hover:text-gray-100">+ Add model</button>
+                    </div>
+                    <p class="mb-2 text-xs text-gray-500">USD per 1M tokens. Models left unset use the built-in LiteLLM pricing.</p>
+                    <div class="space-y-2">
+                        <template x-for="(row, idx) in settingsForm.pricingRows" :key="idx">
+                            <div class="grid grid-cols-12 items-center gap-2">
+                                <input type="text" placeholder="model" x-model="row.model"
+                                       class="col-span-4 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="number" min="0" step="0.01" placeholder="input" x-model.number="row.input_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="number" min="0" step="0.01" placeholder="output" x-model.number="row.output_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="number" min="0" step="0.01" placeholder="cache r" x-model.number="row.cache_read_per_1m"
+                                       class="col-span-1 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="number" min="0" step="0.01" placeholder="cache w" x-model.number="row.cache_write_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <button @click="settingsForm.pricingRows.splice(idx, 1)" class="col-span-1 text-gray-500 hover:text-red-400" title="Remove">&#10005;</button>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="mt-1 grid grid-cols-12 gap-2 text-[10px] uppercase text-gray-600">
+                        <span class="col-span-4">model</span><span class="col-span-2">input</span><span class="col-span-2">output</span><span class="col-span-1">c.read</span><span class="col-span-2">c.write</span>
+                    </div>
+                </section>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 border-t border-border px-6 py-4">
+                <button @click="settingsOpen = false" class="rounded-md border border-border px-4 py-1.5 text-sm text-gray-300 hover:text-gray-100">Cancel</button>
+                <button @click="saveSettings()" :disabled="settingsSaving"
+                        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+                        x-text="settingsSaving ? 'Saving...' : 'Save'"></button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

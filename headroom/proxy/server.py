@@ -103,7 +103,7 @@ from headroom.providers.registry import (
     format_backend_status,
     resolve_api_targets,
 )
-from headroom.proxy import runtime_env
+from headroom.proxy import runtime_env, user_config
 from headroom.proxy.auth_mode import should_stamp_codex_client
 from headroom.proxy.background_compression import BackgroundCompressor
 
@@ -3814,6 +3814,53 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     async def compress_messages(request: Request):
         return await proxy.handle_compress(request)
 
+    # ==================================================================
+    # Settings menu routes (dashboard-editable config)
+    #
+    # GET  /config -> current editable settings + per-model pricing
+    #                 overrides (read-only, safe to expose).
+    # POST /config -> validate + persist changes (loopback-guarded).
+    #
+    # Pricing overrides and dashboard settings persist to
+    # `headroom.proxy.user_config` (JSON under the config dir), which the
+    # CostTracker reads live — so pricing edits take effect on the next
+    # request without a restart. Settings in
+    # `user_config.RESTART_REQUIRED_SETTINGS` (budget, savings profile,
+    # target ratio) are wired into the proxy config at startup and need a
+    # proxy restart to take effect; the UI flags this.
+    # ==================================================================
+
+    @app.get("/config")
+    async def get_config():
+        """Return dashboard-editable config (pricing overrides + settings)."""
+        return JSONResponse(status_code=200, content=user_config.config_response())
+
+    @app.post("/config", dependencies=[Depends(_require_loopback)])
+    async def post_config(request: Request):
+        """Validate and persist dashboard config changes. Loopback-only.
+
+        Body: ``{"pricing": {model: {input_per_1m, ...}}, "settings": {...}}``.
+        Either section may be omitted; a provided section replaces the stored
+        one. Unknown keys and negative numbers are rejected with 400.
+        """
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            return JSONResponse(
+                status_code=400, content={"error": "expected a JSON object"}
+            )
+        try:
+            user_config.update(body)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        logger.info("dashboard config updated via /config")
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, **user_config.config_response()},
+        )
+
+    # Provider catch-all ("/{path:path}") must be registered last so the
+    # explicit routes above take precedence.
     register_provider_routes(app, proxy)
 
     return app
