@@ -3056,6 +3056,9 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         )
         rtk_tokens_avoided = cli_tokens_avoided if cli_filtering_tool == "rtk" else 0
         lean_ctx_tokens_avoided = cli_tokens_avoided if cli_filtering_tool == "lean-ctx" else 0
+        cli_filtering_available = bool(
+            cli_filtering_stats and cli_filtering_stats.get("installed", False)
+        )
 
         # Calculate total tokens before Headroom-side reduction. Proxy
         # compression and the configured context tool both remove tokens before
@@ -3170,6 +3173,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                     "cli_filtering": {
                         "tool": cli_filtering_tool,
                         "label": cli_filtering_label,
+                        "available": cli_filtering_available,
                         "tokens": cli_tokens_avoided,
                         "tokens_saved": cli_tokens_avoided,
                         "session": cli_filtering_session,
@@ -3438,9 +3442,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             "context_tool": {
                 "configured": cli_filtering_tool,
                 "label": cli_filtering_label,
-                "available": bool(
-                    cli_filtering_stats and cli_filtering_stats.get("installed", False)
-                ),
+                "available": cli_filtering_available,
                 "stats": cli_filtering_stats,
             },
             "cli_filtering": cli_filtering_stats,
@@ -3562,11 +3564,13 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         """Get durable proxy compression history plus display-session state.
 
         The JSON payload also carries a ``cli_filtering`` key with live RTK
-        stats. This is a curated subset (``tool``, ``label``, ``lifetime``,
-        ``session``) tailored to the Historical tab, not the full
-        ``_get_context_tool_stats()`` payload that ``/stats`` exposes. It is
-        ``None`` when RTK is absent or its stats cannot be read, so the tab
-        simply hides the card rather than erroring.
+        stats. This is a curated subset (``tool``, ``label``, ``available``,
+        ``lifetime``, ``session``) tailored to the Historical tab, not the
+        full ``_get_context_tool_stats()`` payload that ``/stats`` exposes.
+        It is ``None`` only when the stats read hard-fails; when the tool is
+        merely absent, ``cli_filtering`` stays populated with
+        ``available: False`` and zeroed counters so the tab can distinguish
+        "not installed" from "installed, no data yet."
         """
         if format == "csv":
             filename = f"headroom-stats-history-{series}.csv"
@@ -3593,6 +3597,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             history["cli_filtering"] = {
                 "tool": str(cli_stats.get("tool", "rtk")),
                 "label": str(cli_stats.get("label", "RTK")),
+                "available": bool(cli_stats.get("installed", False)),
                 "lifetime": cli_stats.get("lifetime", {}),
                 "session": cli_stats.get("session", {}),
             }
