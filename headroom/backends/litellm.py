@@ -354,6 +354,33 @@ def get_provider_config(provider: str) -> ProviderConfig:
     )
 
 
+def _anthropic_usage_from_litellm(litellm_usage: Any) -> dict[str, Any]:
+    """Map LiteLLM usage to Anthropic-shape usage, surfacing cache tokens.
+
+    LiteLLM's ``prompt_tokens`` is the *total* prompt size including cached
+    tokens, while Anthropic's ``input_tokens`` excludes tokens served from or
+    written to the prompt cache. Without this mapping a working Bedrock prompt
+    cache is invisible to non-streaming clients: they see the full prompt count
+    and no cache fields, which looks exactly like the cache being broken
+    (see #1345). The streaming/OpenAI paths already surface these fields.
+    """
+    cache_read = int(getattr(litellm_usage, "cache_read_input_tokens", 0) or 0)
+    cache_write = int(getattr(litellm_usage, "cache_creation_input_tokens", 0) or 0)
+    details = getattr(litellm_usage, "prompt_tokens_details", None)
+    if details is not None:
+        cache_read = cache_read or int(getattr(details, "cached_tokens", 0) or 0)
+        cache_write = cache_write or int(getattr(details, "cache_creation_tokens", 0) or 0)
+    prompt_tokens = int(getattr(litellm_usage, "prompt_tokens", 0) or 0)
+    usage: dict[str, Any] = {
+        "input_tokens": max(prompt_tokens - cache_read - cache_write, 0),
+        "output_tokens": getattr(litellm_usage, "completion_tokens", 0),
+    }
+    if cache_read or cache_write:
+        usage["cache_read_input_tokens"] = cache_read
+        usage["cache_creation_input_tokens"] = cache_write
+    return usage
+
+
 def _convert_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any]:
     """Convert Anthropic tool format to OpenAI function format.
 
@@ -653,10 +680,7 @@ class LiteLLMBackend(Backend):
         stop_reason = stop_reason_map.get(choice.finish_reason, "end_turn")
 
         # Build usage
-        usage = {
-            "input_tokens": getattr(litellm_response.usage, "prompt_tokens", 0),
-            "output_tokens": getattr(litellm_response.usage, "completion_tokens", 0),
-        }
+        usage = _anthropic_usage_from_litellm(litellm_response.usage)
 
         return {
             "id": msg_id,
