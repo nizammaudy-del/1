@@ -3263,6 +3263,121 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         """Unified quota/rate-limit stats for all registered providers (Anthropic, Codex, Copilot)."""
         return JSONResponse(content=get_quota_registry().get_all_stats())
 
+    @app.get("/doctor", dependencies=[Depends(_require_loopback)])
+    async def doctor():
+        """Run the same diagnostics as ``headroom doctor`` and return them as JSON.
+
+        Reuses ``headroom.cli.doctor`` check functions (no duplicated logic) so
+        the dashboard's status panel and the CLI never drift apart.
+        """
+        from headroom.cli.doctor import build_report
+
+        return JSONResponse(content=await asyncio.to_thread(build_report, config.port))
+
+    @app.get("/mcp/dashboards", dependencies=[Depends(_require_loopback)])
+    async def mcp_dashboards():
+        """List installed MCP servers that expose their own web dashboard.
+
+        Only servers we know ship a dashboard are considered; for each we check
+        whether it is registered in any detected agent and probe reachability so
+        the UI can render live links.
+        """
+        # Known MCP web dashboards keyed by the server name used at registration.
+        known = {
+            "serena": {
+                "label": "Serena",
+                "url": "http://127.0.0.1:24282/dashboard/index.html",
+            },
+        }
+
+        def _collect() -> list[dict[str, Any]]:
+            from headroom.mcp_registry import get_all_registrars
+
+            registrars = get_all_registrars()
+            out: list[dict[str, Any]] = []
+            for name, meta in known.items():
+                installed = any(
+                    r.detect() and r.get_server(name) is not None for r in registrars
+                )
+                if not installed:
+                    continue
+                available = False
+                try:
+                    resp = httpx.get(meta["url"], timeout=0.7)
+                    available = resp.status_code < 500
+                except httpx.HTTPError:
+                    available = False
+                out.append(
+                    {
+                        "name": name,
+                        "label": meta["label"],
+                        "url": meta["url"],
+                        "available": available,
+                    }
+                )
+            return out
+
+        return JSONResponse(content={"dashboards": await asyncio.to_thread(_collect)})
+
+    @app.get("/mcp/usage", dependencies=[Depends(_require_loopback)])
+    async def mcp_usage(limit: int = 100):
+        """Per-MCP tool-call usage aggregated from recently logged requests.
+
+        ponytail: the proxy does not track a dedicated per-MCP-server counter.
+        This aggregates ``mcp__<server>__<tool>`` tool_use blocks out of the
+        recent request message logs, so it only reflects requests captured while
+        ``log_full_messages`` is enabled and bounded by ``limit``. Token/cost are
+        not attributable to a single tool within a multi-tool request, so only
+        call counts are reported here — deliberately not fabricated.
+        """
+        if limit > 100:
+            limit = 100
+
+        log_full_messages = bool(proxy.config.log_full_messages) if proxy else False
+        by_server: dict[str, dict[str, Any]] = {}
+
+        if proxy and proxy.logger:
+            for log in proxy.logger.get_recent_with_messages(limit):
+                messages = log.get("request_messages") or []
+                for message in messages:
+                    content = message.get("content") if isinstance(message, dict) else None
+                    if not isinstance(content, list):
+                        continue
+                    for block in content:
+                        if not isinstance(block, dict) or block.get("type") != "tool_use":
+                            continue
+                        name = str(block.get("name") or "")
+                        if not name.startswith("mcp__"):
+                            continue
+                        parts = name.split("__")
+                        server = parts[1] if len(parts) > 1 else "unknown"
+                        tool = parts[2] if len(parts) > 2 else name
+                        entry = by_server.setdefault(
+                            server, {"server": server, "calls": 0, "tools": {}}
+                        )
+                        entry["calls"] += 1
+                        entry["tools"][tool] = entry["tools"].get(tool, 0) + 1
+
+        servers = sorted(by_server.values(), key=lambda s: s["calls"], reverse=True)
+        for s in servers:
+            s["tools"] = [
+                {"tool": t, "calls": c}
+                for t, c in sorted(s["tools"].items(), key=lambda kv: kv[1], reverse=True)
+            ]
+
+        return JSONResponse(
+            content={
+                "servers": servers,
+                "log_full_messages": log_full_messages,
+                "sampled_requests": limit,
+                "note": (
+                    "Call counts from mcp__ tool_use blocks in recently logged "
+                    "requests. Requires --log-full-messages; token/cost are not "
+                    "attributable per tool."
+                ),
+            }
+        )
+
     @app.get("/metrics")
     async def metrics():
         """Prometheus metrics endpoint."""
