@@ -91,6 +91,18 @@ def _get_env_int_optional(name: str) -> int | None:
         raise click.ClickException(f"{name} must be an integer, got {val!r}") from None
 
 
+def _get_env_int(name: str, default: int) -> int:
+    """Return the env var as an int, or ``default`` only when it is unset.
+
+    Unlike ``_get_env_int_optional(name) or default``, an explicit ``0`` is
+    preserved — ``0`` is a legitimate value (e.g. ``HEADROOM_MIN_TOKENS=0``
+    means "crush every item") and ``0 or default`` would silently discard it.
+    Mirrors ``headroom.proxy.server._get_env_int``.
+    """
+    value = _get_env_int_optional(name)
+    return default if value is None else value
+
+
 def _get_env_float_optional(name: str) -> float | None:
     val = os.environ.get(name)
     if val is None or val == "":
@@ -1082,8 +1094,8 @@ def proxy(
         rate_limit_requests_per_minute=rpm if rpm is not None else 60,
         rate_limit_tokens_per_minute=tpm if tpm is not None else 100_000,
         compress_user_messages=_get_env_bool("HEADROOM_COMPRESS_USER_MESSAGES", False),
-        min_tokens_to_crush=_get_env_int_optional("HEADROOM_MIN_TOKENS") or 500,
-        max_items_after_crush=_get_env_int_optional("HEADROOM_MAX_ITEMS") or 50,
+        min_tokens_to_crush=_get_env_int("HEADROOM_MIN_TOKENS", 500),
+        max_items_after_crush=_get_env_int("HEADROOM_MAX_ITEMS", 50),
         exclude_tools=_parse_exclude_tools(None) or None,
         protect_tool_results=frozenset(_parse_csv_tools(protect_tool_results))
         if protect_tool_results
