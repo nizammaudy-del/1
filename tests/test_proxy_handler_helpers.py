@@ -223,6 +223,27 @@ def test_openai_handler_prefix_helpers_cover_edge_cases() -> None:
     )
     assert (
         OpenAIHandlerMixin._strict_previous_turn_frozen_count(
+            [{"role": "assistant"}, {"role": "tool", "content": "observation"}],
+            0,
+        )
+        == 1
+    )
+    assert (
+        OpenAIHandlerMixin._strict_previous_turn_frozen_count(
+            [{"role": "user"}, {"role": "assistant"}, {"role": "tool", "content": "obs"}],
+            3,
+        )
+        == 2
+    )
+    assert (
+        OpenAIHandlerMixin._strict_previous_turn_frozen_count(
+            [{"role": "assistant"}, {"role": "function", "content": "legacy observation"}],
+            0,
+        )
+        == 1
+    )
+    assert (
+        OpenAIHandlerMixin._strict_previous_turn_frozen_count(
             [{"role": "user"}, {"role": "assistant"}],
             0,
         )

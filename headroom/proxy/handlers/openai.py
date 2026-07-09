@@ -1070,7 +1070,7 @@ class OpenAIHandlerMixin:
             return base_frozen_count
         final_idx = len(messages) - 1
         if messages[final_idx].get("role") in ("user", "tool", "function"):
-            return max(base_frozen_count, final_idx)
+            return final_idx
         return len(messages)
 
     @staticmethod
@@ -2363,8 +2363,8 @@ class OpenAIHandlerMixin:
 
         openai_frozen_count = openai_prefix_tracker.get_frozen_message_count()
         if is_cache_mode(self.config.mode):
-            openai_frozen_count = self._strict_previous_turn_frozen_count(
-                original_client_messages,
+            openai_frozen_count = OpenAIHandlerMixin._strict_previous_turn_frozen_count(
+                messages,
                 openai_frozen_count,
             )
 
@@ -2399,8 +2399,14 @@ class OpenAIHandlerMixin:
                     # Zone 1: Swap cached compressed versions
                     working_messages = comp_cache.apply_cached(messages)
 
-                    # Re-freeze boundary
-                    openai_frozen_count = comp_cache.compute_frozen_count(messages)
+                    # Re-freeze boundary. Token mode can use the compression
+                    # cache's positional frozen count. Cache mode must keep the
+                    # latest observation mutable even when the compression
+                    # cache has no compressible entry for it yet; otherwise
+                    # OpenAI-compatible tool-call clients freeze the entire
+                    # conversation and report near-zero savings.
+                    if not is_cache_mode(self.config.mode):
+                        openai_frozen_count = comp_cache.compute_frozen_count(messages)
 
                     result = await self._run_compression_in_executor(
                         lambda: self.openai_pipeline.apply(
@@ -2408,7 +2414,14 @@ class OpenAIHandlerMixin:
                             model=model,
                             model_limit=context_limit,
                             context=extract_user_query(working_messages),
-                            frozen_message_count=openai_frozen_count,
+                            frozen_message_count=(
+                                OpenAIHandlerMixin._strict_previous_turn_frozen_count(
+                                    working_messages,
+                                    openai_frozen_count,
+                                )
+                                if is_cache_mode(self.config.mode)
+                                else openai_frozen_count
+                            ),
                             biases=_hook_biases,
                             compression_policy=compression_policy,
                             # Thread the savings-profile knobs (e.g.
@@ -2434,13 +2447,21 @@ class OpenAIHandlerMixin:
                     # so tokens_saved captures both Zone 1 + Zone 2 savings.
                     optimized_tokens = result.tokens_after
                 else:
+                    apply_frozen_count = (
+                        OpenAIHandlerMixin._strict_previous_turn_frozen_count(
+                            messages,
+                            openai_frozen_count,
+                        )
+                        if is_cache_mode(self.config.mode)
+                        else openai_frozen_count
+                    )
                     result = await self._run_compression_in_executor(
                         lambda: self.openai_pipeline.apply(
                             messages=messages,
                             model=model,
                             model_limit=context_limit,
                             context=extract_user_query(messages),
-                            frozen_message_count=openai_frozen_count,
+                            frozen_message_count=apply_frozen_count,
                             biases=_hook_biases,
                             compression_policy=compression_policy,
                             # Same savings-profile threading as the token-mode
