@@ -673,6 +673,157 @@ class TestSubscriptionRouting:
         assert "env_key" not in content
 
 
+# ---------------------------------------------------------------------------
+# Custom upstream preservation (#1614): wrap must not silently reroute a
+# pre-existing custom [model_providers.*] base_url to api.openai.com.
+# ---------------------------------------------------------------------------
+
+
+class TestDetectCustomCodexUpstreamBaseUrl:
+    """Unit tests for the detection helper used by ``_inject_codex_provider_config``."""
+
+    def test_no_config_returns_none(self) -> None:
+        assert wrap_mod._detect_custom_codex_upstream_base_url("") is None
+
+    def test_no_custom_provider_returns_none(self) -> None:
+        content = (
+            'model_provider = "openai"\n\n'
+            "[model_providers.openai]\n"
+            'base_url = "https://api.openai.com/v1"\n'
+        )
+        assert wrap_mod._detect_custom_codex_upstream_base_url(content) is None
+
+    def test_sole_candidate_used_without_explicit_selection(self) -> None:
+        """Matches the #1614 repro: a custom table with no static top-level pin."""
+        content = (
+            "[model_providers.freemodel]\n"
+            'base_url = "https://api.freemodel.dev"\n'
+            'wire_api = "responses"\n'
+        )
+        assert (
+            wrap_mod._detect_custom_codex_upstream_base_url(content) == "https://api.freemodel.dev"
+        )
+
+    def test_explicit_top_level_selection_wins(self) -> None:
+        content = (
+            'model_provider = "freemodel"\n\n'
+            "[model_providers.freemodel]\n"
+            'base_url = "https://api.freemodel.dev"\n\n'
+            "[model_providers.other]\n"
+            'base_url = "https://api.other.example"\n'
+        )
+        assert (
+            wrap_mod._detect_custom_codex_upstream_base_url(content) == "https://api.freemodel.dev"
+        )
+
+    def test_was_comment_recovers_selection_on_rewrap(self) -> None:
+        """After a prior wrap, model_provider reads 'headroom  # was: freemodel'."""
+        content = (
+            'model_provider = "headroom"  # was: freemodel\n\n'
+            "[model_providers.freemodel]\n"
+            'base_url = "https://api.freemodel.dev"\n'
+        )
+        assert (
+            wrap_mod._detect_custom_codex_upstream_base_url(content) == "https://api.freemodel.dev"
+        )
+
+    def test_ambiguous_multiple_candidates_returns_none(self) -> None:
+        content = (
+            "[model_providers.freemodel]\n"
+            'base_url = "https://api.freemodel.dev"\n\n'
+            "[model_providers.other]\n"
+            'base_url = "https://api.other.example"\n'
+        )
+        assert wrap_mod._detect_custom_codex_upstream_base_url(content) is None
+
+    def test_builtin_provider_tables_excluded(self) -> None:
+        content = (
+            'model_provider = "openai"\n\n'
+            "[model_providers.openai]\n"
+            'base_url = "https://api.openai.com/v1"\n\n'
+            "[model_providers.anthropic]\n"
+            'base_url = "https://api.anthropic.com/v1"\n'
+        )
+        assert wrap_mod._detect_custom_codex_upstream_base_url(content) is None
+
+    def test_own_headroom_table_excluded(self) -> None:
+        content = (
+            'model_provider = "headroom"\n\n'
+            "[model_providers.headroom]\n"
+            'base_url = "http://127.0.0.1:8787/v1"\n'
+        )
+        assert wrap_mod._detect_custom_codex_upstream_base_url(content) is None
+
+
+class TestInjectPreservesCustomUpstreamBaseUrl:
+    """``_inject_codex_provider_config`` must preserve a pre-existing custom
+    provider's ``base_url`` instead of silently rerouting to api.openai.com."""
+
+    def test_inject_returns_and_carries_custom_base_url(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _set_test_home(monkeypatch, tmp_path)
+        config_dir = tmp_path / ".codex"
+        config_dir.mkdir()
+        config_file = config_dir / "config.toml"
+        config_file.write_text(
+            "[model_providers.freemodel]\n"
+            'base_url = "https://api.freemodel.dev"\n'
+            'wire_api = "responses"\n',
+            encoding="utf-8",
+        )
+
+        result = wrap_mod._inject_codex_provider_config(8787)
+
+        assert result == "https://api.freemodel.dev"
+        content = config_file.read_text(encoding="utf-8")
+        parsed = tomllib.loads(content)
+        headers = parsed["model_providers"]["headroom"]["env_http_headers"]
+        assert (
+            headers[wrap_mod._UPSTREAM_BASE_URL_HEADER_NAME] == wrap_mod._UPSTREAM_BASE_URL_ENV_VAR
+        )
+        # The user's own table is left untouched — only headroom's own is managed.
+        assert parsed["model_providers"]["freemodel"]["base_url"] == "https://api.freemodel.dev"
+
+    def test_inject_without_custom_provider_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _set_test_home(monkeypatch, tmp_path)
+
+        result = wrap_mod._inject_codex_provider_config(8787)
+
+        assert result is None
+        content = (tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8")
+        assert wrap_mod._UPSTREAM_BASE_URL_HEADER_NAME not in content
+
+    def test_preserved_upstream_survives_rewrap_and_port_change(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _set_test_home(monkeypatch, tmp_path)
+        config_dir = tmp_path / ".codex"
+        config_dir.mkdir()
+        config_file = config_dir / "config.toml"
+        config_file.write_text(
+            'model_provider = "freemodel"\n\n'
+            "[model_providers.freemodel]\n"
+            'base_url = "https://api.freemodel.dev"\n',
+            encoding="utf-8",
+        )
+
+        first = wrap_mod._inject_codex_provider_config(8787)
+        second = wrap_mod._inject_codex_provider_config(9999)  # port change / re-wrap
+
+        assert first == "https://api.freemodel.dev"
+        assert second == "https://api.freemodel.dev"
+        content = config_file.read_text(encoding="utf-8")
+        parsed = tomllib.loads(content)
+        assert parsed["model_providers"]["headroom"]["base_url"] == "http://127.0.0.1:9999/v1"
+        headers = parsed["model_providers"]["headroom"]["env_http_headers"]
+        assert (
+            headers[wrap_mod._UPSTREAM_BASE_URL_HEADER_NAME] == wrap_mod._UPSTREAM_BASE_URL_ENV_VAR
+        )
+
+
 class TestInjectAvoidsDuplicateTopLevelKeys:
     """Wrap must not produce a TOML-validity-breaking duplicate-key error.
 

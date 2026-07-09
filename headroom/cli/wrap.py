@@ -1757,7 +1757,97 @@ def _apply_project_header_env(env: dict[str, str]) -> None:
         env["ANTHROPIC_CUSTOM_HEADERS"] = header_line
 
 
-def _inject_codex_provider_config(port: int) -> None:
+# Codex's own built-in providers plus Headroom's injected one — never treated
+# as a "custom upstream to preserve" by _detect_custom_codex_upstream_base_url.
+_CODEX_BUILTIN_PROVIDER_NAMES = frozenset({"openai", "anthropic", "azure", "headroom"})
+
+# Header carrying a preserved custom upstream (freemodel.dev, LiteLLM, vLLM,
+# ...) so the proxy forwards to it instead of the hardcoded OpenAI default.
+# Codex's env_http_headers only accepts an env-var *name* per header (not a
+# literal value), so the detected URL is exported into this env var by the
+# `wrap codex` launch path — see its use in `codex()` below.
+_UPSTREAM_BASE_URL_HEADER_NAME = "X-Headroom-Base-Url"
+_UPSTREAM_BASE_URL_ENV_VAR = "HEADROOM_CODEX_UPSTREAM_BASE_URL"
+
+
+def _codex_custom_provider_base_urls(content: str) -> dict[str, str]:
+    """Return ``{provider_name: base_url}`` for user-declared custom providers.
+
+    Excludes Codex's built-ins (``openai``/``anthropic``/``azure``) and
+    Headroom's own ``headroom`` table.  A table with no ``base_url`` line, or
+    one already pointing at Headroom's own localhost proxy (a leftover from a
+    prior wrap this pass hasn't stripped yet), is excluded too.
+    """
+    import re
+
+    tables: dict[str, str] = {}
+    for match in re.finditer(
+        r"(?ms)^[ \t]*\[model_providers\.(?P<name>[^\]\s]+)\][ \t]*\n"
+        r"(?P<body>.*?)(?=^[ \t]*\[|\Z)",
+        content,
+    ):
+        name = match.group("name")
+        if name in _CODEX_BUILTIN_PROVIDER_NAMES:
+            continue
+        base_match = re.search(
+            r'(?m)^[ \t]*base_url[ \t]*=[ \t]*"(?P<url>[^"\n]*)"', match.group("body")
+        )
+        if not base_match:
+            continue
+        url = base_match.group("url").strip().rstrip("/")
+        if not url or url.startswith(("http://127.0.0.1", "http://localhost")):
+            continue
+        tables[name] = url
+    return tables
+
+
+def _detect_custom_codex_upstream_base_url(content: str) -> str | None:
+    """Return a user-configured custom provider ``base_url`` to preserve, if any.
+
+    Codex lets users declare OpenAI-compatible gateways (LiteLLM, vLLM,
+    freemodel.dev, ...) under ``[model_providers.<name>]`` and select one via
+    the top-level ``model_provider`` key. Before this, ``headroom wrap codex``
+    unconditionally pointed the proxy's upstream OpenAI route at
+    ``api.openai.com``, silently discarding that selection — the user's
+    gateway API key then gets sent to OpenAI, which rejects it (#1614).
+
+    If the top-level ``model_provider`` names one of the detected custom
+    tables, that selection wins unambiguously. This also covers the
+    already-wrapped case: once wrap has run once, the top-level key reads
+    ``model_provider = "headroom"  # was: <original>`` (see
+    ``_redirect_existing_top_level_keys``), so the original selection is
+    recovered from that trailing comment on re-wrap / port changes.
+
+    Falls back to the sole candidate when exactly one custom table exists
+    and there is no (or no matching) top-level selection — the common case
+    from the bug report, where the table is declared but selection happens
+    via ``--profile`` rather than a static top-level key. Returns ``None``
+    when there are multiple, un-selected candidates (ambiguous — guessing
+    wrong is worse than the prior default behavior) or none at all.
+    """
+    import re
+
+    candidates = _codex_custom_provider_base_urls(content)
+    if not candidates:
+        return None
+
+    selected = re.search(
+        r'(?m)^[ \t]*model_provider[ \t]*=[ \t]*"(?P<name>[^"\n]*)"'
+        r"(?:[ \t]*#[ \t]*was:[ \t]*(?P<was>[^\r\n]*))?",
+        content,
+    )
+    if selected:
+        was = (selected.group("was") or "").strip()
+        chosen = was or selected.group("name")
+        if chosen in candidates:
+            return candidates[chosen]
+
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+    return None
+
+
+def _inject_codex_provider_config(port: int) -> str | None:
     """Inject a Headroom model provider into Codex's config.toml.
 
     Two keys need to be in effect for the proxy to route all traffic:
@@ -1784,9 +1874,31 @@ def _inject_codex_provider_config(port: int) -> None:
     Before the first injection, the pre-wrap file is snapshotted to
     ``config.toml.headroom-backup`` so ``headroom unwrap codex``
     can restore it byte-for-byte.
+
+    Returns the custom upstream ``base_url`` preserved from an existing
+    ``[model_providers.*]`` table, if one was detected (#1614); ``None``
+    otherwise. Callers that go on to launch Codex should export this value
+    into ``HEADROOM_CODEX_UPSTREAM_BASE_URL`` (the injected
+    ``env_http_headers`` entry maps it to the ``X-Headroom-Base-Url`` header,
+    which the proxy's OpenAI HTTP handlers honor over the hardcoded
+    ``api.openai.com`` default) — see its use in ``codex()`` below.
     """
     config_file, backup_file = _codex_config_paths()
     config_dir = config_file.parent
+
+    # Detect an existing custom OpenAI-compatible provider BEFORE building the
+    # injected block below, so it can be preserved as the upstream the proxy
+    # forwards to instead of silently rerouting to api.openai.com (#1614).
+    # Best-effort: any read/parse failure just means nothing is preserved,
+    # matching prior behavior.
+    custom_upstream_base_url: str | None = None
+    if config_file.exists():
+        try:
+            custom_upstream_base_url = _detect_custom_codex_upstream_base_url(
+                _read_text(config_file)
+            )
+        except OSError:
+            custom_upstream_base_url = None
 
     # The injected content is split into two self-contained, marker-delimited
     # blocks: a top-level key block (at the start of the file, because bare
@@ -1803,6 +1915,15 @@ def _inject_codex_provider_config(port: int) -> None:
     requires_openai_auth = (
         "requires_openai_auth = true\n" if codex_uses_chatgpt_auth(config_dir / "auth.json") else ""
     )
+    # Per-project savings: Codex sends the X-Headroom-Project header only
+    # when the mapped env var (HEADROOM_PROJECT, set by `headroom wrap
+    # codex`) exists at Codex runtime. When a custom upstream was detected,
+    # add a second entry so Codex also sends X-Headroom-Base-Url — the proxy
+    # forwards there instead of api.openai.com (#1614).
+    env_http_headers_map = {_PROJECT_HEADER_NAME: "HEADROOM_PROJECT"}
+    if custom_upstream_base_url:
+        env_http_headers_map[_UPSTREAM_BASE_URL_HEADER_NAME] = _UPSTREAM_BASE_URL_ENV_VAR
+    env_http_headers_toml = ", ".join(f'"{k}" = "{v}"' for k, v in env_http_headers_map.items())
     provider_section = (
         f"{_CODEX_TOP_LEVEL_MARKER}\n"
         "[model_providers.headroom]\n"
@@ -1810,11 +1931,9 @@ def _inject_codex_provider_config(port: int) -> None:
         f'base_url = "http://127.0.0.1:{port}/v1"\n'
         f"supports_websockets = true\n"
         f"{requires_openai_auth}"
-        # Per-project savings: Codex sends the header only when the mapped
-        # env var (HEADROOM_PROJECT, set by `headroom wrap codex`) exists at
-        # Codex runtime.  Inline table keeps the key inside this section so
+        # Inline table keeps the key inside this section so
         # _strip_codex_headroom_blocks removes it with the rest of the block.
-        f'env_http_headers = {{ "{_PROJECT_HEADER_NAME}" = "HEADROOM_PROJECT" }}\n'
+        f"env_http_headers = {{ {env_http_headers_toml} }}\n"
         f"{_CODEX_END_MARKER}\n"
     )
 
@@ -1893,11 +2012,20 @@ def _inject_codex_provider_config(port: int) -> None:
 
         _write_text(config_file, content)
         click.echo(f"  Codex config: injected Headroom provider (WS + HTTP) into {config_file}")
+        if custom_upstream_base_url:
+            click.echo(
+                f"  Codex config: preserving existing custom upstream "
+                f"{custom_upstream_base_url} (from a pre-existing [model_providers.*] "
+                "base_url)"
+            )
         # Pull existing native threads into the headroom-provider menu so Codex's
         # history list stays whole once it routes through Headroom. Best-effort.
         retag_to_headroom(_codex_home_dir())
     except Exception as e:
         click.echo(f"  Warning: could not update Codex config: {e}")
+        return None
+
+    return custom_upstream_base_url
 
 
 def _restore_codex_provider_config() -> tuple[str, Path]:
@@ -4701,7 +4829,14 @@ def codex(
     # transport unless a custom provider declares supports_websockets = true.
     # NOTE: this must run BEFORE _inject_memory_mcp_config because it rewrites
     # the config file.  Re-inject MCP config after if memory is enabled.
-    _inject_codex_provider_config(actual_port)
+    _codex_custom_upstream = _inject_codex_provider_config(actual_port)
+    if _codex_custom_upstream and _UPSTREAM_BASE_URL_ENV_VAR not in env:
+        # Carries the preserved custom base_url (#1614) to the injected
+        # env_http_headers entry, which maps it to X-Headroom-Base-Url —
+        # the proxy's OpenAI HTTP handlers forward there instead of the
+        # hardcoded api.openai.com default. A user-set value wins.
+        env[_UPSTREAM_BASE_URL_ENV_VAR] = _codex_custom_upstream
+        env_vars_display.append(f"{_UPSTREAM_BASE_URL_ENV_VAR}={_codex_custom_upstream}")
     if memory:
         _inject_memory_mcp_config(os.environ.get("USER", os.environ.get("USERNAME", "default")))
 
