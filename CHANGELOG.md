@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-durable on POSIX. Best-effort — a no-op on Windows and virtual
   filesystems where directory fsync is unsupported.
 
+### Features
+
+* **transforms:** add opt-in audit-safe mode to `SmartCrusher` — `SmartCrusherConfig(audit_safe=True, protected_patterns=[...], fail_closed_on_protected_loss=True)`. Rows matching a protected pattern are scanned before JSON-array compression and guaranteed to survive the compressed output verbatim afterward (never dropped, never replaced by an opaque `<<ccr:...>>` marker only). Applies on both the `crush_array_json` convenience API and the `_smart_crush_content` path `apply()` uses for real tool-output compression. If a protected row still can't be preserved after the splice-back pass, the crusher fails closed by returning the original uncompressed content (or ships a best-effort result with a warning when `fail_closed_on_protected_loss=False`). Default is `audit_safe=False` — no behavior change for existing callers ([#1705](https://github.com/chopratejas/headroom/issues/1705)).
+
 ### Changed
 
 * **telemetry:** anonymous usage telemetry is now **opt-in** (off by default) instead of opt-out. Nothing is collected or sent unless you set `HEADROOM_TELEMETRY=on` or pass `--telemetry` to `headroom proxy` / `headroom install apply`. `is_telemetry_enabled()` is fail-closed — only explicit on-values (`on`/`true`/`1`/`yes`/`enable`/`enabled`) enable it; unset, empty, or unrecognized values stay disabled. The existing `--no-telemetry` flag and `HEADROOM_TELEMETRY=off` remain accepted for back-compat, and install manifests now write the `HEADROOM_TELEMETRY` value explicitly so generated deployments are unambiguous.
