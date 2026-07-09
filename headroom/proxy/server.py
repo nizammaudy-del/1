@@ -4313,7 +4313,13 @@ def _proxy_config_from_env() -> ProxyConfig:
         periodic_toin_stats_enabled=_get_env_bool("HEADROOM_PERIODIC_TOIN_STATS", True),
         proxy_token=os.environ.get("HEADROOM_PROXY_TOKEN") or None,
         offline=_get_env_bool("HEADROOM_OFFLINE", False),
-        mode=normalize_proxy_mode(_get_env_str("HEADROOM_MODE", PROXY_MODE_TOKEN)),
+        # Default mode is CACHE (Headroom's coding posture): delta-only compression
+        # at ~0 prefix-cache busts. HEADROOM_MODE overrides.
+        mode=normalize_proxy_mode(_get_env_str("HEADROOM_MODE", PROXY_MODE_CACHE)),
+        # Default savings profile is "coding" so proxy_pipeline_kwargs applies its
+        # posture (compress_user, protect_recent, min_tokens). HEADROOM_SAVINGS_PROFILE
+        # overrides.
+        savings_profile=os.environ.get("HEADROOM_SAVINGS_PROFILE") or "coding",
         read_maturation=_get_env_bool("HEADROOM_READ_MATURATION", False),
         read_maturation_quiesce_turns=_get_env_int("HEADROOM_READ_MATURATION_QUIESCE_TURNS", 5),
         read_maturation_max_hold_turns=_get_env_int("HEADROOM_READ_MATURATION_MAX_HOLD_TURNS", 25),
@@ -4324,6 +4330,12 @@ def _proxy_config_from_env() -> ProxyConfig:
 
 
 def create_app_from_env() -> FastAPI:
+    # Seed the coding-profile defaults into the process env BEFORE reading config,
+    # so the uvicorn factory launch gets Headroom's out-of-box posture (cache mode,
+    # tool-search, dedupe, read protection, …). setdefault → explicit env wins.
+    from headroom.agent_savings import seed_proxy_env_defaults
+
+    seed_proxy_env_defaults()
     return create_app(_proxy_config_from_env())
 
 
@@ -4361,6 +4373,16 @@ def run_server(
     if not FASTAPI_AVAILABLE:
         print("ERROR: FastAPI required. Install: pip install fastapi uvicorn httpx")
         sys.exit(1)
+
+    # Seed the request-time coding-profile toggles (tool-search, dedupe, read
+    # protection, lossless→lossy, effort-router, block-char floor) into the
+    # process env before serving, so downstream per-request readers pick them up.
+    # Done here (not in the CLI command) so unit tests that mock run_server never
+    # mutate os.environ. setdefault → explicit env still wins. MODE / profile are
+    # already resolved into `config` above via their inline defaults.
+    from headroom.agent_savings import seed_proxy_env_defaults
+
+    seed_proxy_env_defaults()
 
     config = config or ProxyConfig()
     code_aware_status = _get_code_aware_banner_status(config)
@@ -4969,10 +4991,10 @@ if __name__ == "__main__":
         protect_tool_results=frozenset(protect_tool_results)
         if protect_tool_results
         else frozenset(),
-        mode=normalize_proxy_mode(_get_env_str("HEADROOM_MODE", PROXY_MODE_TOKEN)),
+        mode=normalize_proxy_mode(_get_env_str("HEADROOM_MODE", PROXY_MODE_CACHE)),
         compress_user_messages=args.compress_user_messages
         or _get_env_bool("HEADROOM_COMPRESS_USER_MESSAGES", False),
-        savings_profile=os.environ.get("HEADROOM_SAVINGS_PROFILE") or None,
+        savings_profile=os.environ.get("HEADROOM_SAVINGS_PROFILE") or "coding",
         # Default 0.4 keep-ratio so the Kompress text (prose/code) path compresses
         # meaningfully out of the box; HEADROOM_TARGET_RATIO overrides.
         target_ratio=(

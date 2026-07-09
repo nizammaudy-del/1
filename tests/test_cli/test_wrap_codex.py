@@ -1005,6 +1005,17 @@ def test_start_proxy_does_not_apply_agent_90_defaults(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, agent_type: str
 ) -> None:
     """Wrapped coding agents keep agent-savings opt-in by default."""
+    # Clean baseline: the proxy's out-of-box coding profile seeds these into the
+    # process env at startup (``seed_proxy_env_defaults``), which another test in
+    # the shard can leave behind in ``os.environ``. This test is about what the
+    # WRAPPER adds, so start from an unset env rather than inheriting pollution.
+    for _var in (
+        "HEADROOM_SAVINGS_PROFILE",
+        "HEADROOM_TARGET_RATIO",
+        "HEADROOM_MAX_ITEMS",
+        "HEADROOM_SMART_CRUSHER_COMPACTION",
+    ):
+        monkeypatch.delenv(_var, raising=False)
     popen_kwargs: dict[str, object] = {}
 
     class FakeProc:

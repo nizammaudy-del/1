@@ -338,8 +338,10 @@ class TestCLIProxyEnvVars:
         assert result.exit_code == 0, result.output
         assert captured_config["config"].code_aware_enabled is True
 
-    def test_code_aware_enabled_defaults_false(self, runner):
-        """Without HEADROOM_CODE_AWARE_ENABLED, code-aware stays disabled in the wrapper."""
+    def test_code_aware_enabled_defaults_true(self, runner):
+        """Without HEADROOM_CODE_AWARE_ENABLED, code-aware defaults ON (coding
+        posture; consistent with the argparse server path). It degrades to a no-op
+        when tree-sitter isn't installed, so defaulting it on is safe."""
         captured_config = {}
 
         def mock_run_server(config, **kwargs):
@@ -358,7 +360,7 @@ class TestCLIProxyEnvVars:
             )
 
         assert result.exit_code == 0, result.output
-        assert captured_config["config"].code_aware_enabled is False
+        assert captured_config["config"].code_aware_enabled is True
 
     def test_code_aware_enabled_from_cli_flag(self, runner):
         """--code-aware should enable code-aware compression in the wrapper."""

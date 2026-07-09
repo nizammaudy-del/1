@@ -10,7 +10,7 @@ import click
 
 from headroom import paths as _paths
 from headroom.providers.registry import resolve_api_overrides, resolve_api_targets
-from headroom.proxy.modes import PROXY_MODE_TOKEN, normalize_proxy_mode
+from headroom.proxy.modes import PROXY_MODE_CACHE, normalize_proxy_mode
 
 from .main import main
 
@@ -1033,9 +1033,10 @@ def proxy(
     # Resolve anyllm provider: env var takes precedence over CLI default (matches argparse path)
     effective_anyllm_provider = os.environ.get("HEADROOM_ANYLLM_PROVIDER") or anyllm_provider
 
-    # Resolve mode: CLI flag > env var > default
+    # Resolve mode: CLI flag > env var > default. Default is CACHE (Headroom's
+    # coding posture): delta-only compression at ~0 prefix-cache busts.
     effective_mode: str = normalize_proxy_mode(
-        mode or os.environ.get("HEADROOM_MODE") or PROXY_MODE_TOKEN
+        mode or os.environ.get("HEADROOM_MODE") or PROXY_MODE_CACHE
     )
 
     # Stateless mode: CLI flag or env var
@@ -1102,7 +1103,7 @@ def proxy(
         else frozenset(),
         tool_profiles=_parse_tool_profiles([]) or None,
         smart_crusher_with_compaction=_get_env_bool_optional("HEADROOM_SMART_CRUSHER_COMPACTION"),
-        savings_profile=os.environ.get("HEADROOM_SAVINGS_PROFILE") or None,
+        savings_profile=os.environ.get("HEADROOM_SAVINGS_PROFILE") or "coding",
         target_ratio=target_ratio,
         compress_system_messages=_get_env_bool_optional("HEADROOM_COMPRESS_SYSTEM_MESSAGES"),
         protect_recent=_get_env_int_optional("HEADROOM_PROTECT_RECENT"),
@@ -1154,10 +1155,12 @@ def proxy(
         # 2. Otherwise read HEADROOM_CODE_AWARE_ENABLED (truthy = on).
         # 3. Otherwise default off — matches the prior cli/proxy.py behavior so
         #    existing users see no change unless they opt in.
+        # Default ON (coding posture; consistent with the argparse server path).
+        # Degrades gracefully to a no-op when tree-sitter isn't installed.
         code_aware_enabled=(
             bool(code_aware_flag)
             if code_aware_flag is not None
-            else os.environ.get("HEADROOM_CODE_AWARE_ENABLED", "").strip().lower()
+            else os.environ.get("HEADROOM_CODE_AWARE_ENABLED", "1").strip().lower()
             in ("true", "1", "yes", "on")
         ),
         disable_kompress=disable_kompress,
