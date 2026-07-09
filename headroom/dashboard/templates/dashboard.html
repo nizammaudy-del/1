@@ -79,6 +79,7 @@
 
         /* Light mode: invert the gray text scale (dark bg grays → light bg grays) */
         html:not(.dark) body { color: #1f2937; }
+        html:not(.dark) .text-gray-100 { color: #111827; }
         html:not(.dark) .text-gray-200 { color: #1f2937; }
         html:not(.dark) .text-gray-300 { color: #374151; }
         html:not(.dark) .text-gray-400 { color: #4b5563; }
@@ -102,36 +103,114 @@
         /* Light mode: fix hardcoded dark card backgrounds */
         .bg-card-alt { background: var(--card-alt-bg); }
         .hover-bg-surface:hover { background: var(--color-surface); }
+
+        [x-cloak] { display: none !important; }
+
+        /* Help sidebar (Logic Pro style): fixed left rail, instant, theme-aware */
+        #help-rail {
+            position: fixed; top: 0; left: 0; bottom: 0; width: 260px;
+            background: var(--color-surface);
+            border-right: 1px solid var(--color-border);
+            z-index: 40; display: flex; flex-direction: column;
+        }
+        #help-rail-toggle {
+            position: fixed; top: 12px; left: 12px; z-index: 41;
+        }
+        body.help-open { padding-left: 260px; }
+        @media (max-width: 1024px) {
+            #help-rail { width: 220px; }
+            body.help-open { padding-left: 0; }
+            body.help-open #help-rail { box-shadow: 0 0 40px rgba(0,0,0,0.4); }
+        }
+        [data-help] { cursor: help; }
+
+        /* Collapsible pane chevron */
+        .pane-chevron { transition: transform 0.2s ease; }
+        .pane-collapsed .pane-chevron { transform: rotate(-90deg); }
     </style>
 </head>
 <body class="text-gray-200 min-h-screen" x-data="dashboard()" x-init="init()">
+    <!-- Help sidebar (Logic Pro style): instant, no native-title delay -->
+    <aside id="help-rail" x-show="!helpCollapsed" x-cloak>
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+            <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Help</span>
+            <button @click="toggleHelp()" class="text-gray-500 hover:text-gray-200 transition-colors p-1"
+                    data-help-title="Help sidebar" data-help="Collapse this help rail. Hover any metric to see what it means here instantly.">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/>
+                </svg>
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto px-4 py-4">
+            <div class="text-sm font-semibold text-gray-200 mb-2" x-text="helpTitle"></div>
+            <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody"></div>
+        </div>
+        <div class="px-4 py-3 border-t border-border text-[11px] text-gray-600 leading-relaxed">
+            Hover metrics, headers, and controls for a live explanation.
+        </div>
+    </aside>
+    <button id="help-rail-toggle" x-show="helpCollapsed" x-cloak @click="toggleHelp()"
+            class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+            data-help-title="Help sidebar" data-help="Open the help rail, then hover any metric for an instant explanation.">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+    </button>
+
     <!-- Header -->
     <header class="border-b border-border px-6 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div class="flex items-center gap-4">
-            <h1 class="text-xl font-semibold tracking-tight">HEADROOM</h1>
-            <span class="text-xs text-gray-500 font-mono" x-text="'v' + version"></span>
+        <div class="flex items-center gap-3 flex-wrap">
+            <h1 class="text-xl font-semibold tracking-tight"
+                data-help-title="Headroom" data-help="Headroom is a local proxy that compresses prompts before they reach the model, cutting token cost and context bloat. This dashboard reports what it saved.">HEADROOM</h1>
+            <span class="text-xs text-gray-500 font-mono" x-text="'v' + version"
+                  data-help-title="Version" data-help="The running Headroom proxy version, reported by the /health endpoint."></span>
+            <!-- Status cluster: health · updated · uptime (top-left) -->
+            <template x-if="showStatusCluster">
+                <div class="flex items-center gap-2 text-xs text-gray-500">
+                    <span class="text-gray-700">|</span>
+                    <span class="flex items-center gap-1.5"
+                          :data-help-title="healthy ? 'Proxy healthy' : 'Proxy error'"
+                          :data-help="healthy ? 'The proxy answered /health and /stats normally on the last poll.' : (healthErrorReason || 'The last poll to the proxy failed.')">
+                        <span class="w-2 h-2 rounded-full pulse-live"
+                              :class="healthy ? 'bg-emerald-400' : 'bg-red-400'"></span>
+                        <span class="text-sm" :class="healthy ? 'text-gray-300' : 'text-red-400'"
+                              x-text="healthy ? 'Healthy' : 'Error'"></span>
+                    </span>
+                    <span class="text-gray-700">·</span>
+                    <span data-help-title="Last update" data-help="Wall-clock time of the last successful stats poll from your browser.">Updated <span x-text="lastUpdate"></span></span>
+                    <template x-if="uptimeSeconds > 0">
+                        <span class="flex items-center gap-2">
+                            <span class="text-gray-700">·</span>
+                            <span data-help-title="Proxy uptime" data-help="How long the Headroom proxy process has been running, ticking live between /health polls.">Up <span class="text-gray-300 font-mono" x-text="uptimeText"></span></span>
+                        </span>
+                    </template>
+                </div>
+            </template>
         </div>
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:gap-6">
             <div class="inline-flex rounded-lg border border-border bg-surface p-1">
-                <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
+                <button x-show="tabVisible('session')" class="px-3 py-1.5 text-sm rounded-md transition-colors"
                         :class="viewMode === 'session' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
-                        @click="setViewMode('session')">
+                        @click="setViewMode('session')"
+                        data-help-title="Session view" data-help="Live stats for the current proxy process: savings, throughput, agents, and recent requests since it started.">
                     Session
                 </button>
-                <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
+                <button x-show="tabVisible('history')" class="px-3 py-1.5 text-sm rounded-md transition-colors"
                         :class="viewMode === 'history' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
-                        @click="setViewMode('history')">
+                        @click="setViewMode('history')"
+                        data-help-title="Historical view" data-help="Persisted savings across restarts, rolled up daily, weekly, and monthly.">
                     Historical
                 </button>
-                <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
+                <button x-show="tabVisible('mcp')" class="px-3 py-1.5 text-sm rounded-md transition-colors"
                         :class="viewMode === 'mcp' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
-                        @click="setViewMode('mcp')">
+                        @click="setViewMode('mcp')"
+                        data-help-title="MCP view" data-help="Usage stats for MCP tool calls proxied through Headroom.">
                     MCP
                 </button>
             </div>
             <template x-if="stats.anon_telemetry_shipping">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1"
-                     title="Anonymous aggregate telemetry is enabled. Disable with HEADROOM_TELEMETRY=off or --no-telemetry.">
+                     data-help-title="Anonymous telemetry" data-help="Anonymous aggregate telemetry is enabled. Disable with HEADROOM_TELEMETRY=off or --no-telemetry.">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
                          class="w-3 h-3 text-amber-400 shrink-0">
                         <path fill-rule="evenodd"
@@ -143,7 +222,7 @@
             </template>
             <template x-if="stats.config && stats.config.savings_profile">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1"
-                     :title="'Current proxy profile: ' + stats.config.savings_profile">
+                     data-help-title="Active profile" :data-help="'Current proxy savings profile: ' + stats.config.savings_profile + '. Sets how aggressively prompts are compressed.'">
                     <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
                     <span class="text-xs text-cyan-100">
                         <span x-text="stats.config.savings_profile"></span>
@@ -153,82 +232,74 @@
                     </span>
                 </div>
             </template>
-            <div class="flex items-center gap-2">
-                <span class="text-xs text-gray-500">Status</span>
-                <span class="flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full pulse-live"
-                          :class="healthy ? 'bg-emerald-400' : 'bg-red-400'"></span>
-                    <span class="text-sm" x-text="healthy ? 'Healthy' : 'Error'"></span>
-                </span>
-            </div>
-            <div class="text-xs text-gray-500">
-                Updated <span x-text="lastUpdate"></span>
-            </div>
-            <div class="text-xs text-gray-500" x-show="uptimeSeconds > 0"
-                 title="How long the Headroom proxy process has been running">
-                Up <span class="text-gray-300 font-mono" x-text="uptimeText"></span>
-            </div>
-            <button onclick="toggleTheme()" id="theme-toggle"
-                    class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-                    title="Toggle light/dark mode">
-                <svg class="w-4 h-4 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
-                </svg>
-                <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
-                </svg>
-            </button>
-            <button @click="openSettings()" id="settings-toggle"
-                    class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-                    title="Settings">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                </svg>
-            </button>
-            <button x-show="log_full_messages" id="feed-toggle"
-                    class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
-                    @click="toggleFeed()"
-                    :class="feedOpen ? 'bg-accent text-black' : ''">
-                Live Feed
-            </button>
-            <div class="relative" x-data="{ open: false }" @click.outside="open = false"
-                 x-show="mcpDashboards.length > 0">
-                <button @click="open = !open" id="mcp-dashboards-toggle"
-                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-gray-100 transition-colors flex items-center gap-1"
-                        title="Open installed MCP server dashboards">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            <!-- Action buttons: GitHub · Report · MCP Dashboards · Settings · Theme -->
+            <div class="flex items-center gap-1.5">
+                <a href="https://github.com/headroomlabs-ai/headroom" target="_blank" rel="noopener"
+                   class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                   aria-label="View Headroom on GitHub"
+                   data-help-title="GitHub" data-help="Open the Headroom source repository on GitHub in a new tab.">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 .5C5.73.5.5 5.73.5 12a11.5 11.5 0 007.86 10.92c.575.106.785-.25.785-.556 0-.274-.01-1-.015-1.965-3.196.695-3.87-1.54-3.87-1.54-.523-1.33-1.276-1.684-1.276-1.684-1.043-.713.08-.699.08-.699 1.153.081 1.76 1.184 1.76 1.184 1.026 1.758 2.69 1.25 3.346.956.104-.744.402-1.25.73-1.538-2.552-.29-5.236-1.276-5.236-5.68 0-1.255.448-2.28 1.183-3.084-.119-.29-.513-1.46.112-3.045 0 0 .965-.309 3.163 1.178a10.98 10.98 0 015.76 0c2.196-1.487 3.16-1.178 3.16-1.178.626 1.585.232 2.755.114 3.045.737.804 1.182 1.83 1.182 3.084 0 4.415-2.688 5.386-5.248 5.67.413.356.78 1.057.78 2.13 0 1.54-.014 2.78-.014 3.158 0 .308.207.667.79.554A11.5 11.5 0 0023.5 12C23.5 5.73 18.27.5 12 .5z"/>
                     </svg>
-                    MCP Dashboards
-                </button>
-                <div x-show="open" x-transition
-                     class="absolute right-0 mt-2 w-64 z-20 bg-surface border border-border rounded-lg shadow-lg p-2">
-                    <template x-for="d in mcpDashboards" :key="d.name">
-                        <a :href="d.url" target="_blank" rel="noopener"
-                           class="flex items-center justify-between px-3 py-2 rounded-md text-sm text-gray-300 hover:bg-black/20 transition-colors">
-                            <span x-text="d.label"></span>
-                            <span class="w-2 h-2 rounded-full"
-                                  :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
-                                  :title="d.available ? 'Reachable' : 'Not reachable — is the server running?'"></span>
-                        </a>
-                    </template>
+                </a>
+                <a href="https://github.com/headroomlabs-ai/headroom/issues/new" target="_blank" rel="noopener"
+                   class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                   aria-label="Report an issue on GitHub"
+                   data-help-title="Report an issue" data-help="Open a new GitHub issue to report a bug or request a feature.">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    </svg>
+                </a>
+                <div class="relative" x-data="{ open: false }" @click.outside="open = false"
+                     x-show="showMcpButton && mcpDashboards.length > 0">
+                    <button @click="open = !open" id="mcp-dashboards-toggle"
+                            class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-gray-100 transition-colors flex items-center gap-1"
+                            data-help-title="MCP Dashboards" data-help="Open the web dashboards of installed MCP servers Headroom detected. The dot shows whether each server is currently reachable.">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                        MCP Dashboards
+                    </button>
+                    <div x-show="open" x-transition
+                         class="absolute right-0 mt-2 w-64 z-20 bg-surface border border-border rounded-lg shadow-lg p-2">
+                        <template x-for="d in mcpDashboards" :key="d.name">
+                            <a :href="d.url" target="_blank" rel="noopener"
+                               class="flex items-center justify-between px-3 py-2 rounded-md text-sm text-gray-300 hover:bg-black/20 transition-colors">
+                                <span x-text="d.label"></span>
+                                <span class="w-2 h-2 rounded-full"
+                                      :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
+                                      :data-help-title="d.label"
+                                      :data-help="d.available ? 'This MCP server is reachable.' : 'This MCP server is not reachable — is it running?'"></span>
+                            </a>
+                        </template>
+                    </div>
                 </div>
+                <button x-show="log_full_messages" id="feed-toggle"
+                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
+                        @click="toggleFeed()"
+                        :class="feedOpen ? 'bg-accent text-black' : ''"
+                        data-help-title="Live Feed" data-help="Open the live drawer of message transformations to inspect what the proxy rewrote per request.">
+                    Live Feed
+                </button>
+                <button @click="openSettings()" id="settings-toggle"
+                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                        data-help-title="Settings" data-help="Configure poll intervals, savings profile and budget, token pricing overrides, and which panes/tabs are shown.">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                </button>
+                <button onclick="toggleTheme()" id="theme-toggle"
+                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                        data-help-title="Theme" data-help="Toggle light/dark mode. Your choice is remembered in this browser.">
+                    <svg class="w-4 h-4 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                    </svg>
+                    <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                </button>
             </div>
-            <a href="https://github.com/headroomlabs-ai/headroom" target="_blank" rel="noopener"
-               class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-               title="View Headroom on GitHub" aria-label="View Headroom on GitHub">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 .5C5.73.5.5 5.73.5 12a11.5 11.5 0 007.86 10.92c.575.106.785-.25.785-.556 0-.274-.01-1-.015-1.965-3.196.695-3.87-1.54-3.87-1.54-.523-1.33-1.276-1.684-1.276-1.684-1.043-.713.08-.699.08-.699 1.153.081 1.76 1.184 1.76 1.184 1.026 1.758 2.69 1.25 3.346.956.104-.744.402-1.25.73-1.538-2.552-.29-5.236-1.276-5.236-5.68 0-1.255.448-2.28 1.183-3.084-.119-.29-.513-1.46.112-3.045 0 0 .965-.309 3.163 1.178a10.98 10.98 0 015.76 0c2.196-1.487 3.16-1.178 3.16-1.178.626 1.585.232 2.755.114 3.045.737.804 1.182 1.83 1.182 3.084 0 4.415-2.688 5.386-5.248 5.67.413.356.78 1.057.78 2.13 0 1.54-.014 2.78-.014 3.158 0 .308.207.667.79.554A11.5 11.5 0 0023.5 12C23.5 5.73 18.27.5 12 .5z"/>
-                </svg>
-            </a>
-            <a href="https://github.com/headroomlabs-ai/headroom/issues/new" target="_blank" rel="noopener"
-               class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-               title="Report an issue" aria-label="Report an issue on GitHub">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-                </svg>
-            </a>
         </div>
     </header>
 
@@ -236,35 +307,50 @@
         <template x-if="viewMode === 'session'">
             <div>
         <!-- Doctor status: reuses `headroom doctor` checks via /doctor -->
-        <div class="bg-surface rounded-lg p-4 border border-border mb-6" x-show="doctor.checks.length > 0">
-            <div class="flex justify-between items-center mb-3">
-                <div class="text-sm font-medium text-gray-300 cursor-help"
-                     title="Live results of the same checks headroom doctor runs on the CLI: proxy liveness, version drift, client routing, savings flow and budget.">
-                    System Health <span class="text-gray-600">&#9432;</span>
-                </div>
+        <div class="bg-surface rounded-lg p-4 border border-border mb-6"
+             :class="panes.systemHealth ? 'pane-collapsed' : ''"
+             x-show="paneVisible('systemHealth') && doctor.checks.length > 0">
+            <div class="flex justify-between items-center" :class="panes.systemHealth ? '' : 'mb-3'">
+                <button type="button" @click="togglePane('systemHealth')"
+                        class="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-gray-100 group"
+                        data-help-title="System Health"
+                        data-help="Live results of the same checks headroom doctor runs on the CLI: proxy liveness, version drift, client routing, savings flow and budget. Collapsed by default.">
+                    <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    System Health
+                </button>
                 <span class="text-xs font-mono px-2 py-0.5 rounded"
                       :class="doctor.exit_code === 0 ? 'bg-emerald-500/15 text-emerald-400' : (doctor.exit_code === 2 ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400')"
                       x-text="doctor.exit_code === 0 ? 'all good' : (doctor.exit_code === 2 ? 'action needed' : 'warnings')"></span>
             </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2" x-show="!panes.systemHealth">
                 <template x-for="check in doctor.checks" :key="check.name">
-                    <div class="flex items-start gap-2 text-sm" :title="check.hint || ''">
+                    <div class="flex items-start gap-2 text-sm"
+                         :data-help-title="'Check: ' + check.name"
+                         :data-help="check.summary + (check.hint ? ' — ' + check.hint : '')">
                         <span class="mt-0.5"
                               :class="{'text-emerald-400': check.status === 'pass', 'text-amber-400': check.status === 'warn', 'text-red-400': check.status === 'fail', 'text-gray-500': check.status === 'skip'}"
                               x-text="check.status === 'pass' ? '✓' : (check.status === 'fail' ? '✗' : (check.status === 'warn' ? '⚠' : '·'))"></span>
                         <div class="min-w-0">
                             <span class="text-gray-300 uppercase text-xs tracking-wide" x-text="check.name"></span>
-                            <span class="text-gray-500 block truncate" x-text="check.summary"></span>
+                            <span class="text-gray-500 block break-words" x-text="check.summary"></span>
                         </div>
                     </div>
                 </template>
             </div>
         </div>
+        <!-- Pane: Overview -->
+        <section x-show="paneVisible('overview')" class="mb-6" :class="panes.overview ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('overview')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Overview" data-help="Headline results for this session: money and tokens saved, agent usage, and the savings breakdown.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Overview</span>
+            </button>
+            <div x-show="!panes.overview">
         <!-- Hero Metrics: Savings $ -> Input Compression -> Output Reduction -> Overhead -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <!-- Savings ($) - proxy compression only, priced at model list rate -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Estimated money saved by the proxy compressing tool outputs before they reach the model, priced at the model's list input rate. Compression only — excludes cache and other effects.">Proxy $ Saved <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Proxy $ Saved" data-help="Estimated money saved by the proxy compressing tool outputs before they reach the model, priced at the model's list input rate. Compression only — excludes cache and other effects.">Proxy $ Saved <span class="text-gray-600">&#9432;</span></div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.persistent_savings?.lifetime?.compression_savings_usd || 0)"></span>
                 </div>
@@ -285,7 +371,7 @@
 
             <!-- Token Savings (%) -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Percentage of input tokens removed by compression: how much smaller the prompt got after the proxy shrank tool outputs, versus the original size.">Token Savings <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Token Savings" data-help="Total input tokens removed by compression, and the percentage that represents of what was compressed: how much smaller the prompt got after the proxy shrank tool outputs, versus the original size.">Token Savings <span class="text-gray-600">&#9432;</span></div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums text-accent" x-text="formatNumber(stats.tokens?.saved || 0)"></span>
                     <!-- Active compression ratio: savings as a fraction of tokens we
@@ -294,7 +380,7 @@
                          that don't yet wire per-message live-zone tracking), fall back
                          to the whole-request ratio so the headline doesn't collapse to
                          0% while compression is happening (issue #455). -->
-                    <span class="text-sm text-accent" x-text="headlineSavingsPercent.toFixed(1) + '%'" :title="headlineSavingsTitle"></span>
+                    <span class="text-sm text-accent" x-text="headlineSavingsPercent.toFixed(1) + '%'" data-help-title="Compression ratio" :data-help="headlineSavingsTitle"></span>
                 </div>
                 <div class="mt-1 text-xs text-gray-500 leading-relaxed">
                     <span x-text="'Proxy ' + formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' (' + proxyShareOfTotal.toFixed(1) + '%)'"></span>
@@ -302,7 +388,7 @@
                     <span x-text="cliFilteringLabel + ' ' + formatNumber(cliFilteringSaved) + ' (' + cliFilteringShareOfTotal.toFixed(1) + '%)'"></span>
                 </div>
                 <div class="mt-1 text-xs text-gray-600 leading-relaxed">
-                    <span x-text="'Of total wire: ' + (stats.tokens?.savings_percent || 0).toFixed(2) + '%'" title="Savings as fraction of all input tokens including frozen prefix"></span>
+                    <span x-text="'Of total wire: ' + (stats.tokens?.savings_percent || 0).toFixed(2) + '%'" data-help-title="Of total wire" data-help="Savings as a fraction of all input tokens actually sent, including the frozen (uncompressible) prefix."></span>
                 </div>
                 <div class="mt-2 h-8">
                     <svg class="w-full h-full" viewBox="0 0 100 32" preserveAspectRatio="none">
@@ -320,7 +406,7 @@
 
             <!-- Output Tokens Saved (counterfactual) -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Fewer output tokens the model generated because prompts were compressed, measured against a holdout baseline (counterfactual). 'measured' = A/B holdout; 'estimated' = vs a learned baseline.">Output Tokens Saved <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Output Tokens Saved" data-help="Fewer output tokens the model generated because prompts were compressed, measured against a holdout baseline (counterfactual). 'measured' = A/B holdout; 'estimated' = vs a learned baseline.">Output Tokens Saved <span class="text-gray-600">&#9432;</span></div>
                 <template x-if="stats.tokens?.output_reduction?.available">
                     <div>
                         <div class="flex items-baseline gap-2">
@@ -350,7 +436,7 @@
 
             <!-- Headroom Overhead -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Extra latency the proxy adds per request while compressing. Lower is better; this is the cost you pay for the token savings above.">Overhead <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Overhead" data-help="Extra latency the proxy adds per request while compressing. Lower is better; this is the cost you pay for the token savings above.">Overhead <span class="text-gray-600">&#9432;</span></div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms'"></span>
                 </div>
@@ -362,30 +448,34 @@
             <!-- Token Throughput -->
             <div class="bg-surface rounded-lg p-4 border border-border flex flex-col justify-between">
                 <div>
-                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1.5">Throughput</div>
+                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1.5" data-help-title="Throughput" data-help="Token processing rates across the proxy pipeline, in tokens/second. p50/p95 are the median and 95th-percentile over a rolling window.">Throughput</div>
                     <div class="flex flex-col gap-1 text-[11px] text-gray-300">
-                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5">
+                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5"
+                             data-help-title="Input throughput" data-help="Rate the proxy ingests input tokens. Wall-clock counts total elapsed time; active p50 is the median rate over just the busy processing time.">
                             <span class="text-gray-500">Input (wall / active p50)</span>
                             <span class="font-mono text-accent">
                                 <span x-text="(stats.throughput?.rolling?.input_wall_clock || 0).toFixed(1)"></span> /
                                 <span x-text="(stats.throughput?.rolling?.input_active_p50 || 0).toFixed(1)"></span> tok/s
                             </span>
                         </div>
-                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5" x-show="(stats.throughput?.rolling?.compression_p50 || 0) > 0">
+                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5" x-show="(stats.throughput?.rolling?.compression_p50 || 0) > 0"
+                             data-help-title="Compression throughput" data-help="How fast the compression stage processes tokens (median / 95th percentile). Higher means compression adds less delay.">
                             <span class="text-gray-500">Compression (p50 / p95)</span>
                             <span class="font-mono text-emerald-400">
                                 <span x-text="(stats.throughput?.rolling?.compression_p50 || 0).toFixed(1)"></span> /
                                 <span x-text="(stats.throughput?.rolling?.compression_p95 || 0).toFixed(1)"></span> tok/s
                             </span>
                         </div>
-                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5">
+                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5"
+                             data-help-title="Forward throughput" data-help="Rate tokens are forwarded upstream to the provider (median / 95th percentile), after compression.">
                             <span class="text-gray-500">Forward (p50 / p95)</span>
                             <span class="font-mono text-cyan-400">
                                 <span x-text="(stats.throughput?.rolling?.forward_p50 || 0).toFixed(1)"></span> /
                                 <span x-text="(stats.throughput?.rolling?.forward_p95 || 0).toFixed(1)"></span> tok/s
                             </span>
                         </div>
-                        <div class="flex justify-between items-baseline" x-show="(stats.throughput?.rolling?.generation_p50 || 0) > 0">
+                        <div class="flex justify-between items-baseline" x-show="(stats.throughput?.rolling?.generation_p50 || 0) > 0"
+                             data-help-title="Generation throughput" data-help="Rate the model streams output tokens back (median / 95th percentile). Reflects the provider's generation speed, not the proxy's.">
                             <span class="text-gray-500">Generation (p50 / p95)</span>
                             <span class="font-mono text-yellow-400">
                                 <span x-text="(stats.throughput?.rolling?.generation_p50 || 0).toFixed(1)"></span> /
@@ -394,7 +484,8 @@
                         </div>
                     </div>
                 </div>
-                <div class="mt-2 pt-1.5 border-t border-border/40 text-[10px] text-gray-500 flex justify-between items-center">
+                <div class="mt-2 pt-1.5 border-t border-border/40 text-[10px] text-gray-500 flex justify-between items-center"
+                     data-help-title="Current 5m (active p50)" data-help="Median input and forward rates over just the last 5 minutes of active processing — a near-real-time snapshot versus the longer rolling window above.">
                     <span>Current 5m (active p50):</span>
                     <span class="font-mono text-gray-400">
                         In: <span x-text="(stats.throughput?.current?.input_active_p50 || 0).toFixed(0)"></span> ·
@@ -407,12 +498,13 @@
         <!-- Agent Usage -->
         <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
             <div class="px-4 py-3 border-b border-border flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                <div>
+                <div data-help-title="Agent Usage" data-help="Token usage before vs after compression, broken down by the client (Cursor, Claude, Codex, etc.) Headroom detected for each request.">
                     <div class="text-sm font-medium text-gray-300">Agent Usage</div>
                     <div class="text-xs text-gray-500">Before and after token usage by detected client</div>
                 </div>
                 <div class="flex flex-wrap items-center gap-3 text-xs">
-                    <span class="text-gray-500" x-text="'Coverage: ' + agentCoverageLabel"></span>
+                    <span class="text-gray-500" x-text="'Coverage: ' + agentCoverageLabel"
+                          data-help-title="Coverage" data-help="Share of requests that could be attributed to a known client. Low coverage means many requests arrived without a recognizable client fingerprint."></span>
                     <span class="px-2 py-0.5 rounded border border-border bg-card-alt font-mono text-gray-400"
                           x-text="formatNumber(stats.agent_usage?.totals?.requests || 0) + ' requests'"></span>
                 </div>
@@ -420,19 +512,19 @@
 
             <div class="p-4">
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-                    <div class="rounded-lg border border-border bg-card-alt p-3">
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="Before" data-help="Total input tokens across all agents as they arrived, before the proxy compressed anything.">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Before</div>
                         <div class="text-2xl font-light tabular-nums" x-text="formatNumber(stats.agent_usage?.totals?.before_tokens || 0)"></div>
                     </div>
-                    <div class="rounded-lg border border-border bg-card-alt p-3">
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="After" data-help="Total input tokens actually forwarded upstream after compression.">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">After</div>
                         <div class="text-2xl font-light tabular-nums text-gray-200" x-text="formatNumber(stats.agent_usage?.totals?.after_tokens || 0)"></div>
                     </div>
-                    <div class="rounded-lg border border-border bg-card-alt p-3">
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="Saved" data-help="Tokens removed by compression across all agents (Before minus After).">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Saved</div>
                         <div class="text-2xl font-light tabular-nums text-accent" x-text="formatNumber(stats.agent_usage?.totals?.tokens_saved || 0)"></div>
                     </div>
-                    <div class="rounded-lg border border-border bg-card-alt p-3">
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="Savings" data-help="Saved as a percentage of Before tokens — the overall compression rate across all agents.">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Savings</div>
                         <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="(stats.agent_usage?.totals?.savings_percent || 0).toFixed(1) + '%'"></div>
                     </div>
@@ -525,6 +617,16 @@
             </div>
         </template>
 
+            </div>
+        </section>
+        <!-- Pane: Provider Windows & Cache -->
+        <section x-show="paneVisible('windows')" class="mb-6" :class="panes.windows ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('windows')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Provider Windows & Cache" data-help="Subscription/rate-limit windows for Anthropic, Codex, and Copilot, plus prefix-cache impact. Only cards with data appear.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Provider Windows &amp; Cache</span>
+            </button>
+            <div x-show="!panes.windows">
         <!-- Anthropic Subscription Window -->
         <template x-if="stats.subscription_window && stats.subscription_window.latest">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
@@ -1041,11 +1143,21 @@
             </div>
         </template>
 
+            </div>
+        </section>
+        <!-- Pane: Waste & Trends -->
+        <section x-show="paneVisible('insights')" class="mb-6" :class="panes.insights ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('insights')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Waste & Trends" data-help="What kinds of prompt waste the proxy removed, and cumulative token savings over time.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Waste &amp; Trends</span>
+            </button>
+            <div x-show="!panes.insights">
         <!-- New: Waste Signal Breakdown + Cumulative Savings Trend -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <!-- What Headroom Removed -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300 cursor-help" title="Breakdown of which kinds of prompt waste the proxy compressed away (verbose tool output, redundant file listings, minifiable JSON, etc.), by tokens removed.">What Headroom Removed <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="What Headroom Removed" data-help="Breakdown of which kinds of prompt waste the proxy compressed away (verbose tool output, redundant file listings, minifiable JSON, etc.), by tokens removed.">What Headroom Removed <span class="text-gray-600">&#9432;</span></div>
                 <template x-if="Object.keys(stats.waste_signals || {}).length > 0">
                     <div class="space-y-3">
                         <template x-for="[signal, tokens] in sortedWasteSignals" :key="signal">
@@ -1103,30 +1215,40 @@
             </div>
         </div>
 
+            </div>
+        </section>
+        <!-- Pane: Token Usage, Providers & Performance -->
+        <section x-show="paneVisible('tokens')" class="mb-6" :class="panes.tokens ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('tokens')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Token Usage, Providers & Performance" data-help="Where tokens went (before/after compression), which providers served traffic, proxy latency, and per-model savings.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Token Usage, Providers &amp; Performance</span>
+            </button>
+            <div x-show="!panes.tokens">
         <!-- Main Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
             <!-- Token Usage -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300">Token Usage</div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="Token Usage" data-help="Where input tokens went at each stage of the pipeline: what arrived, what was removed, and what was ultimately sent to the model.">Token Usage</div>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Before Compression" data-help="Total input tokens as they arrived at the proxy, before any filtering or compression.">
                         <span class="text-sm text-gray-400">Before Compression</span>
                         <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.total_before_compression || 0)"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Client-side filtered" data-help="Tokens removed by client-side filtering (e.g. RTK) before the request reached the proxy. Not priced into proxy $ savings.">
                         <span class="text-sm text-gray-400" x-text="cliFilteringLabel + ' Filtered'"></span>
                         <span class="font-mono text-sm text-emerald-400" x-text="formatNumber(cliFilteringSaved)"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Proxy Removed" data-help="Input tokens the proxy itself compressed away — the component priced into Proxy $ Saved.">
                         <span class="text-sm text-gray-400">Proxy Removed</span>
                         <span class="font-mono text-sm text-accent" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0)"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="After Compression (sent)" data-help="Input tokens actually forwarded to the provider after all filtering and compression.">
                         <span class="text-sm text-gray-400">After Compression (sent)</span>
                         <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.input || 0)"></span>
                     </div>
                     <div class="border-t border-border my-2"></div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Output Tokens" data-help="Total tokens the model generated in responses across all requests this session.">
                         <span class="text-sm text-gray-400">Output Tokens</span>
                         <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.output || 0)"></span>
                     </div>
@@ -1135,7 +1257,7 @@
 
             <!-- Providers -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300">Providers</div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="Providers" data-help="Breakdown of traffic by upstream provider (Anthropic, OpenAI, etc.) that the proxy routed requests to.">Providers</div>
                 <div class="space-y-2">
                     <template x-for="(count, provider) in (stats.requests?.by_provider || {})" :key="provider">
                         <div class="flex justify-between items-center">
@@ -1157,25 +1279,25 @@
 
             <!-- Performance -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300">Performance</div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="Performance" data-help="Latency the proxy adds and how fast upstream responds, plus failure count.">Performance</div>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Headroom Overhead" data-help="Average extra time the proxy spends per request on compression and processing. This is the latency cost of the savings.">
                         <span class="text-sm text-gray-400">Headroom Overhead</span>
                         <span class="font-mono text-sm" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms avg'"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Overhead Range" data-help="Minimum to maximum proxy overhead observed per request — shows how variable the added latency is.">
                         <span class="text-sm text-gray-400">Overhead Range</span>
                         <span class="font-mono text-sm" x-text="(stats.overhead?.min_ms || 0).toFixed(0) + ' - ' + (stats.overhead?.max_ms || 0).toFixed(0) + 'ms'"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="TTFB (upstream)" data-help="Average time to first byte from the upstream provider — the model's own response latency, not the proxy's.">
                         <span class="text-sm text-gray-400">TTFB (upstream)</span>
                         <span class="font-mono text-sm" x-text="((stats.ttfb?.average_ms || 0) / 1000).toFixed(2) + 's avg'"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="TTFB Range" data-help="Minimum to maximum upstream time-to-first-byte observed.">
                         <span class="text-sm text-gray-400">TTFB Range</span>
                         <span class="font-mono text-sm" x-text="((stats.ttfb?.min_ms || 0) / 1000).toFixed(2) + ' - ' + ((stats.ttfb?.max_ms || 0) / 1000).toFixed(2) + 's'"></span>
                     </div>
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center" data-help-title="Failed Requests" data-help="Requests that errored (upstream error or proxy failure) this session.">
                         <span class="text-sm text-gray-400">Failed Requests</span>
                         <span class="font-mono text-sm" x-text="stats.requests?.failed || 0"></span>
                     </div>
@@ -1243,6 +1365,16 @@
             </div>
         </template>
 
+            </div>
+        </section>
+        <!-- Pane: Per-Project -->
+        <section x-show="paneVisible('project')" class="mb-6" :class="panes.project ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('project')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Per-Project" data-help="Lifetime savings attributed to each project, for clients routed through /p/<project-name>.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Per-Project</span>
+            </button>
+            <div x-show="!panes.project">
         <!-- Per-Project Savings Breakdown -->
         <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
             <div class="px-4 py-3 border-b border-border flex justify-between items-center">
@@ -1279,12 +1411,12 @@
                         </colgroup>
                         <thead>
                             <tr class="text-xs text-gray-500 uppercase tracking-wide">
-                                <th class="px-4 py-3 font-medium text-left">Project</th>
-                                <th class="px-4 py-3 font-medium text-right">Requests</th>
-                                <th class="px-4 py-3 font-medium text-right">Tokens Saved</th>
-                                <th class="px-4 py-3 font-medium text-right">Saved $</th>
-                                <th class="px-4 py-3 font-medium text-right">Savings %</th>
-                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell">Last Active</th>
+                                <th class="px-4 py-3 font-medium text-left" data-help-title="Project" data-help="Project name from the /p/<project-name> route the client used.">Project</th>
+                                <th class="px-4 py-3 font-medium text-right" data-help-title="Requests" data-help="Attributed requests routed for this project.">Requests</th>
+                                <th class="px-4 py-3 font-medium text-right" data-help-title="Tokens Saved" data-help="Lifetime input tokens the proxy compressed away for this project.">Tokens Saved</th>
+                                <th class="px-4 py-3 font-medium text-right" data-help-title="Saved $" data-help="Estimated dollars saved from compression for this project, at the model's list input rate.">Saved $</th>
+                                <th class="px-4 py-3 font-medium text-right" data-help-title="Savings %" data-help="Tokens saved as a percentage of this project's before-compression input.">Savings %</th>
+                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell" data-help-title="Last Active" data-help="Timestamp of the most recent request attributed to this project.">Last Active</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
@@ -1317,6 +1449,16 @@
             </template>
         </div>
 
+            </div>
+        </section>
+        <!-- Pane: Recent Requests -->
+        <section x-show="paneVisible('requests')" class="mb-6" :class="panes.requests ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('requests')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Recent Requests" data-help="The last 10 requests through the proxy — timing, tokens, and savings. Click a row to expand transforms.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Recent Requests</span>
+            </button>
+            <div x-show="!panes.requests">
         <!-- Recent Requests Table (with expandable rows) -->
         <div class="bg-surface rounded-lg border border-border overflow-hidden">
             <div class="px-4 py-3 border-b border-border flex justify-between items-center">
@@ -1329,12 +1471,12 @@
                     <div class="grid text-xs text-gray-500 uppercase tracking-wide border-b border-border"
                          style="grid-template-columns: 2rem 12fr 22fr 15fr 12fr 10fr 14fr">
                         <div class="px-2 py-3"></div>
-                        <div class="px-4 py-3 font-medium">Time</div>
-                        <div class="px-4 py-3 font-medium">Model</div>
-                        <div class="px-4 py-3 font-medium text-right">Input</div>
-                        <div class="px-4 py-3 font-medium text-right">Output</div>
-                        <div class="px-4 py-3 font-medium text-right">Saved</div>
-                        <div class="px-4 py-3 font-medium text-right">Latency</div>
+                        <div class="px-4 py-3 font-medium" data-help-title="Time" data-help="When the request was received by the proxy.">Time</div>
+                        <div class="px-4 py-3 font-medium" data-help-title="Model" data-help="The model the request targeted.">Model</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Input" data-help="Input tokens sent upstream after compression for this request.">Input</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Output" data-help="Tokens the model generated in the response.">Output</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Saved" data-help="Percentage of input tokens compression removed on this request.">Saved</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Latency" data-help="Total round-trip time for this request, including proxy overhead and upstream response.">Latency</div>
                     </div>
                     <!-- Data rows -->
                     <div class="divide-y divide-border">
@@ -1417,12 +1559,14 @@
             </div>
         </div>
             </div>
+        </section>
+            </div>
         </template>
 
         <template x-if="viewMode === 'mcp'">
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <div>
+                    <div data-help-title="MCP Usage" data-help="Counts of mcp__<server>__<tool> calls seen in requests that flowed through the proxy. Requires full-message logging to be enabled.">
                         <div class="text-lg font-medium text-gray-200">MCP Usage</div>
                         <div class="text-xs text-gray-500 mt-0.5">Per-server tool-call activity by Claude and other agents.</div>
                     </div>
@@ -1434,12 +1578,14 @@
                 <template x-if="(mcpUsage.servers || []).length > 0">
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <template x-for="s in mcpUsage.servers" :key="s.server">
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 :data-help-title="'MCP server: ' + s.server"
+                                 :data-help="formatNumber(s.calls) + ' total tool calls through this MCP server, broken down by tool below.'">
                                 <div class="flex justify-between items-baseline mb-3">
                                     <span class="text-sm font-medium text-gray-200 font-mono" x-text="s.server"></span>
                                     <span class="text-2xl font-light tabular-nums text-accent" x-text="formatNumber(s.calls)"></span>
                                 </div>
-                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">calls by tool</div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2" data-help-title="Calls by tool" data-help="Number of invocations of each individual tool exposed by this MCP server.">calls by tool</div>
                                 <div class="space-y-1">
                                     <template x-for="t in s.tools" :key="t.tool">
                                         <div class="flex justify-between text-sm">
@@ -1496,7 +1642,7 @@
 
                 <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Total money saved by compression across every session since Headroom was installed, persisted to disk.">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Lifetime Compression Savings" data-help="Total money saved by compression across every session since Headroom was installed, persisted to disk.">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums text-emerald-400"
                                   x-text="'$' + formatCurrency(historyStats.lifetime?.compression_savings_usd || 0)"></span>
@@ -1507,7 +1653,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Total input tokens removed by compression across all sessions since install.">Lifetime Tokens Saved <span class="text-gray-600">&#9432;</span></div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Lifetime Tokens Saved" data-help="Total input tokens removed by compression across all sessions since install.">Lifetime Tokens Saved <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums text-accent"
                                   x-text="formatNumber(historyStats.lifetime?.tokens_saved || 0)"></span>
@@ -1517,7 +1663,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 cursor-help" title="Number of distinct days on which at least one request flowed through the proxy.">Active Days <span class="text-gray-600">&#9432;</span></div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Active Days" data-help="Number of distinct days on which at least one request flowed through the proxy.">Active Days <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums"
                                   x-text="formatNumber((historyStats.series?.daily || []).length)"></span>
@@ -1925,6 +2071,27 @@
                 mcpUsage: { servers: [], note: '', log_full_messages: false },
                 doctor: { checks: [], exit_code: 0 },
 
+                // Health error detail (populated in fetchStats catch)
+                healthErrorReason: '',
+
+                // Help sidebar (instant, no native-title delay)
+                helpDefaultTitle: 'Help',
+                helpDefaultBody: 'Hover any metric for an explanation.',
+                helpTitle: 'Help',
+                helpBody: 'Hover any metric for an explanation.',
+                helpCollapsed: false,
+
+                // Uptime ticking (timestamp-based so it never skips/drifts)
+                uptimeBaseMs: 0,
+
+                // Collapsible panes: true == collapsed. System Health starts collapsed.
+                panes: { systemHealth: true },
+                // Client-local visibility prefs (panes/cards, tabs, header clusters)
+                paneHidden: {},
+                tabsHidden: {},
+                showStatusCluster: true,
+                showMcpButton: true,
+
                 // Settings menu state
                 settingsOpen: false,
                 settingsSaving: false,
@@ -1934,6 +2101,8 @@
                 settingsForm: { settings: {}, pricingRows: [] },
 
                 async init() {
+                    this.loadUiPrefs();
+                    this.applyHelpBodyClass();
                     await this.fetchStats();
                     this.fetchMcpDashboards();
                     this.fetchDoctor();
@@ -1943,20 +2112,94 @@
                         this.pollDashboard();
                     }, this.statsPollMs);
 
-                    // Live-tick the uptime between /health polls.
+                    // Live-tick the uptime every second. Derive the value from a base
+                    // timestamp instead of incrementing, so it never skips or drifts;
+                    // fetchStats resyncs the base on each /health poll.
                     setInterval(() => {
-                        if (this.uptimeSeconds > 0) {
-                            this.uptimeSeconds += 1;
+                        if (this.uptimeBaseMs > 0) {
+                            this.uptimeSeconds = Math.floor((Date.now() - this.uptimeBaseMs) / 1000);
                             this.uptimeText = this.formatUptime(this.uptimeSeconds);
                         }
                     }, 1000);
 
+                    // Instant help sidebar: delegate hover to any element carrying
+                    // data-help. No native title (which has a ~1s delay).
+                    document.addEventListener('mouseover', (e) => {
+                        const el = e.target.closest && e.target.closest('[data-help]');
+                        if (!el) return;
+                        this.helpTitle = el.getAttribute('data-help-title') || this.helpDefaultTitle;
+                        this.helpBody = el.getAttribute('data-help') || '';
+                    });
+                    document.addEventListener('mouseout', (e) => {
+                        const el = e.target.closest && e.target.closest('[data-help]');
+                        if (!el) return;
+                        if (el.contains(e.relatedTarget)) return;
+                        this.helpTitle = this.helpDefaultTitle;
+                        this.helpBody = this.helpDefaultBody;
+                    });
+
                     // Keyboard shortcuts
                     document.addEventListener('keydown', (e) => {
+                        if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
                         if (e.key === 'r' || e.key === 'R') {
                             this.pollDashboard(true);
                         }
                     });
+                },
+
+                // --- UI preferences (client-local; localStorage only) ---
+                loadUiPrefs() {
+                    try {
+                        const raw = localStorage.getItem('headroom-ui-prefs');
+                        if (raw) {
+                            const p = JSON.parse(raw);
+                            if (p.panes) this.panes = Object.assign(this.panes, p.panes);
+                            if (p.paneHidden) this.paneHidden = p.paneHidden;
+                            if (p.tabsHidden) this.tabsHidden = p.tabsHidden;
+                            if (typeof p.showStatusCluster === 'boolean') this.showStatusCluster = p.showStatusCluster;
+                            if (typeof p.showMcpButton === 'boolean') this.showMcpButton = p.showMcpButton;
+                        }
+                        this.helpCollapsed = localStorage.getItem('headroom-help-collapsed') === '1';
+                    } catch (e) { /* keep defaults */ }
+                },
+                saveUiPrefs() {
+                    try {
+                        localStorage.setItem('headroom-ui-prefs', JSON.stringify({
+                            panes: this.panes,
+                            paneHidden: this.paneHidden,
+                            tabsHidden: this.tabsHidden,
+                            showStatusCluster: this.showStatusCluster,
+                            showMcpButton: this.showMcpButton,
+                        }));
+                    } catch (e) { /* ignore */ }
+                },
+                togglePane(key) {
+                    this.panes[key] = !this.panes[key];
+                    this.saveUiPrefs();
+                },
+                paneVisible(key) { return !this.paneHidden[key]; },
+                setPaneVisible(key, visible) {
+                    this.paneHidden[key] = !visible;
+                    this.saveUiPrefs();
+                },
+                tabVisible(key) { return !this.tabsHidden[key]; },
+                setTabVisible(key, visible) {
+                    this.tabsHidden[key] = !visible;
+                    // Never leave the user on a hidden tab.
+                    if (!visible && this.viewMode === key) {
+                        const order = ['session', 'history', 'mcp'];
+                        const next = order.find(m => !this.tabsHidden[m]);
+                        if (next) this.setViewMode(next);
+                    }
+                    this.saveUiPrefs();
+                },
+                toggleHelp() {
+                    this.helpCollapsed = !this.helpCollapsed;
+                    try { localStorage.setItem('headroom-help-collapsed', this.helpCollapsed ? '1' : '0'); } catch (e) {}
+                    this.applyHelpBodyClass();
+                },
+                applyHelpBodyClass() {
+                    document.body.classList.toggle('help-open', !this.helpCollapsed);
                 },
 
                 // Load saved poll intervals from /config at startup so the
@@ -2145,14 +2388,22 @@
                             fetch('/health')
                         ]);
 
+                        if (!statsRes.ok || !healthRes.ok) {
+                            throw new Error('HTTP ' + (!statsRes.ok ? statsRes.status : healthRes.status) + ' from proxy');
+                        }
+
                         this.stats = await statsRes.json();
                         const health = await healthRes.json();
                         this.healthy = health.status === 'healthy';
+                        this.healthErrorReason = this.healthy
+                            ? ''
+                            : ('Proxy reported status "' + (health.status || 'unknown') + '"' + (health.detail ? ': ' + health.detail : '.'));
                         this.version = health.version || '0.3.0';
                         this.log_full_messages = this.stats.log_full_messages || false;
 
                         if (typeof health.uptime_seconds === 'number') {
                             this.uptimeSeconds = health.uptime_seconds;
+                            this.uptimeBaseMs = Date.now() - health.uptime_seconds * 1000;
                             this.uptimeText = this.formatUptime(this.uptimeSeconds);
                         }
 
@@ -2168,6 +2419,13 @@
                     } catch (e) {
                         console.error('Failed to fetch stats:', e);
                         this.healthy = false;
+                        // Distinguish "proxy unreachable" (TypeError from fetch) from an
+                        // HTTP-level error, so the help sidebar can explain WHY.
+                        if (e instanceof TypeError) {
+                            this.healthErrorReason = 'Cannot reach the proxy at this origin — the Headroom process may be stopped or the network dropped (' + e.message + ').';
+                        } else {
+                            this.healthErrorReason = e.message || String(e);
+                        }
                     }
                 },
 
@@ -2995,14 +3253,17 @@
                         <label class="text-sm text-gray-300">Stats poll (ms)
                             <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_stats_poll_ms"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">How often the hero metrics, throughput, and health refresh.</span>
                         </label>
                         <label class="text-sm text-gray-300">History poll (ms)
                             <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_history_poll_ms"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Refresh cadence for the Historical view rollups.</span>
                         </label>
                         <label class="text-sm text-gray-300">Feed poll (ms)
                             <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_feed_poll_ms"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Refresh cadence for the Live Feed drawer when it's open.</span>
                         </label>
                     </div>
                 </section>
@@ -3015,14 +3276,17 @@
                         <label class="text-sm text-gray-300">Savings profile
                             <input type="text" placeholder="(default)" x-model="settingsForm.settings.savings_profile"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Named preset controlling how aggressively prompts are compressed. Blank uses the built-in default.</span>
                         </label>
                         <label class="text-sm text-gray-300">Target ratio (0-1)
                             <input type="number" min="0" max="1" step="0.05" x-model.number="settingsForm.settings.target_ratio"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Desired fraction of input kept after compression (e.g. 0.6 aims to keep ~60%). Lower is more aggressive.</span>
                         </label>
                         <label class="text-sm text-gray-300">Budget limit (USD)
                             <input type="number" min="0" step="0.01" x-model.number="settingsForm.settings.budget_limit_usd"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Spend ceiling per budget period. Leave 0/blank for no limit.</span>
                         </label>
                         <label class="text-sm text-gray-300">Budget period
                             <select x-model="settingsForm.settings.budget_period"
@@ -3031,6 +3295,7 @@
                                 <option value="daily">daily</option>
                                 <option value="monthly">monthly</option>
                             </select>
+                            <span class="mt-1 block text-xs text-gray-500">Window the budget limit resets over.</span>
                         </label>
                     </div>
                 </section>
@@ -3041,26 +3306,90 @@
                         <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400">Token Pricing Overrides</h3>
                         <button @click="addPricingRow()" class="rounded border border-border px-2 py-1 text-xs text-gray-300 hover:text-gray-100">+ Add model</button>
                     </div>
-                    <p class="mb-2 text-xs text-gray-500">USD per 1M tokens. Models left unset use the built-in LiteLLM pricing.</p>
+                    <p class="mb-2 text-xs text-gray-500">USD per 1M tokens. Models left unset use the built-in LiteLLM pricing. C.Read / C.Write are the cache read and cache write rates.</p>
                     <div class="space-y-2">
+                        <!-- Column headers (top labels replace the cramped per-input placeholders) -->
+                        <div class="grid grid-cols-12 gap-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 px-0.5">
+                            <span class="col-span-3">Model</span>
+                            <span class="col-span-2 text-right">Input</span>
+                            <span class="col-span-2 text-right">Output</span>
+                            <span class="col-span-2 text-right">C.Read</span>
+                            <span class="col-span-2 text-right">C.Write</span>
+                            <span class="col-span-1"></span>
+                        </div>
                         <template x-for="(row, idx) in settingsForm.pricingRows" :key="idx">
                             <div class="grid grid-cols-12 items-center gap-2">
-                                <input type="text" placeholder="model" x-model="row.model"
-                                       class="col-span-4 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
-                                <input type="number" min="0" step="0.01" placeholder="input" x-model.number="row.input_per_1m"
-                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
-                                <input type="number" min="0" step="0.01" placeholder="output" x-model.number="row.output_per_1m"
-                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
-                                <input type="number" min="0" step="0.01" placeholder="cache r" x-model.number="row.cache_read_per_1m"
-                                       class="col-span-1 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
-                                <input type="number" min="0" step="0.01" placeholder="cache w" x-model.number="row.cache_write_per_1m"
-                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="text" x-model="row.model"
+                                       class="col-span-3 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.input_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.output_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.cache_read_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.cache_write_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
                                 <button @click="settingsForm.pricingRows.splice(idx, 1)" class="col-span-1 text-gray-500 hover:text-red-400" title="Remove">&#10005;</button>
                             </div>
                         </template>
                     </div>
-                    <div class="mt-1 grid grid-cols-12 gap-2 text-[10px] uppercase text-gray-600">
-                        <span class="col-span-4">model</span><span class="col-span-2">input</span><span class="col-span-2">output</span><span class="col-span-1">c.read</span><span class="col-span-2">c.write</span>
+                </section>
+
+                <!-- Layout & Visibility (client-local view prefs; not saved to backend) -->
+                <section>
+                    <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Layout &amp; Visibility</h3>
+                    <p class="mb-3 text-xs text-gray-500">These are view preferences stored only in this browser. Hidden items stop rendering; collapse a pane from its own header.</p>
+
+                    <div class="mb-4">
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Panes</div>
+                        <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                            <template x-for="p in [
+                                    {key:'overview', label:'Overview'},
+                                    {key:'windows', label:'Provider Windows & Cache'},
+                                    {key:'insights', label:'Waste & Trends'},
+                                    {key:'tokens', label:'Token Usage, Providers & Performance'},
+                                    {key:'project', label:'Per-Project'},
+                                    {key:'requests', label:'Recent Requests'},
+                                    {key:'systemHealth', label:'System Health'}
+                                ]" :key="p.key">
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" :checked="paneVisible(p.key)"
+                                           @change="setPaneVisible(p.key, $event.target.checked)"
+                                           class="rounded border-border bg-surface">
+                                    <span x-text="p.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Tabs</div>
+                        <div class="flex flex-wrap gap-4">
+                            <template x-for="t in [{key:'session',label:'Session'},{key:'history',label:'Historical'},{key:'mcp',label:'MCP'}]" :key="t.key">
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" :checked="tabVisible(t.key)"
+                                           @change="setTabVisible(t.key, $event.target.checked)"
+                                           class="rounded border-border bg-surface">
+                                    <span x-text="t.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Header</div>
+                        <div class="flex flex-wrap gap-4">
+                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                                <input type="checkbox" x-model="showStatusCluster" @change="saveUiPrefs()"
+                                       class="rounded border-border bg-surface">
+                                <span>Status &amp; uptime cluster</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                                <input type="checkbox" x-model="showMcpButton" @change="saveUiPrefs()"
+                                       class="rounded border-border bg-surface">
+                                <span>MCP Dashboards button</span>
+                            </label>
+                        </div>
                     </div>
                 </section>
             </div>
