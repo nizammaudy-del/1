@@ -218,6 +218,7 @@ def test_response_to_sse_preserves_server_tool_use_blocks() -> None:
 def test_response_to_sse_preserves_thinking_redacted_and_citations() -> None:
     parser = _Parser()
     redacted_blob = "ENC:" + ("y" * 200)
+    stop_details = {"type": "refusal", "message": "policy refusal"}
     response = {
         "id": "msg_2",
         "model": "claude-opus-4",
@@ -237,7 +238,8 @@ def test_response_to_sse_preserves_thinking_redacted_and_citations() -> None:
             },
             {"type": "redacted_thinking", "data": redacted_blob},
         ],
-        "stop_reason": "end_turn",
+        "stop_reason": "refusal",
+        "stop_details": stop_details,
         "usage": {"input_tokens": 10, "output_tokens": 3},
     }
 
@@ -255,6 +257,22 @@ def test_response_to_sse_preserves_thinking_redacted_and_citations() -> None:
     assert round_tripped["content"][0]["signature"] == "sig_123"
     assert round_tripped["content"][1]["citations"][0]["cited_text"] == "abc"
     assert round_tripped["content"][2]["data"] == redacted_blob
+    assert round_tripped["stop_reason"] == "refusal"
+    assert round_tripped["stop_details"] == stop_details
+
+
+def test_response_to_sse_does_not_default_missing_stop_reason() -> None:
+    parser = _Parser()
+    sse_text = b"".join(parser._response_to_sse({"content": []}, "anthropic")).decode("utf-8")
+    events = [
+        json.loads(line[len("data: ") :])
+        for line in sse_text.splitlines()
+        if line.startswith("data: ")
+    ]
+    message_delta = next(event for event in events if event["type"] == "message_delta")
+
+    assert message_delta["delta"] == {}
+    assert "end_turn" not in sse_text
 
 
 def test_response_to_sse_rejects_unknown_content_block() -> None:

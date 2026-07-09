@@ -384,6 +384,8 @@ class StreamingMixin:
                 response["model"] = msg.get("model")
                 response["role"] = msg.get("role", "assistant")
                 response["stop_reason"] = msg.get("stop_reason")
+                if "stop_details" in msg:
+                    response["stop_details"] = msg["stop_details"]
                 if msg.get("usage"):
                     response["usage"].update(msg["usage"])
 
@@ -482,8 +484,10 @@ class StreamingMixin:
 
             elif event_type == "message_delta":
                 delta = data.get("delta", {})
-                if delta.get("stop_reason"):
+                if "stop_reason" in delta:
                     response["stop_reason"] = delta["stop_reason"]
+                if "stop_details" in delta:
+                    response["stop_details"] = delta["stop_details"]
                 if data.get("usage"):
                     response["usage"].update(data["usage"])
 
@@ -627,9 +631,14 @@ class StreamingMixin:
             events.append(f"event: content_block_stop\ndata: {json.dumps(block_stop)}\n\n".encode())
 
         # message_delta
+        msg_delta_payload: dict[str, Any] = {}
+        if "stop_reason" in response:
+            msg_delta_payload["stop_reason"] = response["stop_reason"]
+        if "stop_details" in response:
+            msg_delta_payload["stop_details"] = response["stop_details"]
         msg_delta = {
             "type": "message_delta",
-            "delta": {"stop_reason": response.get("stop_reason", "end_turn")},
+            "delta": msg_delta_payload,
             "usage": {"output_tokens": response.get("usage", {}).get("output_tokens", 0)},
         }
         events.append(f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n".encode())
