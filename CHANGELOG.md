@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- The Anthropic Messages route (`POST /v1/messages`) now honors the
+  `x-headroom-base-url` per-request upstream override. It previously ignored the
+  header and always forwarded to `api.anthropic.com`, so clients that speak the
+  Anthropic Messages wire format while authenticating against a non-Anthropic
+  gateway (e.g. OpenCode Zen) were rejected upstream with `401 invalid
+  x-api-key`. The route now forwards to `<x-headroom-base-url>/v1/messages`,
+  consistent with the OpenAI-compatible and passthrough routes
+  ([#1760](https://github.com/headroomlabs-ai/headroom/issues/1760)).
 - **proxy:** the savings store now fsyncs its parent directory after the
   atomic rename, so the most recent `proxy_savings.json` write survives a
   power-loss or crash. `_save_locked` fsynced the temp file's contents but

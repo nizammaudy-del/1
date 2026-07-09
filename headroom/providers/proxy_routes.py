@@ -491,6 +491,15 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.post("/v1/messages")
     async def anthropic_messages(request: Request):
+        # Honor the per-request upstream override so clients that speak the
+        # Anthropic Messages wire format but authenticate against a
+        # non-Anthropic gateway route correctly, consistent with the
+        # OpenAI-compatible and generic passthrough routes.
+        custom_base = request.headers.get("x-headroom-base-url", "").strip()
+        if custom_base:
+            return await proxy.handle_anthropic_messages(
+                request, upstream_base_url=custom_base.rstrip("/")
+            )
         return await proxy.handle_anthropic_messages(request)
 
     @app.post("/anthropic/v1/messages")
