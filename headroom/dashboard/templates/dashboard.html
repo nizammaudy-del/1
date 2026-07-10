@@ -153,6 +153,13 @@
                 </div>
                 <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle || 'Help'"></div>
                 <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody || 'Hover any metric for an explanation.'"></div>
+                <div class="mt-2 pt-2 border-t border-border flex flex-wrap gap-x-3 gap-y-1" data-testid="color-legend">
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>Savings</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-amber-400 inline-block"></span>Warning</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span>Danger</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-cyan-400 inline-block"></span>Cache</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-violet-400 inline-block"></span>Unlimited</span>
+                </div>
             </div>
         </template>
         <template x-if="helpCollapsed">
