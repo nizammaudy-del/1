@@ -1894,6 +1894,70 @@
                     </div>
                 </section>
 
+                <!-- Section: Embedded MCP Dashboards -->
+                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="MCP Dashboards"
+                     data-help="Expand a dashboard to try loading its live UI in an embedded frame (lazy — nothing loads until you expand). If it can't be embedded (blocked, slow, or no native fallback exists for that MCP), a link to open it in a new tab is shown instead.">
+                    <div class="text-sm font-medium text-gray-300 mb-3">MCP Dashboards</div>
+                    <template x-if="mcpDashboards.length === 0">
+                        <div class="text-xs text-gray-500 py-4 text-center">No MCP dashboards detected.</div>
+                    </template>
+                    <div class="space-y-2">
+                        <template x-for="d in mcpDashboards" :key="d.name">
+                            <div class="border border-border/60 rounded-md">
+                                <button type="button" @click="toggleMcpDashboard(d)"
+                                        class="w-full flex items-center gap-2 px-3 py-2 text-left">
+                                    <svg class="w-3.5 h-3.5 text-gray-500 transition-transform shrink-0" :class="mcpDashboardExpanded[d.name] ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                    <span class="text-sm text-gray-300" x-text="d.label"></span>
+                                    <span class="w-2 h-2 rounded-full"
+                                          :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
+                                          :data-help-title="d.label"
+                                          :data-help="d.available ? 'This MCP server is reachable.' : 'This MCP server is not reachable — is it running?'"></span>
+                                </button>
+                                <div x-show="mcpDashboardExpanded[d.name]" class="px-3 pb-3">
+                                    <template x-if="d.name === 'serena'">
+                                        <div>
+                                            <div x-show="mcpDashboardStatus[d.name] === 'loading' || mcpDashboardStatus[d.name] === 'loaded'"
+                                                 class="relative border border-border/40 rounded" style="height:480px">
+                                                <div x-show="mcpDashboardStatus[d.name] === 'loading'"
+                                                     class="absolute inset-0 flex items-center justify-center bg-black/10">
+                                                    <svg class="animate-spin w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
+                                                </div>
+                                                <iframe :src="d.url" sandbox="allow-scripts allow-same-origin allow-forms" loading="lazy"
+                                                        class="w-full h-full rounded"
+                                                        @load="onMcpIframeLoad(d.name)" @error="onMcpIframeError(d.name)"></iframe>
+                                            </div>
+                                            <template x-if="mcpDashboardStatus[d.name] === 'fallback'">
+                                                <div class="border border-border/40 rounded p-3">
+                                                    <template x-if="mcpDashboardSummary[d.name]?.available">
+                                                        <div class="text-xs text-gray-400 space-y-2">
+                                                            <div><span class="text-gray-500">Active project:</span> <span x-text="mcpDashboardSummary[d.name].active_project || 'none'"></span></div>
+                                                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                                                <template x-for="(v, k) in (mcpDashboardSummary[d.name].tool_stats || {})" :key="k">
+                                                                    <div><span class="text-gray-500" x-text="k"></span>: <span class="tabular-nums" x-text="formatNum(v)"></span></div>
+                                                                </template>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="!mcpDashboardSummary[d.name]?.available">
+                                                        <div class="text-xs text-gray-500">The embedded dashboard didn't load and no native summary is available.</div>
+                                                    </template>
+                                                    <a :href="d.url" target="_blank" rel="noopener" class="text-xs text-accent hover:underline mt-2 inline-block">Open dashboard ↗</a>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <template x-if="d.name !== 'serena'">
+                                        <div class="text-xs text-gray-500">
+                                            No embedded preview available for this MCP.
+                                            <a :href="d.url" target="_blank" rel="noopener" class="text-accent hover:underline">Open dashboard ↗</a>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
                 <!-- Card: Diagnostics (Prometheus + Export) -->
                 <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="Diagnostics"
                      data-help="Raw endpoints for scraping Headroom metrics into your own tooling, plus quick exports of the last 30 days of savings history.">
@@ -2411,6 +2475,12 @@
                 warningBannerDismissed: false,
                 notifyEnabled: false,
 
+                // Embedded MCP dashboards (lazy-loaded per row, keyed by dashboard name)
+                mcpDashboardExpanded: {},
+                mcpDashboardStatus: {},
+                mcpDashboardSummary: {},
+                mcpDashboardTimers: {},
+
                 // Health error detail (populated in fetchStats catch)
                 healthErrorReason: '',
 
@@ -2558,6 +2628,36 @@
                 },
                 dismissWarningBanner() {
                     this.warningBannerDismissed = true;
+                },
+
+                // --- Embedded MCP dashboards (lazy expand/collapse, iframe with native fallback) ---
+                toggleMcpDashboard(dash) {
+                    const name = dash.name;
+                    this.mcpDashboardExpanded[name] = !this.mcpDashboardExpanded[name];
+                    if (!this.mcpDashboardExpanded[name] || this.mcpDashboardStatus[name]) return;
+                    if (name !== 'serena') return; // no iframe attempt for unknown MCPs, link-only
+                    this.mcpDashboardStatus[name] = 'loading';
+                    this.mcpDashboardTimers[name] = setTimeout(() => {
+                        if (this.mcpDashboardStatus[name] === 'loading') this.loadMcpFallback(name);
+                    }, 2000);
+                },
+                onMcpIframeLoad(name) {
+                    clearTimeout(this.mcpDashboardTimers[name]);
+                    if (this.mcpDashboardStatus[name] === 'loading') this.mcpDashboardStatus[name] = 'loaded';
+                },
+                onMcpIframeError(name) {
+                    clearTimeout(this.mcpDashboardTimers[name]);
+                    this.loadMcpFallback(name);
+                },
+                async loadMcpFallback(name) {
+                    this.mcpDashboardStatus[name] = 'fallback';
+                    if (name !== 'serena') return;
+                    try {
+                        const res = await fetch('/mcp/dashboards/serena/summary');
+                        if (res.ok) this.mcpDashboardSummary[name] = await res.json();
+                    } catch (e) {
+                        console.error('Failed to fetch Serena dashboard summary:', e);
+                    }
                 },
 
                 // --- Near-limit warnings (edge-triggered; recomputed each poll cycle) ---
