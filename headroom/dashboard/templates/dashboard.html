@@ -681,12 +681,12 @@
         <!-- Savings Breakdown -->
         <template x-if="(stats.cost?.savings_usd || 0) > 0 || (stats.cost?.cache_savings_usd || 0) > 0">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
-                <div class="text-sm font-medium text-gray-300 mb-3">Savings Breakdown</div>
+                <div class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">Savings Breakdown <span class="text-[10px] uppercase tracking-wide text-gray-500" title="Priced from a pricing table (LiteLLM or your Settings override) — can be stale or $0.00 for unlisted models.">estimated</span></div>
                 <div class="flex items-center gap-8">
                     <div>
                         <div class="text-xs text-gray-500 mb-1">Compression</div>
                         <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.cost?.compression_savings_usd || 0)"></div>
-                        <div class="text-xs text-gray-500" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' proxy tokens removed'"></div>
+                        <div class="text-xs text-gray-500" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' proxy tokens removed (measured)'"></div>
                     </div>
                     <template x-if="(stats.cost?.cache_savings_usd || 0) > 0">
                         <div>
