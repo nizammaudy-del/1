@@ -532,10 +532,10 @@ class AnthropicHandlerMixin:
         from headroom.cache.compression_store import get_compression_store
         from headroom.ccr import CCRToolInjector
         from headroom.providers.anthropic import sanitize_anthropic_model_id
+        from headroom.proxy.body_forwarding import BodyMutationTracker
         from headroom.proxy.helpers import (
             MAX_MESSAGE_ARRAY_LENGTH,
             MAX_REQUEST_BODY_SIZE,
-            BodyMutationTracker,
             _get_image_compressor,
             compute_turn_id,
             read_request_json_with_bytes,
@@ -2770,10 +2770,10 @@ class AnthropicHandlerMixin:
                             # continuation body is synthesized by Headroom
                             # so it is treated as mutated and goes through
                             # the canonical serializer.
-                            from headroom.proxy.helpers import (
-                                log_outbound_request,
+                            from headroom.proxy.body_forwarding import (
                                 prepare_outbound_body_bytes,
                             )
+                            from headroom.proxy.helpers import log_outbound_request
 
                             ccr_outbound_bytes, ccr_outbound_source = prepare_outbound_body_bytes(
                                 body=continuation_body,

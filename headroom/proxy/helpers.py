@@ -24,6 +24,19 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from headroom import paths as _paths
 from headroom._subprocess import run
+from headroom.proxy.body_forwarding import (
+    BodyMutationTracker as BodyMutationTracker,  # noqa: F401 - compatibility export
+)
+from headroom.proxy.body_forwarding import (
+    PythonForwarderMode as PythonForwarderMode,  # noqa: F401 - compatibility export
+)
+from headroom.proxy.body_forwarding import (
+    get_python_forwarder_mode as get_python_forwarder_mode,  # noqa: F401 - compatibility export
+)
+from headroom.proxy.body_forwarding import (
+    prepare_outbound_body_bytes as prepare_outbound_body_bytes,  # noqa: F401 - compatibility export
+)
+from headroom.proxy.body_forwarding import serialize_body_canonical
 
 if TYPE_CHECKING:
     import httpx
@@ -253,49 +266,6 @@ def hash_query_for_log(query: str) -> str:
     return h.hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Byte-faithful Python forwarder support (PR-A3 — fixes P0-2).
-# ---------------------------------------------------------------------------
-#
-# Every Python forwarder (server.py:_retry_request, streaming.py,
-# openai.py:_ws_http_fallback, batch.py) historically used
-# ``httpx.AsyncClient.post(url, json=body)``. httpx's default JSON encoder
-# uses ``separators=(", ", ": ")`` and ``ensure_ascii=True`` so the bytes
-# leaving the proxy never byte-equal the bytes that arrived from a
-# well-behaved client (Claude Code, Codex CLI emit compact + UTF-8). Every
-# such request collapses Anthropic prefix-cache hit-rate.
-#
-# PR-A3 switches every forwarder to byte-faithful forwarding:
-#   * unmutated body → forward original ``await request.body()`` verbatim;
-#   * mutated body  → re-serialize once via ``serialize_body_canonical``.
-#
-# A ``BodyMutationTracker`` accompanies each request so the forwarder can
-# pick the right path. Memory-injection / compression / image-rewrite sites
-# call ``tracker.mark_mutated(reason)``.
-
-_PYTHON_FORWARDER_MODE_ENV = "HEADROOM_PROXY_PYTHON_FORWARDER_MODE"
-PythonForwarderMode = Literal["byte_faithful", "legacy_json_kwarg"]
-_PYTHON_FORWARDER_MODE_DEFAULT: PythonForwarderMode = "byte_faithful"
-
-
-def get_python_forwarder_mode() -> PythonForwarderMode:
-    """Return the active Python-forwarder mode.
-
-    Read at request time. Unknown values raise loudly per the no-silent-
-    fallback build constraint. The ``legacy_json_kwarg`` value is an
-    explicit operator opt-in for emergency rollback — NOT a fallback.
-    """
-    raw = os.environ.get(_PYTHON_FORWARDER_MODE_ENV, "").strip().lower()
-    if not raw:
-        return _PYTHON_FORWARDER_MODE_DEFAULT
-    if raw in ("byte_faithful", "legacy_json_kwarg"):
-        return cast(PythonForwarderMode, raw)
-    raise ValueError(
-        f"Invalid {_PYTHON_FORWARDER_MODE_ENV}={raw!r}; "
-        "expected 'byte_faithful' or 'legacy_json_kwarg'"
-    )
-
-
 def extract_tags(headers: Any) -> dict[str, str]:
     """Extract ``x-headroom-*`` tags from inbound headers.
 
@@ -329,90 +299,6 @@ def _headroom_bypass_enabled(headers: Any) -> bool:
     except AttributeError:
         return False
     return bypass or passthrough
-
-
-def serialize_body_canonical(body: dict[str, Any]) -> bytes:
-    """Re-serialize a request body deterministically with cache-stable formatting.
-
-    Uses compact separators and preserves UTF-8 (no ``\\uXXXX`` escapes), so
-    byte output matches what well-behaved API clients (Claude Code, Codex
-    CLI) emit. Python 3.7+ dict insertion order is preserved by
-    ``json.dumps`` so message ordering is stable.
-
-    This is the canonical re-serialization for any forwarder path that did
-    mutate the body (memory injection, compression, etc.).
-    """
-    return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-class BodyMutationTracker:
-    """Records whether a request body was mutated and why.
-
-    The forwarder reads ``mutated`` to decide between byte-faithful
-    passthrough and canonical re-serialization. Reasons are logged with
-    each outbound request to make cache-affecting decisions auditable.
-
-    Thread-safety: a single tracker instance is owned by exactly one
-    request task. No locking needed.
-    """
-
-    __slots__ = ("_mutated", "_reasons")
-
-    def __init__(self) -> None:
-        self._mutated: bool = False
-        self._reasons: list[str] = []
-
-    def mark_mutated(self, reason: str) -> None:
-        """Mark the body as mutated and record the reason.
-
-        ``reason`` should be a stable identifier (snake_case) suitable for
-        log aggregation, e.g. ``memory_injection`` or
-        ``compression_smart_crusher``.
-        """
-        if not reason:
-            raise ValueError("BodyMutationTracker.mark_mutated: reason must be non-empty")
-        self._mutated = True
-        if reason not in self._reasons:
-            self._reasons.append(reason)
-
-    @property
-    def mutated(self) -> bool:
-        return self._mutated
-
-    @property
-    def reasons(self) -> list[str]:
-        return list(self._reasons)
-
-
-def prepare_outbound_body_bytes(
-    *,
-    body: dict[str, Any],
-    original_body_bytes: bytes | None,
-    body_mutated: bool,
-    forwarder_mode: PythonForwarderMode | None = None,
-) -> tuple[bytes, str]:
-    """Pick the outbound body bytes for a forwarder call.
-
-    Returns ``(outbound_bytes, source)`` where ``source`` is one of
-    ``passthrough`` (original bytes verbatim), ``canonical`` (re-serialized
-    deterministically because body was mutated), or ``legacy`` (rollback
-    mode — old ``json=body`` behavior).
-
-    * ``forwarder_mode == "byte_faithful"`` (default): unmutated → passthrough,
-      mutated → canonical.
-    * ``forwarder_mode == "legacy_json_kwarg"``: always re-encode via the old
-      httpx-style separators (operator opt-in, for rollback only).
-    """
-    mode = forwarder_mode if forwarder_mode is not None else get_python_forwarder_mode()
-    if mode == "legacy_json_kwarg":
-        # Old httpx default: separators=(", ", ": "), ensure_ascii=True.
-        legacy_bytes = json.dumps(body, separators=(", ", ": "), ensure_ascii=True).encode("utf-8")
-        return legacy_bytes, "legacy"
-
-    # byte_faithful path
-    if body_mutated or original_body_bytes is None:
-        return serialize_body_canonical(body), "canonical"
-    return original_body_bytes, "passthrough"
 
 
 def log_outbound_request(

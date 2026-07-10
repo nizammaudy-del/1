@@ -3616,9 +3616,9 @@ class OpenAIHandlerMixin:
         from fastapi import HTTPException
         from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+        from headroom.proxy.body_forwarding import BodyMutationTracker
         from headroom.proxy.helpers import (
             MAX_REQUEST_BODY_SIZE,
-            BodyMutationTracker,
             read_request_json_with_bytes,
         )
         from headroom.tokenizers import get_tokenizer
@@ -7021,10 +7021,8 @@ class OpenAIHandlerMixin:
         # is always synthesized from the WebSocket frame so the body is
         # treated as mutated; we still go through the canonical path so
         # numeric precision and UTF-8 are preserved.
-        from headroom.proxy.helpers import (
-            log_outbound_request,
-            prepare_outbound_body_bytes,
-        )
+        from headroom.proxy.body_forwarding import prepare_outbound_body_bytes
+        from headroom.proxy.helpers import log_outbound_request
 
         outbound_bytes, outbound_source = prepare_outbound_body_bytes(
             body=http_body,
