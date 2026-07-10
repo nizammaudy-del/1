@@ -775,6 +775,13 @@ class AnthropicHandlerMixin:
             headers = dict(request.headers.items())
             headers.pop("host", None)
             headers.pop("content-length", None)
+            # read_request_json_with_bytes already content-decoded the inbound
+            # body (zstd/gzip/deflate/br), so the bytes we forward are plain.
+            # A stale content-encoding makes the upstream try to decompress
+            # already-decoded JSON and reject it with HTTP 400 (#1542 — same
+            # fix the /v1/responses path already carries).
+            headers.pop("content-encoding", None)
+            headers.pop("transfer-encoding", None)
             # Strip accept-encoding so httpx negotiates its own encoding.
             # Edge proxies (Cloudflare Workers, etc.) may forward "br, zstd" which
             # the upstream can honor; if httpx lacks brotli support the response

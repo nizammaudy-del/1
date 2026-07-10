@@ -2204,6 +2204,12 @@ class OpenAIHandlerMixin:
         headers = dict(request.headers.items())
         headers.pop("host", None)
         headers.pop("content-length", None)
+        # The parsed body was already content-decoded upstream, so the bytes we
+        # forward are plain JSON. A stale content-encoding makes OpenAI try to
+        # decompress already-decoded JSON and reject it with HTTP 400 (#1542 —
+        # same fix the /v1/responses path already carries).
+        headers.pop("content-encoding", None)
+        headers.pop("transfer-encoding", None)
         # Strip accept-encoding so httpx negotiates its own encoding.
         # Cloudflare Workers forward "br, zstd" which OpenAI may honor;
         # if httpx lacks brotli support the response body is undecipherable → 502.
