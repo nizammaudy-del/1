@@ -106,23 +106,24 @@
 
         [x-cloak] { display: none !important; }
 
-        /* Floating help tooltip: glued to the bottom-right corner of the
+        /* Floating help control: glued to the bottom-right corner of the
            viewport (position: fixed, so it scrolls along with the page and
-           stays put). Only rendered while there's an active hint — no
-           persistent "hover something" placeholder taking up space. Sized to
+           stays put). Rests as a small button; expands into a card sized to
            match the old help rail's text (text-sm / text-xs) and width. */
         #help-float {
-            position: fixed; right: 16px; bottom: 16px; width: 260px;
+            position: fixed; right: 16px; bottom: 16px; z-index: 60;
+        }
+        .help-float-card {
+            width: 260px;
             max-width: calc(100vw - 32px);
             background: var(--color-surface);
             border: 1px solid var(--color-border);
             border-radius: 8px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
             padding: 10px 12px;
-            z-index: 60;
         }
         @media (max-width: 1024px) {
-            #help-float { width: 220px; }
+            .help-float-card { width: 220px; }
         }
 
         /* Collapsible pane chevron */
@@ -131,22 +132,37 @@
     </style>
 </head>
 <body class="text-gray-200 min-h-screen" x-data="dashboard()" x-init="init()">
-    <!-- Floating help tooltip: instant, no native-title delay. Glued to the
-         bottom-right corner and only shown while there's an active hint. -->
-    <div id="help-float" x-show="!helpCollapsed && helpBody" x-cloak
-         x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0"
-         x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-75"
-         x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
-        <div class="flex items-center justify-between mb-1.5">
-            <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Help</span>
-            <button @click="toggleHelp()" class="text-gray-500 hover:text-gray-200 transition-colors p-0.5" title="Hide help">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+    <!-- Floating help control: glued to the bottom-right corner. Rests as a
+         small toggle button (the same one that used to live in the header);
+         expands into the tooltip card whenever a data-help hint is active and
+         help isn't collapsed. Clicking the card's X collapses it straight
+         back down into the button. -->
+    <div id="help-float" x-cloak>
+        <template x-if="!helpCollapsed && helpBody">
+            <div class="help-float-card"
+                 x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0"
+                 x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+                <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Help</span>
+                    <button @click="toggleHelp()" class="text-gray-500 hover:text-gray-200 transition-colors p-0.5" title="Hide help">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle"></div>
+                <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody"></div>
+            </div>
+        </template>
+        <template x-if="helpCollapsed || !helpBody">
+            <button @click="toggleHelp()" title="Toggle help tooltip" aria-label="Toggle help tooltip"
+                    class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors shadow-lg">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
             </button>
-        </div>
-        <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle"></div>
-        <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody"></div>
+        </template>
     </div>
 
     <!-- Header -->
@@ -308,14 +324,6 @@
                     </svg>
                     <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
-                    </svg>
-                </button>
-                <button @click="toggleHelp()" id="help-toggle"
-                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-                        aria-label="Toggle help tooltip"
-                        data-help-title="Help tooltip" :data-help="helpCollapsed ? 'Help is off. Click to re-enable, then hover any metric for an instant explanation.' : 'Hover any metric for an instant explanation. Click to turn this off.'">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
                 </button>
             </div>
