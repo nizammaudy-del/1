@@ -668,6 +668,48 @@
 
             </div>
         </section>
+
+        <!-- Pane: Active Agents -->
+        <section x-show="paneVisible('activeAgents')" class="mb-6" :class="panes.activeAgents ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('activeAgents')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Active Agents" data-help="Agents that sent requests through the proxy in the last minute, derived from completed request logs (not live connections). Traffic through the proxy shows up here.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Active Agents</span>
+            </button>
+            <div x-show="!panes.activeAgents">
+                <div class="bg-surface rounded-lg border border-border overflow-hidden">
+                    <template x-if="(activeAgents.agents || []).length > 0">
+                        <div class="divide-y divide-border">
+                            <template x-for="a in activeAgents.agents" :key="a.agent + '|' + a.project">
+                                <div class="flex items-center justify-between gap-3 px-4 py-3">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <span class="h-2.5 w-2.5 rounded-full" :class="agentDotClass(a.agent)"></span>
+                                            <span class="text-sm font-medium text-gray-200 truncate" x-text="a.label"></span>
+                                        </div>
+                                        <div class="mt-1 text-xs text-gray-500 truncate" x-text="a.project || 'no project tag'"></div>
+                                    </div>
+                                    <div class="text-right shrink-0 text-xs text-gray-400">
+                                        <div x-text="'active ' + Math.round(a.seconds_since_last) + 's ago'"></div>
+                                        <div class="mt-0.5 text-gray-500">
+                                            <span x-text="formatNumber(a.request_count || 0) + ' req'"></span>
+                                            <span class="mx-1 text-gray-700">/</span>
+                                            <span class="text-accent" x-text="formatNumber(a.tokens_saved || 0) + ' saved'"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <template x-if="(activeAgents.agents || []).length === 0">
+                        <div class="p-6 text-center text-sm text-gray-500">
+                            No agents active in the last minute — traffic through the proxy shows up here.
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </section>
+
         <!-- Pane: Provider Windows & Cache -->
         <section x-show="paneVisible('windows')" class="mb-6" :class="panes.windows ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('windows')" class="w-full flex items-center gap-2 mb-3 text-left group"
@@ -2127,6 +2169,7 @@
                 uptimeText: '',
                 mcpDashboards: [],
                 mcpUsage: { servers: [], note: '', log_full_messages: false },
+                activeAgents: { agents: [] },
                 doctor: { checks: [], exit_code: 0 },
 
                 // Health error detail (populated in fetchStats catch)
@@ -2166,6 +2209,7 @@
                     await this.fetchStats();
                     this.fetchMcpDashboards();
                     this.fetchDoctor();
+                    this.fetchActiveAgents();
                     await this.loadSettingsIntoPoll();
 
                     this.pollInterval = setInterval(() => {
@@ -2372,6 +2416,7 @@
                     if (!force && document.hidden) return;
 
                     await this.fetchStats();
+                    await this.fetchActiveAgents();
 
                     const now = Date.now();
                     if (this.viewMode === 'history' && (force || now - this.lastHistoryFetchMs >= this.historyPollMs)) {
@@ -2427,6 +2472,17 @@
                         }
                     } catch (e) {
                         console.error('Failed to fetch MCP usage:', e);
+                    }
+                },
+
+                async fetchActiveAgents() {
+                    try {
+                        const res = await fetch('/stats/active_agents?window_seconds=60');
+                        if (res.ok) {
+                            this.activeAgents = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch active agents:', e);
                     }
                 },
 
@@ -3419,6 +3475,7 @@
                         <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                             <template x-for="p in [
                                     {key:'overview', label:'Overview'},
+                                    {key:'activeAgents', label:'Active Agents'},
                                     {key:'windows', label:'Provider Windows & Cache'},
                                     {key:'insights', label:'Waste & Trends'},
                                     {key:'tokens', label:'Token Usage, Providers & Performance'},
