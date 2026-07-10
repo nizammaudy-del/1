@@ -116,6 +116,16 @@ def _header_get(headers: dict[str, str], name: str) -> str | None:
     return None
 
 
+def _sanitize_forwarded_response_headers(
+    headers: httpx.Headers | dict[str, str],
+    *extra_names: str,
+) -> dict[str, str]:
+    cleaned = dict(headers)
+    for name in ("content-encoding", "content-length", "server", *extra_names):
+        cleaned.pop(name, None)
+    return cleaned
+
+
 def _custom_base_passthrough_telemetry(method: str, path: str, base_url: str) -> tuple[str, str]:
     """Return passthrough telemetry metadata for narrow custom-base exceptions."""
     # OpenCode Zen sends provider-prefixed OpenAI-compatible traffic through
@@ -2285,9 +2295,7 @@ class OpenAIHandlerMixin:
                 )
 
                 # Remove compression headers from cached response
-                response_headers = dict(cached.response_headers)
-                response_headers.pop("content-encoding", None)
-                response_headers.pop("content-length", None)
+                response_headers = _sanitize_forwarded_response_headers(cached.response_headers)
 
                 return Response(content=cached.response_body, headers=response_headers)
 
@@ -3478,9 +3486,7 @@ class OpenAIHandlerMixin:
                     )
 
                 # Remove compression headers since httpx already decompressed the response
-                response_headers = dict(response.headers)
-                response_headers.pop("content-encoding", None)
-                response_headers.pop("content-length", None)  # Length changed after decompression
+                response_headers = _sanitize_forwarded_response_headers(response.headers)
 
                 # Inject Headroom compression metrics (for SaaS metering)
                 response_headers["x-headroom-tokens-before"] = str(original_tokens)
@@ -4481,9 +4487,7 @@ class OpenAIHandlerMixin:
                 get_codex_rate_limit_state().update_from_headers(dict(response.headers))
 
                 # Remove compression headers
-                response_headers = dict(response.headers)
-                response_headers.pop("content-encoding", None)
-                response_headers.pop("content-length", None)
+                response_headers = _sanitize_forwarded_response_headers(response.headers)
 
                 if buffered_stream_ccr and response.status_code == 200 and resp_json:
                     sse_headers = {
@@ -7378,9 +7382,7 @@ class OpenAIHandlerMixin:
             )
 
         # Remove compression headers since httpx already decompressed the response
-        response_headers = dict(response.headers)
-        response_headers.pop("content-encoding", None)
-        response_headers.pop("content-length", None)  # Length changed after decompression
+        response_headers = _sanitize_forwarded_response_headers(response.headers)
         response_content = response.content
 
         if provider == "anthropic" and endpoint_name == "models":
@@ -7524,11 +7526,11 @@ class OpenAIHandlerMixin:
                 media_type="application/json",
             )
 
-        response_headers = dict(upstream_response.headers)
-        response_headers.pop("content-length", None)
-        response_headers.pop("transfer-encoding", None)
-        response_headers.pop("connection", None)
-        response_headers.pop("content-encoding", None)
+        response_headers = _sanitize_forwarded_response_headers(
+            upstream_response.headers,
+            "transfer-encoding",
+            "connection",
+        )
 
         if upstream_response.status_code >= 400:
             try:

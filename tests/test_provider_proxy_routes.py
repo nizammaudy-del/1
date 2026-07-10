@@ -644,6 +644,7 @@ def test_openai_image_codex_response_strips_stale_compression_headers(monkeypatc
                     "content-encoding": "gzip",
                     "content-length": stale_content_length,
                     "content-type": "application/json",
+                    "server": "upstream-edge",
                     "x-upstream": "kept",
                 },
             )
@@ -671,6 +672,7 @@ def test_openai_image_codex_response_strips_stale_compression_headers(monkeypatc
     assert response.status_code == 200
     assert response.content == upstream_body
     assert response.headers["x-upstream"] == "kept"
+    assert response.headers.get("server") is None
     assert response.headers.get("content-encoding") is None
     assert response.headers.get("content-length") == str(len(upstream_body))
 
