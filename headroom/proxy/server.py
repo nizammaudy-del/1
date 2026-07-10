@@ -3510,7 +3510,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             ],
         }
 
-    @app.get("/v1/feedback")
+    @app.get("/v1/feedback", dependencies=[Depends(_require_loopback)])
     async def ccr_feedback():
         """Get CCR feedback loop statistics and learned patterns.
 
@@ -3543,7 +3543,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             },
         }
 
-    @app.get("/v1/feedback/{tool_name}")
+    @app.get("/v1/feedback/{tool_name}", dependencies=[Depends(_require_loopback)])
     async def ccr_feedback_for_tool(tool_name: str):
         """Get compression hints for a specific tool.
 
@@ -3973,6 +3973,162 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             status_code=200,
             content={"ok": True, **user_config.config_response()},
         )
+
+    # --- Dashboard support endpoints (loopback-only) ---------------------
+    # Registered BEFORE register_provider_routes so the provider "/{path:path}"
+    # catch-all below does not shadow them.
+
+    @app.get("/admin/deployments", dependencies=[Depends(_require_loopback)])
+    async def admin_deployments():
+        """List LOCAL install profiles recorded on this machine.
+
+        ponytail: these are local deployment manifests written by
+        ``headroom install`` — NOT a multi-host fleet or remote deployments.
+        """
+
+        def _collect() -> list[dict[str, Any]]:
+            from headroom.install.state import list_manifests
+
+            out: list[dict[str, Any]] = []
+            for manifest in list_manifests():
+                out.append(
+                    {
+                        "profile": manifest.profile,
+                        "updated_at": manifest.updated_at,
+                        "artifact_count": len(getattr(manifest, "artifacts", []) or []),
+                    }
+                )
+            return out
+
+        return JSONResponse(content={"deployments": await asyncio.to_thread(_collect)})
+
+    @app.get(
+        "/mcp/dashboards/serena/summary",
+        dependencies=[Depends(_require_loopback)],
+    )
+    async def mcp_serena_summary():
+        """Serena's live tool stats + active project, if it is reachable.
+
+        Probes Serena's local dashboard API on 127.0.0.1:24282. On any error
+        (not installed, not running, timeout) returns ``{"available": false}``.
+        """
+
+        def _fetch() -> dict[str, Any]:
+            base = "http://127.0.0.1:24282"
+            try:
+                stats_resp = httpx.get(f"{base}/get_tool_stats", timeout=0.7)
+                overview_resp = httpx.get(f"{base}/get_config_overview", timeout=0.7)
+            except httpx.HTTPError:
+                return {"available": False}
+            if stats_resp.status_code >= 500 or overview_resp.status_code >= 500:
+                return {"available": False}
+            tool_stats: Any = None
+            overview: Any = None
+            try:
+                tool_stats = stats_resp.json()
+            except ValueError:
+                tool_stats = None
+            try:
+                overview = overview_resp.json()
+            except ValueError:
+                overview = None
+            active_project = None
+            if isinstance(overview, dict):
+                active_project = overview.get("active_project") or overview.get("project")
+            return {
+                "available": True,
+                "active_project": active_project,
+                "tool_stats": tool_stats,
+            }
+
+        return JSONResponse(content=await asyncio.to_thread(_fetch))
+
+    @app.get("/stats/active_agents", dependencies=[Depends(_require_loopback)])
+    async def stats_active_agents(window_seconds: int = 60):
+        """Agents seen in completed request logs within the recent window.
+
+        ponytail: this is "recently active" derived from COMPLETED request
+        logs — not live/open connections. An agent that finished a request
+        just outside the window will not appear.
+        """
+        from datetime import datetime
+
+        window = max(1, int(window_seconds))
+        now = datetime.now()
+        logs = proxy.logger.get_recent(500) if proxy and proxy.logger else []
+
+        def _seconds_since(ts: str | None) -> float | None:
+            if not ts:
+                return None
+            try:
+                parsed = datetime.fromisoformat(ts)
+            except (ValueError, TypeError):
+                return None
+            # Timestamps are written as naive datetime.now().isoformat();
+            # drop any tzinfo so the subtraction stays naive-vs-naive.
+            if parsed.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=None)
+            return (now - parsed).total_seconds()
+
+        # Filter to entries within the window, keyed by (agent, project).
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        for entry in logs:
+            since = _seconds_since(entry.get("timestamp"))
+            if since is None or since < 0 or since > window:
+                continue
+            agent_key, label, _source = _classify_agent_from_log(entry)
+            raw_tags = entry.get("tags")
+            tags = raw_tags if isinstance(raw_tags, dict) else {}
+            project = str(tags.get("project") or "")
+            gkey = (agent_key, project)
+            before = max(0, int(entry.get("input_tokens_original") or 0))
+            after = max(0, int(entry.get("input_tokens_optimized") or 0))
+            saved = max(0, int(entry.get("tokens_saved") or 0))
+            model = str(entry.get("model") or "unknown")
+
+            row = groups.get(gkey)
+            if row is None:
+                row = {
+                    "agent": agent_key,
+                    "label": label,
+                    "project": project,
+                    "last_seen": entry.get("timestamp"),
+                    "seconds_since_last": since,
+                    "request_count": 0,
+                    "tokens_saved": 0,
+                    "before_tokens": 0,
+                    "after_tokens": 0,
+                    "models": {},
+                }
+                groups[gkey] = row
+            row["request_count"] += 1
+            row["tokens_saved"] += saved
+            row["before_tokens"] += before
+            row["after_tokens"] += after
+            row["models"][model] = int(row["models"].get(model, 0)) + 1
+            if since < row["seconds_since_last"]:
+                row["seconds_since_last"] = since
+                row["last_seen"] = entry.get("timestamp")
+
+        agents = sorted(
+            groups.values(),
+            key=lambda r: r["seconds_since_last"],
+        )
+        return JSONResponse(content={"window_seconds": window, "agents": agents})
+
+    @app.get("/learn/history", dependencies=[Depends(_require_loopback)])
+    async def learn_history(limit: int = 50):
+        """Recent ``headroom learn`` runs recorded to the workspace."""
+        from headroom.cli.learn_history import read_learn_history
+
+        return JSONResponse(content={"runs": read_learn_history(limit)})
+
+    @app.get("/debug/memory/sync", dependencies=[Depends(_require_loopback)])
+    async def debug_memory_sync():
+        """Per-agent memory sync counters from persisted sync state."""
+        from headroom.memory.sync_stats import get_sync_stats
+
+        return JSONResponse(content=get_sync_stats())
 
     # Provider catch-all ("/{path:path}") must be registered last so the
     # explicit routes above take precedence.

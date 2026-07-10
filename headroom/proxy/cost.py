@@ -904,6 +904,13 @@ class CostTracker:
                 _cr_price, _cw_price, uncached_price = prices
                 savings_usd += saved * uncached_price
 
+        # Period spend + remaining budget for the dashboard. Guarded so a
+        # bad clock or empty ledger never breaks /stats.
+        try:
+            period_spend = self.get_period_cost()
+        except Exception:
+            period_spend = 0.0
+
         return {
             "total_tokens_saved": total_saved,
             "total_input_tokens": total_input_tokens,
@@ -917,4 +924,8 @@ class CostTracker:
             # `headroom doctor` can report whether a budget is set.
             "budget_limit_usd": self.budget_limit_usd,
             "budget_period": self.budget_period,
+            "period_spend_usd": round(period_spend, 4),
+            "budget_remaining_usd": (self.budget_limit_usd - period_spend)
+            if self.budget_limit_usd
+            else None,
         }
