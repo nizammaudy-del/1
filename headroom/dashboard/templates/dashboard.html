@@ -394,9 +394,16 @@
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <!-- Savings ($) - proxy compression only, priced at model list rate -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Proxy $ Saved" data-help="Estimated money saved by the proxy compressing tool outputs before they reach the model, priced at the model's list input rate. Compression only — excludes cache and other effects.">Proxy $ Saved <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 flex items-center justify-between" data-help-title="Proxy $ Saved" data-help="Estimated money saved by the proxy compressing tool outputs before they reach the model, priced at the model's list input rate. Compression only — excludes cache and other effects.">
+                    <span>Proxy $ Saved <span class="text-gray-600">&#9432;</span></span>
+                    <button type="button" @click="showMethodology = true"
+                            class="normal-case tracking-normal text-gray-500 hover:text-accent underline decoration-dotted text-[10px] focus:ring-2 focus:ring-accent focus:outline-none rounded">
+                        How is this calculated?
+                    </button>
+                </div>
                 <div class="flex items-baseline gap-2">
                     <span class="text-3xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.persistent_savings?.lifetime?.compression_savings_usd || 0)"></span>
+                    <span class="text-[10px] uppercase tracking-wide text-gray-500 self-start mt-1" title="Priced from a pricing table (LiteLLM or your Settings override) — can be $0.00 or stale for unlisted models. Token counts nearby are directly measured.">estimated</span>
                 </div>
                 <div class="mt-2 text-xs text-gray-500">
                     <span x-show="(stats.persistent_savings?.lifetime?.compression_savings_usd || 0) > 0"
@@ -1468,7 +1475,7 @@
                                 <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'requests')">Requests<span x-text="sortIcon('perModel', 'requests')"></span></th>
                                 <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_saved')">Tokens Saved<span x-text="sortIcon('perModel', 'tokens_saved')"></span></th>
                                 <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_sent')">Tokens Sent<span x-text="sortIcon('perModel', 'tokens_sent')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'reduction_pct')">Reduction<span x-text="sortIcon('perModel', 'reduction_pct')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'reduction_pct')" data-help-title="Reduction %" data-help="Tokens saved divided by (tokens saved + tokens sent) for this model — how much smaller compressed requests are versus what they would have been uncompressed. Assumes the same request shape would have been sent without Headroom.">Reduction<span x-text="sortIcon('perModel', 'reduction_pct')"></span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
@@ -2193,7 +2200,7 @@
                                                     <th class="py-2 pr-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'model', 'asc')">Model<span x-text="sortIcon('historyModel', 'model')"></span></th>
                                                     <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'tokens_saved')">Tokens saved<span x-text="sortIcon('historyModel', 'tokens_saved')"></span></th>
                                                     <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'input_cost_usd')">Cost with Headroom<span x-text="sortIcon('historyModel', 'input_cost_usd')"></span></th>
-                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'expected_cost_usd')">Expected cost without Headroom<span x-text="sortIcon('historyModel', 'expected_cost_usd')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'expected_cost_usd')" data-help-title="Expected cost (without Headroom)" data-help="What this model's traffic would have cost at list input price if Headroom hadn't removed any tokens: actual billed cost + estimated compression savings. Assumes the same requests would have been sent uncompressed and that list pricing is current.">Expected cost without Headroom <span class="text-gray-600">&#9432;</span><span x-text="sortIcon('historyModel', 'expected_cost_usd')"></span></th>
                                                     <th class="py-2 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'savings_usd')">Saved<span x-text="sortIcon('historyModel', 'savings_usd')"></span></th>
                                                 </tr>
                                             </thead>
@@ -2502,6 +2509,9 @@
                 tabsHidden: {},
                 showStatusCluster: true,
                 showMcpButton: true,
+
+                // Methodology modal ("how is this calculated?")
+                showMethodology: false,
 
                 // Settings menu state
                 settingsOpen: false,
@@ -3919,6 +3929,40 @@
     <!-- ============================================================ -->
     <!-- Settings overlay (self-contained; Alpine x-show) -->
     <!-- ============================================================ -->
+    <!-- Methodology modal: plain-language explanation of how $ savings are calculated -->
+    <div id="methodology-modal" x-show="showMethodology" x-cloak
+         class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
+         @keydown.escape.window="showMethodology = false"
+         style="display: none;">
+        <div @click.away="showMethodology = false"
+             class="w-full max-w-xl rounded-lg border border-border bg-surface shadow-xl">
+            <div class="flex items-center justify-between border-b border-border px-6 py-4">
+                <h2 class="text-lg font-semibold text-gray-100">How savings are calculated</h2>
+                <button @click="showMethodology = false"
+                        class="text-gray-500 hover:text-gray-200 focus:ring-2 focus:ring-accent focus:outline-none rounded p-1" title="Close">&#10005;</button>
+            </div>
+            <div class="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-4 text-sm text-gray-300">
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">The formula</h3>
+                    <p><code class="text-accent">savings = tokens_saved &times; list input price per token</code></p>
+                    <p class="mt-1 text-gray-400">Headroom counts every token it removed from a request before it went to the model (compression only — cache discounts are tracked separately and never mixed into this number). Each saved token is priced at the model's published <em>input</em> rate, so the total scales linearly and never moves backwards as traffic mixes change.</p>
+                </section>
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Where the price comes from</h3>
+                    <p class="text-gray-400">Prices come from LiteLLM's community-maintained pricing table, unless you've set a per-model override in <button type="button" class="text-accent underline decoration-dotted focus:ring-2 focus:ring-accent focus:outline-none rounded" @click="showMethodology = false; settingsOpen = true;">Settings</button> — an override always wins.</p>
+                </section>
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Why a figure can show $0.00</h3>
+                    <p class="text-gray-400">Pricing tables go stale or simply don't list newer/unlisted models. When that happens the dollar estimate falls back to $0.00 even though real tokens were saved — check the token counts (directly measured, not priced) if a $ figure looks wrong, and add a pricing override in Settings for any model that's missing.</p>
+                </section>
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Estimated vs measured</h3>
+                    <p class="text-gray-400">Anything marked <span class="text-[10px] uppercase tracking-wide text-gray-500">estimated</span> depends on this pricing table and can drift. Token counts are measured directly from the tokenizer/API usage fields and don't depend on pricing at all.</p>
+                </section>
+            </div>
+        </div>
+    </div>
+
     <div x-show="settingsOpen" x-cloak
          class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
          @keydown.escape.window="settingsOpen = false"
