@@ -378,38 +378,8 @@
         </div>
         <template x-if="viewMode === 'session'">
             <div>
-        <!-- Doctor status: reuses `headroom doctor` checks via /doctor -->
-        <div class="bg-surface rounded-lg p-4 border border-border mb-6"
-             :class="panes.systemHealth ? 'pane-collapsed' : ''"
-             x-show="paneVisible('systemHealth') && doctor.checks.length > 0">
-            <div class="flex justify-between items-center" :class="panes.systemHealth ? '' : 'mb-3'">
-                <button type="button" @click="togglePane('systemHealth')"
-                        class="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-gray-100 group"
-                        data-help-title="System Health"
-                        data-help="Live results of the same checks headroom doctor runs on the CLI: proxy liveness, version drift, client routing, savings flow and budget. Collapsed by default.">
-                    <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                    System Health
-                </button>
-                <span class="text-xs font-mono px-2 py-0.5 rounded"
-                      :class="doctor.exit_code === 0 ? 'bg-emerald-500/15 text-emerald-400' : (doctor.exit_code === 2 ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400')"
-                      x-text="doctor.exit_code === 0 ? 'all good' : (doctor.exit_code === 2 ? 'action needed' : 'warnings')"></span>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2" x-show="!panes.systemHealth">
-                <template x-for="check in doctor.checks" :key="check.name">
-                    <div class="flex items-start gap-2 text-sm"
-                         :data-help-title="'Check: ' + check.name"
-                         :data-help="check.summary + (check.hint ? ' — ' + check.hint : '')">
-                        <span class="mt-0.5"
-                              :class="{'text-emerald-400': check.status === 'pass', 'text-amber-400': check.status === 'warn', 'text-red-400': check.status === 'fail', 'text-gray-500': check.status === 'skip'}"
-                              x-text="check.status === 'pass' ? '✓' : (check.status === 'fail' ? '✗' : (check.status === 'warn' ? '⚠' : '·'))"></span>
-                        <div class="min-w-0">
-                            <span class="text-gray-300 uppercase text-xs tracking-wide" x-text="check.name"></span>
-                            <span class="text-gray-500 block break-words" x-text="check.summary"></span>
-                        </div>
-                    </div>
-                </template>
-            </div>
-        </div>
+        <!-- System Health lives only in the header status hover popover now (see doctor.checks
+             usage near the top of the header) — this used to be a duplicate standalone pane. -->
         <!-- Pane: Overview -->
         <section x-show="paneVisible('overview')" class="mb-6" :class="panes.overview ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('overview')" class="w-full flex items-center gap-2 mb-3 text-left group"
@@ -2600,8 +2570,8 @@
                 // Uptime ticking (timestamp-based so it never skips/drifts)
                 uptimeBaseMs: 0,
 
-                // Collapsible panes: true == collapsed. System Health starts collapsed.
-                panes: { systemHealth: true, diagnostics: true },
+                // Collapsible panes: true == collapsed.
+                panes: { diagnostics: true },
                 // Client-local visibility prefs (panes/cards, tabs, header clusters)
                 paneHidden: {},
                 // Sortable-table state: { [tableId]: { field, dir } }
@@ -4219,8 +4189,7 @@
                                     {key:'ccr', label:'CCR Feedback'},
                                     {key:'diagnostics', label:'Diagnostics'},
                                     {key:'historyOverview', label:'History: Overview'},
-                                    {key:'historyTrends', label:'History: Trends'},
-                                    {key:'systemHealth', label:'System Health'}
+                                    {key:'historyTrends', label:'History: Trends'}
                                 ]" :key="p.key">
                                 <label class="flex items-center gap-2 text-sm text-gray-300">
                                     <input type="checkbox" :checked="paneVisible(p.key)"
