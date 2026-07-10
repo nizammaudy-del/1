@@ -571,9 +571,11 @@ class StreamingMixin:
                     "content_block": block,
                 }
             else:
-                raise ValueError(
-                    f"Unsupported Anthropic content block type for SSE conversion: {block.get('type')!r}"
-                )
+                block_start = {
+                    "type": "content_block_start",
+                    "index": idx,
+                    "content_block": block,
+                }
 
             events.append(
                 f"event: content_block_start\ndata: {json.dumps(block_start)}\n\n".encode()
