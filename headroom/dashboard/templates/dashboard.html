@@ -138,7 +138,7 @@
          help isn't collapsed. Clicking the card's X collapses it straight
          back down into the button. -->
     <div id="help-float" x-cloak>
-        <template x-if="!helpCollapsed && helpBody">
+        <template x-if="!helpCollapsed">
             <div class="help-float-card"
                  x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0"
                  x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-75"
@@ -151,11 +151,11 @@
                         </svg>
                     </button>
                 </div>
-                <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle"></div>
-                <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody"></div>
+                <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle || 'Help'"></div>
+                <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody || 'Hover any metric for an explanation.'"></div>
             </div>
         </template>
-        <template x-if="helpCollapsed || !helpBody">
+        <template x-if="helpCollapsed">
             <button @click="toggleHelp()" title="Toggle help tooltip" aria-label="Toggle help tooltip"
                     class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors shadow-lg">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
