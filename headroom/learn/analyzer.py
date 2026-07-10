@@ -470,28 +470,50 @@ Return ONLY valid JSON matching this schema — no other text:
 def _strip_fenced_json(raw: str) -> dict:
     """Strip optional markdown fences and parse JSON.
 
-    Handles both raw JSON and fenced code blocks (e.g. ``​`json ... ``​`).
-    Only the first opening fence and last closing fence are removed, preserving
-    any triple-backtick content that may appear inside the JSON payload.
+    Handles raw JSON and fenced code blocks (e.g. ``​`json ... ``​`), including
+    the case where the model prefixes prose before the fence (e.g. "Here is the
+    JSON:") despite being told to return JSON only. Between the first opening
+    fence and last closing fence is preferred, preserving any triple-backtick
+    content inside the JSON payload; a first-``{`` / last-``}`` slice is the
+    final fallback.
 
     Args:
-        raw: Raw text output from an LLM, possibly wrapped in markdown fences.
+        raw: Raw text output from an LLM, possibly wrapped in markdown fences
+            and/or preceded by explanatory prose.
 
     Returns:
         Parsed JSON as a dictionary.
 
     Raises:
-        json.JSONDecodeError: If the text is not valid JSON after stripping.
+        json.JSONDecodeError: If no candidate parses as a JSON object.
     """
     text = raw.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        # Remove the first line (opening fence, e.g. ```json)
-        lines = lines[1:]
-        # Remove the last line if it is a closing fence
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines)
+
+    candidates: list[str] = []
+    # 1. Fenced block located anywhere (tolerates a prose preamble before it).
+    lines = text.split("\n")
+    fence_idxs = [i for i, ln in enumerate(lines) if ln.strip().startswith("```")]
+    if len(fence_idxs) >= 2:
+        candidates.append("\n".join(lines[fence_idxs[0] + 1 : fence_idxs[-1]]))
+    elif len(fence_idxs) == 1:
+        candidates.append("\n".join(lines[fence_idxs[0] + 1 :]))
+    # 2. The whole text as-is (the common raw-JSON case).
+    candidates.append(text)
+    # 3. First-``{`` .. last-``}`` slice (prose on both sides, no fence).
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(text[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    # Nothing parsed as an object: re-raise the natural error on the raw text
+    # so callers see a JSONDecodeError, preserving the documented contract.
     result: dict = json.loads(text)
     return result
 
