@@ -331,6 +331,19 @@
     </header>
 
     <main class="p-6 max-w-7xl mx-auto">
+        <!-- Restart banner: uptime dropped between polls, so in-memory session stats reset -->
+        <div x-show="restartBannerVisible" x-cloak
+             class="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+             data-help-title="Proxy Restarted"
+             data-help="Session stats live in the proxy's memory. If the process restarted, counters reset to 0 even though nothing is wrong.">
+            <div class="flex items-start justify-between gap-3">
+                <p class="text-xs text-amber-300">Proxy restarted &mdash; session stats reset to 0.</p>
+                <button type="button" @click="dismissRestartBanner()"
+                        class="shrink-0 text-amber-400 hover:text-amber-200 focus:ring-2 focus:ring-accent focus:outline-none rounded" aria-label="Dismiss">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+        </div>
         <!-- Near-limit warnings banner: edge-triggered, dismissible, shown across all tabs -->
         <div x-show="warnings.length > 0 && !warningBannerDismissed" x-cloak
              class="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-3"
@@ -2476,6 +2489,12 @@
                 log_full_messages: false,
                 uptimeSeconds: 0,
                 uptimeText: '',
+                // Restart detection (#uptime heuristic): if uptime drops between
+                // polls the proxy process restarted and in-memory stats reset to 0.
+                restartBannerVisible: false,
+                restartBannerDismissed: false,
+                _lastSeenUptimeSeconds: null,
+                _lastPollAtMs: null,
                 mcpDashboards: [],
                 mcpUsage: { servers: [], note: '', log_full_messages: false },
                 activeAgents: { agents: [] },
@@ -2650,6 +2669,10 @@
                 },
                 dismissWarningBanner() {
                     this.warningBannerDismissed = true;
+                },
+                dismissRestartBanner() {
+                    this.restartBannerVisible = false;
+                    this.restartBannerDismissed = true;
                 },
 
                 // --- Embedded MCP dashboards (lazy expand/collapse, iframe with native fallback) ---
@@ -3051,6 +3074,25 @@
                         this.log_full_messages = this.stats.log_full_messages || false;
 
                         if (typeof health.uptime_seconds === 'number') {
+                            const now = Date.now();
+                            // Restart heuristic: uptime should only ever grow between polls.
+                            // If it dropped, or is lower than the wall-clock time elapsed
+                            // since the last poll would allow, the proxy process restarted
+                            // and in-memory session stats reset to 0.
+                            if (
+                                !this.restartBannerDismissed &&
+                                this._lastSeenUptimeSeconds !== null &&
+                                this._lastPollAtMs !== null
+                            ) {
+                                const elapsedSeconds = (now - this._lastPollAtMs) / 1000;
+                                const expectedMinUptime = this._lastSeenUptimeSeconds + elapsedSeconds - 5;
+                                if (health.uptime_seconds < this._lastSeenUptimeSeconds || health.uptime_seconds < expectedMinUptime) {
+                                    this.restartBannerVisible = true;
+                                }
+                            }
+                            this._lastSeenUptimeSeconds = health.uptime_seconds;
+                            this._lastPollAtMs = now;
+
                             this.uptimeSeconds = health.uptime_seconds;
                             this.uptimeBaseMs = Date.now() - health.uptime_seconds * 1000;
                             this.uptimeText = this.formatUptime(this.uptimeSeconds);
