@@ -3167,6 +3167,7 @@ def inject_tool_search_deferral(
 
 _OPENAI_TOOL_SEARCH_TYPE = "tool_search"
 _OPENAI_TOOL_SEARCH_MIN_TOOLS = 12
+_OPENAI_TOOL_SEARCH_RESIDENT_NAMES = frozenset({"terminal"})
 # gpt-5.4 is the first model with Responses tool_search (OpenAI docs). Version-
 # gated by default; overridable per deployment via a regex in
 # HEADROOM_OPENAI_TOOL_SEARCH_MODELS (matched against the model name) so new
@@ -3233,7 +3234,11 @@ def inject_tool_search_deferral_openai(
         # Deferrable: a non-core function, or an MCP server (OpenAI models are
         # trained to search namespaces / MCP servers). Everything else — core
         # coding tools and other hosted tools — stays resident.
-        deferrable = (ttype == "function" and tool.get("name") not in core_tools) or ttype == "mcp"
+        deferrable = (
+            ttype == "function"
+            and tool.get("name") not in core_tools
+            and tool.get("name") not in _OPENAI_TOOL_SEARCH_RESIDENT_NAMES
+        ) or ttype == "mcp"
         if deferrable and not tool.get("defer_loading"):
             new_tool = dict(tool)
             new_tool["defer_loading"] = True
