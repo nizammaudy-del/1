@@ -206,13 +206,13 @@ jobs:
 
             if [[ "$merge_state" == "BEHIND" ]]; then
               gh pr edit "$pr" --repo "$REPO" --add-label "status: needs rebase"
-            else
+            elif [[ "$merge_state" != "UNKNOWN" ]]; then
               gh pr edit "$pr" --repo "$REPO" --remove-label "status: needs rebase" || true
             fi
 
             if [[ "$merge_state" == "DIRTY" ]]; then
               gh pr edit "$pr" --repo "$REPO" --add-label "status: has conflicts"
-            else
+            elif [[ "$merge_state" != "UNKNOWN" ]]; then
               gh pr edit "$pr" --repo "$REPO" --remove-label "status: has conflicts" || true
             fi
 
