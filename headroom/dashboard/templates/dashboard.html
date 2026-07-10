@@ -106,20 +106,23 @@
 
         [x-cloak] { display: none !important; }
 
-        /* Help sidebar (Logic Pro style): RIGHT-side drawer docked BELOW the header.
-           When open it pushes the MAIN content left (not the nav) so it never overlaps
-           the site — the drawer sits in the reclaimed gap, not floating on top. */
-        #help-rail {
-            position: fixed; top: var(--header-h, 60px); right: 0; bottom: 0; width: 260px;
+        /* Floating help tooltip: glued to the bottom-right corner of the
+           viewport (position: fixed, so it scrolls along with the page and
+           stays put). Only rendered while there's an active hint — no
+           persistent "hover something" placeholder taking up space. Sized to
+           match the old help rail's text (text-sm / text-xs) and width. */
+        #help-float {
+            position: fixed; right: 16px; bottom: 16px; width: 260px;
+            max-width: calc(100vw - 32px);
             background: var(--color-surface);
-            border-left: 1px solid var(--color-border);
-            z-index: 50; display: flex; flex-direction: column;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            padding: 10px 12px;
+            z-index: 60;
         }
-        main { transition: margin-right 0.2s ease; }
-        body.help-open main { margin-right: 260px; }
         @media (max-width: 1024px) {
-            #help-rail { width: 220px; }
-            body.help-open main { margin-right: 220px; }
+            #help-float { width: 220px; }
         }
 
         /* Collapsible pane chevron */
@@ -128,25 +131,23 @@
     </style>
 </head>
 <body class="text-gray-200 min-h-screen" x-data="dashboard()" x-init="init()">
-    <!-- Help sidebar (Logic Pro style): instant, no native-title delay -->
-    <aside id="help-rail" x-show="!helpCollapsed" x-cloak>
-        <div class="flex items-center justify-between px-4 py-3 border-b border-border">
+    <!-- Floating help tooltip: instant, no native-title delay. Glued to the
+         bottom-right corner and only shown while there's an active hint. -->
+    <div id="help-float" x-show="!helpCollapsed && helpBody" x-cloak
+         x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-75"
+         x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+        <div class="flex items-center justify-between mb-1.5">
             <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Help</span>
-            <button @click="toggleHelp()" class="text-gray-500 hover:text-gray-200 transition-colors p-1"
-                    data-help-title="Help sidebar" data-help="Collapse this help rail. Hover any metric to see what it means here instantly.">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/>
+            <button @click="toggleHelp()" class="text-gray-500 hover:text-gray-200 transition-colors p-0.5" title="Hide help">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
             </button>
         </div>
-        <div class="flex-1 overflow-y-auto px-4 py-4">
-            <div class="text-sm font-semibold text-gray-200 mb-2" x-text="helpTitle"></div>
-            <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody"></div>
-        </div>
-        <div class="px-4 py-3 border-t border-border text-[11px] text-gray-600 leading-relaxed">
-            Hover metrics, headers, and controls for a live explanation.
-        </div>
-    </aside>
+        <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle"></div>
+        <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody"></div>
+    </div>
 
     <!-- Header -->
     <header class="border-b border-border px-6 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -311,8 +312,8 @@
                 </button>
                 <button @click="toggleHelp()" id="help-toggle"
                         class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-                        aria-label="Toggle help sidebar"
-                        data-help-title="Help sidebar" data-help="Open the help rail, then hover any metric for an instant explanation of what it means.">
+                        aria-label="Toggle help tooltip"
+                        data-help-title="Help tooltip" :data-help="helpCollapsed ? 'Help is off. Click to re-enable, then hover any metric for an instant explanation.' : 'Hover any metric for an instant explanation. Click to turn this off.'">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
@@ -2381,11 +2382,10 @@
                 // Health error detail (populated in fetchStats catch)
                 healthErrorReason: '',
 
-                // Help sidebar (instant, no native-title delay)
-                helpDefaultTitle: 'Help',
-                helpDefaultBody: 'Hover any metric for an explanation.',
-                helpTitle: 'Help',
-                helpBody: 'Hover any metric for an explanation.',
+                // Floating help tooltip (instant, no native-title delay). Empty
+                // until something with data-help is hovered, so it stays hidden.
+                helpTitle: '',
+                helpBody: '',
                 helpCollapsed: false,
 
                 // Uptime ticking (timestamp-based so it never skips/drifts)
@@ -2409,9 +2409,6 @@
 
                 async init() {
                     this.loadUiPrefs();
-                    this.applyHelpBodyClass();
-                    requestAnimationFrame(() => this.updateHeaderHeightVar());
-                    window.addEventListener('resize', () => this.updateHeaderHeightVar());
                     await this.fetchStats();
                     this.fetchMcpDashboards();
                     this.fetchDoctor();
@@ -2433,20 +2430,22 @@
                         }
                     }, 1000);
 
-                    // Instant help sidebar: delegate hover to any element carrying
-                    // data-help. No native title (which has a ~1s delay).
+                    // Instant floating help: delegate hover to any element carrying
+                    // data-help. No native title (which has a ~1s delay). The
+                    // float only renders while helpBody is non-empty, so it
+                    // simply disappears once nothing is hovered.
                     document.addEventListener('mouseover', (e) => {
                         const el = e.target.closest && e.target.closest('[data-help]');
                         if (!el) return;
-                        this.helpTitle = el.getAttribute('data-help-title') || this.helpDefaultTitle;
+                        this.helpTitle = el.getAttribute('data-help-title') || '';
                         this.helpBody = el.getAttribute('data-help') || '';
                     });
                     document.addEventListener('mouseout', (e) => {
                         const el = e.target.closest && e.target.closest('[data-help]');
                         if (!el) return;
                         if (el.contains(e.relatedTarget)) return;
-                        this.helpTitle = this.helpDefaultTitle;
-                        this.helpBody = this.helpDefaultBody;
+                        this.helpTitle = '';
+                        this.helpBody = '';
                     });
 
                     // Keyboard shortcuts
@@ -2507,17 +2506,6 @@
                 toggleHelp() {
                     this.helpCollapsed = !this.helpCollapsed;
                     try { localStorage.setItem('headroom-help-collapsed', this.helpCollapsed ? '1' : '0'); } catch (e) {}
-                    this.applyHelpBodyClass();
-                },
-                applyHelpBodyClass() {
-                    document.body.classList.toggle('help-open', !this.helpCollapsed);
-                },
-
-                // The help drawer docks below the header via the --header-h CSS var.
-                // Measure the real header height so it never overlaps the nav bar.
-                updateHeaderHeightVar() {
-                    const h = document.querySelector('header');
-                    if (h) document.documentElement.style.setProperty('--header-h', h.offsetHeight + 'px');
                 },
 
                 // Load saved poll intervals from /config at startup so the
