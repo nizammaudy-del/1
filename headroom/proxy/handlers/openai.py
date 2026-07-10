@@ -7218,19 +7218,21 @@ class OpenAIHandlerMixin:
             )
         except TimeoutError:
             logger.warning(
-                "Compression timed out after %.0fs (payload too large)",
+                "Compression timed out after %.0fs; failing open with original messages",
                 COMPRESSION_TIMEOUT_SECONDS,
             )
             return JSONResponse(
-                status_code=503,
                 content={
-                    "error": {
-                        "type": "compression_timeout",
-                        "message": (
-                            "Compression exceeded "
-                            f"{COMPRESSION_TIMEOUT_SECONDS:.0f}s; payload too large."
-                        ),
-                    }
+                    "messages": messages,
+                    "tokens_before": 0,
+                    "tokens_after": 0,
+                    "tokens_saved": 0,
+                    "compression_ratio": 1.0,
+                    "transforms_applied": [],
+                    "transforms_summary": {},
+                    "ccr_hashes": [],
+                    "compression_skipped": True,
+                    "skip_reason": "compression_timeout",
                 },
             )
         except Exception as e:
