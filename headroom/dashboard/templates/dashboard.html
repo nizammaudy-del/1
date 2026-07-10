@@ -192,10 +192,14 @@
                             <span class="text-sm" :class="healthy ? 'text-gray-300' : 'text-red-400'"
                                   x-text="healthy ? 'Healthy' : 'Error'"></span>
                         </span>
-                        <!-- Instant System Health popover: reuses doctor.checks, no new fetch -->
+                        <!-- Instant System Health popover: reuses doctor.checks, no new fetch.
+                             pt-2 (not mt-2) on the hit-box wrapper keeps the hoverable area
+                             touching the trigger with no dead zone; the visible card sits in
+                             the nested div so the padding doesn't show as extra whitespace inside it. -->
                         <div x-show="hcOpen && doctor.checks.length > 0" x-cloak
-                             class="absolute left-0 top-full mt-2 w-80 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface shadow-xl p-2 text-left"
+                             class="absolute left-0 top-full pt-2 w-80"
                              style="z-index: 60;">
+                          <div class="max-h-72 overflow-y-auto rounded-lg border border-border bg-surface shadow-xl p-2 text-left">
                             <div class="text-[10px] uppercase tracking-wide text-gray-500 px-1 pb-1">System Health</div>
                             <template x-for="check in doctor.checks" :key="check.name">
                                 <div class="flex items-start gap-2 px-1 py-1">
@@ -208,6 +212,7 @@
                                     </div>
                                 </div>
                             </template>
+                          </div>
                         </div>
                     </span>
                     <span class="text-gray-700">·</span>
