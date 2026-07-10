@@ -527,6 +527,18 @@
                 <div class="mt-2 text-xs text-gray-500">
                     TTFB <span x-text="((stats.ttfb?.average_ms || 0) / 1000).toFixed(2)"></span>s avg
                 </div>
+                <div class="mt-2 h-8" data-testid="overhead-sparkline">
+                    <svg class="w-full h-full" viewBox="0 0 100 32" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="sparkline-gradient-overhead" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.3"/>
+                                <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#sparkline-gradient-overhead)" :d="getSparklineArea(overheadHistory)"></path>
+                        <path class="sparkline" :d="getSparkline(overheadHistory)"></path>
+                    </svg>
+                </div>
             </div>
 
             <!-- Token Throughput -->
@@ -2515,6 +2527,7 @@
                 historySelectedModel: null,
                 requestHistory: [],
                 savingsHistory: [],
+                overheadHistory: [],
                 expandedRows: {},
                 pollInterval: null,
                 statsPollMs: 5000,
@@ -3149,10 +3162,12 @@
                         // Update history for sparklines
                         this.requestHistory.push(this.stats.requests?.total || 0);
                         this.savingsHistory.push(this.stats.tokens?.saved || 0);
+                        this.overheadHistory.push(this.stats.overhead?.average_ms || 0);
 
                         // Keep last 30 points
                         if (this.requestHistory.length > 30) this.requestHistory.shift();
                         if (this.savingsHistory.length > 30) this.savingsHistory.shift();
+                        if (this.overheadHistory.length > 30) this.overheadHistory.shift();
 
                         this.lastUpdate = new Date().toLocaleTimeString();
                         this.refreshWarnings();
