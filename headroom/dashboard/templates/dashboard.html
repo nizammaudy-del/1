@@ -331,6 +331,23 @@
     </header>
 
     <main class="p-6 max-w-7xl mx-auto">
+        <!-- Near-limit warnings banner: edge-triggered, dismissible, shown across all tabs -->
+        <div x-show="warnings.length > 0 && !warningBannerDismissed" x-cloak
+             class="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-3"
+             data-help-title="Near-Limit Warnings"
+             data-help="Fires when a budget or provider quota window crosses 80/90/100% utilization. Dismiss to hide until the next new threshold is crossed. Enable native OS notifications in Settings.">
+            <div class="flex items-start justify-between gap-3">
+                <ul class="space-y-1 text-xs text-red-300">
+                    <template x-for="w in warnings" :key="w.key">
+                        <li x-text="w.text"></li>
+                    </template>
+                </ul>
+                <button type="button" @click="dismissWarningBanner()"
+                        class="shrink-0 text-red-400 hover:text-red-200" aria-label="Dismiss">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+        </div>
         <template x-if="viewMode === 'session'">
             <div>
         <!-- Doctor status: reuses `headroom doctor` checks via /doctor -->
@@ -2387,6 +2404,13 @@
                 diagnosticsMemorySync: { agents: [], dedup_rate: null },
                 doctor: { checks: [], exit_code: 0 },
 
+                // Near-limit warnings: edge-triggered banner + optional native notifications.
+                // Thresholds/enabled flag are client-local display prefs (localStorage only).
+                warnings: [],
+                notifiedBuckets: {},
+                warningBannerDismissed: false,
+                notifyEnabled: false,
+
                 // Health error detail (populated in fetchStats catch)
                 healthErrorReason: '',
 
@@ -2480,6 +2504,8 @@
                             if (typeof p.showMcpButton === 'boolean') this.showMcpButton = p.showMcpButton;
                         }
                         this.helpCollapsed = localStorage.getItem('headroom-help-collapsed') === '1';
+                        this.notifyEnabled = localStorage.getItem('headroom-notify-enabled') === '1'
+                            && typeof Notification !== 'undefined' && Notification.permission === 'granted';
                     } catch (e) { /* keep defaults */ }
                 },
                 saveUiPrefs() {
@@ -2516,6 +2542,115 @@
                 toggleHelp() {
                     this.helpCollapsed = !this.helpCollapsed;
                     try { localStorage.setItem('headroom-help-collapsed', this.helpCollapsed ? '1' : '0'); } catch (e) {}
+                },
+
+                // Opt-in native OS notifications for near-limit warnings. Permission is only
+                // ever requested from this user-gesture click handler, never automatically.
+                async toggleNotifyEnabled(checked) {
+                    if (!checked || typeof Notification === 'undefined') {
+                        this.notifyEnabled = false;
+                        try { localStorage.setItem('headroom-notify-enabled', '0'); } catch (e) {}
+                        return;
+                    }
+                    const perm = await Notification.requestPermission();
+                    this.notifyEnabled = perm === 'granted';
+                    try { localStorage.setItem('headroom-notify-enabled', this.notifyEnabled ? '1' : '0'); } catch (e) {}
+                },
+                dismissWarningBanner() {
+                    this.warningBannerDismissed = true;
+                },
+
+                // --- Near-limit warnings (edge-triggered; recomputed each poll cycle) ---
+                bucketFor(pct) {
+                    if (pct >= 100) return 100;
+                    if (pct >= 90) return 90;
+                    if (pct >= 80) return 80;
+                    return 0;
+                },
+                estimateBudgetResetSeconds(period) {
+                    const now = new Date();
+                    let next;
+                    if (period === 'weekly') {
+                        next = new Date(now);
+                        const daysUntilMonday = (8 - next.getDay()) % 7 || 7;
+                        next.setDate(next.getDate() + daysUntilMonday);
+                        next.setHours(0, 0, 0, 0);
+                    } else if (period === 'monthly') {
+                        next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+                    } else {
+                        next = new Date(now);
+                        next.setDate(next.getDate() + 1);
+                        next.setHours(0, 0, 0, 0);
+                    }
+                    return Math.max(0, Math.floor((next - now) / 1000));
+                },
+                // Tracks each metric's last-crossed threshold bucket (0/80/90/100) so the
+                // banner/notification only escalates on a NEW higher bucket, and clears once
+                // the metric drops back under 80% (its window/period has reset).
+                trackWarning(items, crossed, key, pct, textFn) {
+                    const bucket = this.bucketFor(pct || 0);
+                    if (bucket >= 80) items.push({ key, text: textFn() });
+                    const prevBucket = this.notifiedBuckets[key] || 0;
+                    if (bucket > prevBucket) crossed.push({ key, text: textFn() });
+                    this.notifiedBuckets[key] = bucket;
+                },
+                refreshWarnings() {
+                    const items = [];
+                    const crossed = [];
+
+                    const sw = this.stats.subscription_window?.latest;
+                    if (sw?.five_hour) {
+                        this.trackWarning(items, crossed, 'anthropic_5h', sw.five_hour.utilization_pct, () =>
+                            `Anthropic 5h window at ${(sw.five_hour.utilization_pct || 0).toFixed(0)}% — resets in ${this.formatResetTime(sw.five_hour.seconds_to_reset)}`);
+                    }
+                    if (sw?.seven_day) {
+                        this.trackWarning(items, crossed, 'anthropic_7d', sw.seven_day.utilization_pct, () =>
+                            `Anthropic 7d window at ${(sw.seven_day.utilization_pct || 0).toFixed(0)}% — resets in ${this.formatResetTime(sw.seven_day.seconds_to_reset)}`);
+                    }
+
+                    const codex = this.stats.codex_rate_limits;
+                    if (codex?.primary) {
+                        this.trackWarning(items, crossed, 'codex_primary', codex.primary.used_percent, () =>
+                            `Codex primary window at ${(codex.primary.used_percent || 0).toFixed(0)}% — resets in ${this.formatResetTime(codex.primary.seconds_until_reset)}`);
+                    }
+                    if (codex?.secondary) {
+                        this.trackWarning(items, crossed, 'codex_secondary', codex.secondary.used_percent, () =>
+                            `Codex secondary window at ${(codex.secondary.used_percent || 0).toFixed(0)}% — resets in ${this.formatResetTime(codex.secondary.seconds_until_reset)}`);
+                    }
+
+                    const cats = this.stats.copilot_quota?.latest?.categories;
+                    if (cats) {
+                        const resetDate = this.stats.copilot_quota.latest.quota_reset_date_utc;
+                        const resetLabel = resetDate
+                            ? new Date(resetDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                            : 'unknown date';
+                        const labels = { chat: 'Copilot Chat', completions: 'Copilot Completions', premium_interactions: 'Copilot Premium' };
+                        for (const key of Object.keys(labels)) {
+                            const c = cats[key];
+                            if (!c || c.unlimited) continue;
+                            this.trackWarning(items, crossed, 'copilot_' + key, c.used_percent, () =>
+                                `${labels[key]} at ${(c.used_percent || 0).toFixed(0)}% — resets on ${resetLabel}`);
+                        }
+                    }
+
+                    const cost = this.stats.cost;
+                    if (cost?.budget_limit_usd) {
+                        this.trackWarning(items, crossed, 'budget', this.budgetPercentUsed, () => {
+                            const secs = this.estimateBudgetResetSeconds(cost.budget_period);
+                            return `Budget at ${this.budgetPercentUsed.toFixed(0)}% of $${this.formatCurrency(cost.budget_limit_usd)}/${cost.budget_period || 'period'} — resets in ${this.formatResetTime(secs)}`;
+                        });
+                    }
+
+                    this.warnings = items;
+                    if (items.length === 0) this.warningBannerDismissed = false;
+                    if (crossed.length > 0) {
+                        this.warningBannerDismissed = false;
+                        if (this.notifyEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                            for (const c of crossed) {
+                                new Notification('Headroom limit warning', { body: c.text });
+                            }
+                        }
+                    }
                 },
 
                 // Load saved poll intervals from /config at startup so the
@@ -2808,6 +2943,7 @@
                         if (this.savingsHistory.length > 30) this.savingsHistory.shift();
 
                         this.lastUpdate = new Date().toLocaleTimeString();
+                        this.refreshWarnings();
                     } catch (e) {
                         console.error('Failed to fetch stats:', e);
                         this.healthy = false;
@@ -3851,6 +3987,16 @@
                                 <span>MCP Dashboards button</span>
                             </label>
                         </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Notifications</div>
+                        <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="Near-Limit Notifications"
+                               data-help="When enabled, fires a native OS notification the first time a budget or provider quota window crosses 80/90/100% utilization (same text as the in-page banner). Client-local preference, not saved to the proxy config.">
+                            <input type="checkbox" :checked="notifyEnabled" @change="toggleNotifyEnabled($event.target.checked)"
+                                   class="rounded border-border bg-surface">
+                            <span>Native OS notifications for near-limit warnings</span>
+                        </label>
                     </div>
                 </section>
             </div>
