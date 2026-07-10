@@ -92,11 +92,18 @@ class HeadroomCallback(_CustomLogger):
 
     async def async_pre_call_hook(
         self,
-        user_api_key: str,
-        data: dict[str, Any],
-        call_type: str,
-    ) -> dict[str, Any]:
+        user_api_key_dict: Any = None,
+        cache: Any = None,
+        data: dict[Any, Any] | None = None,
+        call_type: str = "",
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> dict[Any, Any] | None:
         """Called by LiteLLM before each API call. Compresses messages."""
+        if isinstance(cache, dict) and isinstance(data, str):
+            data, call_type = cache, data
+        if data is None:
+            return None
         if call_type not in ("completion", "acompletion"):
             return data
 
