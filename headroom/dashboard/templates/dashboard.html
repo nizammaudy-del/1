@@ -1922,6 +1922,13 @@
                     </div>
                 </div>
 
+                <section x-show="paneVisible('historyOverview')" class="mb-6" :class="panes.historyOverview ? 'pane-collapsed' : ''">
+                    <button type="button" @click="togglePane('historyOverview')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                            data-help-title="Overview" data-help="Headline historical totals: lifetime savings, average tokens saved per day/week.">
+                        <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Overview</span>
+                    </button>
+                    <div x-show="!panes.historyOverview">
                 <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
                     <div class="bg-surface rounded-lg p-4 border border-border">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Lifetime Compression Savings" data-help="Total money saved by compression across every session since Headroom was installed, persisted to disk.">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
@@ -1971,7 +1978,16 @@
                         <div class="mt-2 text-xs text-gray-500">Based on persisted weekly buckets</div>
                     </div>
                 </div>
+                    </div>
+                </section>
 
+                <section x-show="paneVisible('historyTrends')" class="mb-6" :class="panes.historyTrends ? 'pane-collapsed' : ''">
+                    <button type="button" @click="togglePane('historyTrends')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                            data-help-title="Trends" data-help="Historical savings trend chart, per-model breakdown, daily/weekly/monthly rollups, and recent checkpoints.">
+                        <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Trends</span>
+                    </button>
+                    <div x-show="!panes.historyTrends">
                 <template x-if="hasHistoricalData">
                     <div>
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -2262,6 +2278,8 @@
                         </div>
                     </div>
                 </template>
+                    </div>
+                </section>
             </div>
         </template>
 
@@ -3748,6 +3766,8 @@
                                     {key:'requests', label:'Recent Requests'},
                                     {key:'ccr', label:'CCR Feedback'},
                                     {key:'diagnostics', label:'Diagnostics'},
+                                    {key:'historyOverview', label:'History: Overview'},
+                                    {key:'historyTrends', label:'History: Trends'},
                                     {key:'systemHealth', label:'System Health'}
                                 ]" :key="p.key">
                                 <label class="flex items-center gap-2 text-sm text-gray-300">
