@@ -462,6 +462,53 @@ class TestClaudeCodeAdapter:
         assert fm["source_agent"] == "codex"
         assert "FastAPI" in body
 
+    @pytest.mark.asyncio
+    async def test_write_distinct_memories_sharing_first_line_do_not_clobber(self, memory_dir):
+        """Two different memories that share a first line must not overwrite one
+        another. The filename slug is derived from the first line only, so before
+        the fix the second write clobbered the first (data loss)."""
+        adapter = ClaudeCodeAdapter(memory_dir)
+
+        written = await adapter.write_memories(
+            [
+                {
+                    "content": "# Project conventions\nUse tabs for indentation.",
+                    "headroom_id": "mem_a",
+                    "content_hash": "hash_a",
+                },
+                {
+                    "content": "# Project conventions\nDeploy on Fridays only.",
+                    "headroom_id": "mem_b",
+                    "content_hash": "hash_b",
+                },
+            ]
+        )
+
+        assert written == 2
+        files = sorted(memory_dir.glob("headroom_*.md"))
+        # Both memories must survive on disk (distinct files).
+        assert len(files) == 2
+        bodies = "\n".join(f.read_text() for f in files)
+        assert "tabs for indentation" in bodies
+        assert "Deploy on Fridays only" in bodies
+
+    @pytest.mark.asyncio
+    async def test_write_same_memory_updates_in_place(self, memory_dir):
+        """An update to the *same* memory (matching headroom_id) rewrites the
+        original slug file rather than spawning a disambiguated duplicate."""
+        adapter = ClaudeCodeAdapter(memory_dir)
+
+        await adapter.write_memories(
+            [{"content": "# Note\nfirst version", "headroom_id": "mem_x", "content_hash": "h1"}]
+        )
+        await adapter.write_memories(
+            [{"content": "# Note\nsecond version", "headroom_id": "mem_x", "content_hash": "h2"}]
+        )
+
+        files = list(memory_dir.glob("headroom_*.md"))
+        assert len(files) == 1
+        assert "second version" in files[0].read_text()
+
     def test_fingerprint_changes_on_modification(self, memory_dir):
         (memory_dir / "test.md").write_text("content 1")
 
