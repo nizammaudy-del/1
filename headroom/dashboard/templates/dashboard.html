@@ -1447,24 +1447,24 @@
                         </colgroup>
                         <thead>
                             <tr class="text-xs text-gray-500 uppercase tracking-wide">
-                                <th class="px-4 py-3 font-medium text-left">Model</th>
-                                <th class="px-4 py-3 font-medium text-right">Requests</th>
-                                <th class="px-4 py-3 font-medium text-right">Tokens Saved</th>
-                                <th class="px-4 py-3 font-medium text-right">Tokens Sent</th>
-                                <th class="px-4 py-3 font-medium text-right">Reduction</th>
+                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'model', 'asc')">Model<span x-text="sortIcon('perModel', 'model')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'requests')">Requests<span x-text="sortIcon('perModel', 'requests')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_saved')">Tokens Saved<span x-text="sortIcon('perModel', 'tokens_saved')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_sent')">Tokens Sent<span x-text="sortIcon('perModel', 'tokens_sent')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'reduction_pct')">Reduction<span x-text="sortIcon('perModel', 'reduction_pct')"></span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
-                            <template x-for="[model, info] in Object.entries(stats.cost?.per_model || {})" :key="model">
+                            <template x-for="row in perModelRows" :key="row.model">
                                 <tr class="hover:bg-border/30 transition-colors">
                                     <td class="px-4 py-3 text-left">
-                                        <span class="px-2 py-0.5 bg-border rounded text-xs" x-text="truncateModel(model)"></span>
+                                        <span class="px-2 py-0.5 bg-border rounded text-xs" x-text="truncateModel(row.model)"></span>
                                     </td>
-                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="info.requests"></td>
-                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-accent" x-text="formatNumber(info.tokens_saved)"></td>
-                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="formatNumber(info.tokens_sent)"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="row.requests"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-accent" x-text="formatNumber(row.tokens_saved)"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="formatNumber(row.tokens_sent)"></td>
                                     <td class="px-4 py-3 text-right">
-                                        <span class="text-accent font-mono tabular-nums" x-text="info.reduction_pct.toFixed(1) + '%'"></span>
+                                        <span class="text-accent font-mono tabular-nums" x-text="row.reduction_pct.toFixed(1) + '%'"></span>
                                     </td>
                                 </tr>
                             </template>
@@ -1520,36 +1520,36 @@
                         </colgroup>
                         <thead>
                             <tr class="text-xs text-gray-500 uppercase tracking-wide">
-                                <th class="px-4 py-3 font-medium text-left" data-help-title="Project" data-help="Project name from the /p/<project-name> route the client used.">Project</th>
-                                <th class="px-4 py-3 font-medium text-right" data-help-title="Requests" data-help="Attributed requests routed for this project.">Requests</th>
-                                <th class="px-4 py-3 font-medium text-right" data-help-title="Tokens Saved" data-help="Lifetime input tokens the proxy compressed away for this project.">Tokens Saved</th>
-                                <th class="px-4 py-3 font-medium text-right" data-help-title="Saved $" data-help="Estimated dollars saved from compression for this project, at the model's list input rate.">Saved $</th>
-                                <th class="px-4 py-3 font-medium text-right" data-help-title="Savings %" data-help="Tokens saved as a percentage of this project's before-compression input.">Savings %</th>
-                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell" data-help-title="Last Active" data-help="Timestamp of the most recent request attributed to this project.">Last Active</th>
+                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'project', 'asc')" data-help-title="Project" data-help="Project name from the /p/<project-name> route the client used.">Project<span x-text="sortIcon('perProject', 'project')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'requests')" data-help-title="Requests" data-help="Attributed requests routed for this project.">Requests<span x-text="sortIcon('perProject', 'requests')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'tokens_saved')" data-help-title="Tokens Saved" data-help="Lifetime input tokens the proxy compressed away for this project.">Tokens Saved<span x-text="sortIcon('perProject', 'tokens_saved')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'compression_savings_usd')" data-help-title="Saved $" data-help="Estimated dollars saved from compression for this project, at the model's list input rate.">Saved $<span x-text="sortIcon('perProject', 'compression_savings_usd')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'savings_percent')" data-help-title="Savings %" data-help="Tokens saved as a percentage of this project's before-compression input.">Savings %<span x-text="sortIcon('perProject', 'savings_percent')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'last_activity_at')" data-help-title="Last Active" data-help="Timestamp of the most recent request attributed to this project.">Last Active<span x-text="sortIcon('perProject', 'last_activity_at')"></span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
-                            <template x-for="[project, info] in Object.entries(stats.savings?.per_project || {})" :key="project">
+                            <template x-for="row in perProjectRows" :key="row.project">
                                 <tr class="hover:bg-border/30 transition-colors">
                                     <td class="px-4 py-3 text-left">
-                                        <span class="px-2 py-0.5 bg-border rounded text-xs font-mono" x-text="project"></span>
+                                        <span class="px-2 py-0.5 bg-border rounded text-xs font-mono" x-text="row.project"></span>
                                     </td>
-                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="info.requests"></td>
-                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-accent" x-text="formatNumber(info.tokens_saved)"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="row.requests"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-accent" x-text="formatNumber(row.tokens_saved)"></td>
                                     <td class="px-4 py-3 text-right font-mono tabular-nums text-emerald-400"
-                                        x-text="'$' + formatCurrency(info.compression_savings_usd || 0)"></td>
+                                        x-text="'$' + formatCurrency(row.compression_savings_usd || 0)"></td>
                                     <td class="px-4 py-3 text-right">
                                         <div class="flex items-center justify-end gap-2">
                                             <div class="w-16 h-1.5 bg-border rounded-full overflow-hidden">
                                                 <div class="h-full bg-accent rounded-full"
-                                                     :style="'width:' + Math.min(info.savings_percent || 0, 100) + '%'"></div>
+                                                     :style="'width:' + Math.min(row.savings_percent || 0, 100) + '%'"></div>
                                             </div>
                                             <span class="text-accent font-mono tabular-nums text-xs w-10 text-right"
-                                                  x-text="(info.savings_percent || 0).toFixed(1) + '%'"></span>
+                                                  x-text="(row.savings_percent || 0).toFixed(1) + '%'"></span>
                                         </div>
                                     </td>
                                     <td class="px-4 py-3 text-right text-xs text-gray-500 font-mono hidden md:table-cell"
-                                        x-text="info.last_activity_at ? new Date(info.last_activity_at).toLocaleString() : '—'"></td>
+                                        x-text="row.last_activity_at ? new Date(row.last_activity_at).toLocaleString() : '—'"></td>
                                 </tr>
                             </template>
                         </tbody>
@@ -1827,10 +1827,10 @@
                                     <table class="w-full text-sm">
                                         <thead>
                                             <tr class="text-xs text-gray-500 text-left border-b border-border">
-                                                <th class="py-2 px-4 font-medium">Tool</th>
-                                                <th class="py-2 px-4 font-medium text-right">Compressions</th>
-                                                <th class="py-2 px-4 font-medium text-right">Retrievals</th>
-                                                <th class="py-2 px-4 font-medium text-right">Retrieval rate</th>
+                                                <th class="py-2 px-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'name', 'asc')">Tool<span x-text="sortIcon('ccr', 'name')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'compressions')">Compressions<span x-text="sortIcon('ccr', 'compressions')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrievals')">Retrievals<span x-text="sortIcon('ccr', 'retrievals')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrieval_rate')">Retrieval rate<span x-text="sortIcon('ccr', 'retrieval_rate')"></span></th>
                                                 <th class="py-2 px-4 font-medium"></th>
                                             </tr>
                                         </thead>
@@ -2109,11 +2109,11 @@
                                         <table class="w-full text-sm">
                                             <thead>
                                                 <tr class="text-xs text-gray-500 text-left">
-                                                    <th class="py-2 pr-4 font-medium">Model</th>
-                                                    <th class="py-2 pr-4 font-medium text-right">Tokens saved</th>
-                                                    <th class="py-2 pr-4 font-medium text-right">Cost with Headroom</th>
-                                                    <th class="py-2 pr-4 font-medium text-right">Expected cost without Headroom</th>
-                                                    <th class="py-2 font-medium text-right">Saved</th>
+                                                    <th class="py-2 pr-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'model', 'asc')">Model<span x-text="sortIcon('historyModel', 'model')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'tokens_saved')">Tokens saved<span x-text="sortIcon('historyModel', 'tokens_saved')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'input_cost_usd')">Cost with Headroom<span x-text="sortIcon('historyModel', 'input_cost_usd')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'expected_cost_usd')">Expected cost without Headroom<span x-text="sortIcon('historyModel', 'expected_cost_usd')"></span></th>
+                                                    <th class="py-2 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'savings_usd')">Saved<span x-text="sortIcon('historyModel', 'savings_usd')"></span></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -2403,6 +2403,8 @@
                 panes: { systemHealth: true, diagnostics: true },
                 // Client-local visibility prefs (panes/cards, tabs, header clusters)
                 paneHidden: {},
+                // Sortable-table state: { [tableId]: { field, dir } }
+                tableSort: {},
                 tabsHidden: {},
                 showStatusCluster: true,
                 showMcpButton: true,
@@ -2969,6 +2971,38 @@
                     return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: digits }).format(Number(n));
                 },
 
+                // --- Sortable Tables ---
+                sortRows(rows, tableId, defaultField = null, defaultDir = 'desc') {
+                    const sort = this.tableSort[tableId] || (defaultField ? { field: defaultField, dir: defaultDir } : null);
+                    if (!sort) return rows;
+                    return [...rows].sort((a, b) => {
+                        let av = a[sort.field];
+                        let bv = b[sort.field];
+                        if (typeof av === 'string' || typeof bv === 'string') {
+                            av = (av ?? '').toString().toLowerCase();
+                            bv = (bv ?? '').toString().toLowerCase();
+                            const cmp = av.localeCompare(bv);
+                            return sort.dir === 'asc' ? cmp : -cmp;
+                        }
+                        av = Number(av) || 0;
+                        bv = Number(bv) || 0;
+                        return sort.dir === 'asc' ? av - bv : bv - av;
+                    });
+                },
+                setSort(tableId, field, defaultDir = 'desc') {
+                    const current = this.tableSort[tableId];
+                    if (current && current.field === field) {
+                        current.dir = current.dir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        this.tableSort[tableId] = { field, dir: defaultDir };
+                    }
+                },
+                sortIcon(tableId, field) {
+                    const s = this.tableSort[tableId];
+                    if (!s || s.field !== field) return '';
+                    return s.dir === 'asc' ? ' ▲' : ' ▼';
+                },
+
                 formatCurrency(n) {
                     if (n < 0) return '-' + this.formatCurrency(-n);
                     if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
@@ -3160,12 +3194,11 @@
                             row.input_cost_usd += entry.total_input_cost_usd_delta || 0;
                         }
                     }
-                    return Object.values(totals)
-                        .map(row => ({
-                            ...row,
-                            expected_cost_usd: row.input_cost_usd + row.savings_usd,
-                        }))
-                        .sort((a, b) => b.tokens_saved - a.tokens_saved);
+                    const rows = Object.values(totals).map(row => ({
+                        ...row,
+                        expected_cost_usd: row.input_cost_usd + row.savings_usd,
+                    }));
+                    return this.sortRows(rows, 'historyModel', 'tokens_saved', 'desc');
                 },
 
                 get historyActiveModel() {
@@ -3533,14 +3566,23 @@
 
                 get ccrToolRows() {
                     const patterns = this.ccrFeedback.tool_patterns || {};
-                    return Object.entries(patterns)
-                        .map(([name, p]) => ({
-                            name,
-                            compressions: p.compressions || 0,
-                            retrievals: p.retrievals || 0,
-                            retrieval_rate: p.retrieval_rate || 0,
-                        }))
-                        .sort((a, b) => b.retrieval_rate - a.retrieval_rate);
+                    const rows = Object.entries(patterns).map(([name, p]) => ({
+                        name,
+                        compressions: p.compressions || 0,
+                        retrievals: p.retrievals || 0,
+                        retrieval_rate: p.retrieval_rate || 0,
+                    }));
+                    return this.sortRows(rows, 'ccr', 'retrieval_rate', 'desc');
+                },
+
+                get perModelRows() {
+                    const rows = Object.entries(this.stats.cost?.per_model || {}).map(([model, info]) => ({ model, ...info }));
+                    return this.sortRows(rows, 'perModel');
+                },
+
+                get perProjectRows() {
+                    const rows = Object.entries(this.stats.savings?.per_project || {}).map(([project, info]) => ({ project, ...info }));
+                    return this.sortRows(rows, 'perProject');
                 },
 
                 get budgetPercentUsed() {
