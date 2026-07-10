@@ -2550,7 +2550,17 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
     RECENT_REQUEST_LOG_WINDOW = 100
 
-    def _build_recent_request_payload(limit: int = RECENT_REQUEST_LOG_WINDOW) -> dict[str, Any]:
+    RECENT_REQUEST_RENDER_DEFAULT = 10
+    RECENT_REQUEST_RENDER_MAX = 50
+
+    def _build_recent_request_payload(
+        limit: int = RECENT_REQUEST_LOG_WINDOW,
+        render_limit: int = RECENT_REQUEST_RENDER_DEFAULT,
+    ) -> dict[str, Any]:
+        # render_limit controls how many of the already-fetched recent logs are
+        # rendered to the dashboard (the "Show more" pagination). It never
+        # exceeds RECENT_REQUEST_LOG_WINDOW since that's all `limit` fetches.
+        render_limit = max(1, min(render_limit, RECENT_REQUEST_RENDER_MAX, limit))
         recent_request_logs = proxy.logger.get_recent(limit) if proxy.logger else []
         dashboard_recent_requests = [
             {
@@ -2571,9 +2581,9 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             for log in recent_request_logs
             if log.get("input_tokens_original") is not None
             and log.get("input_tokens_optimized") is not None
-        ][-10:]
+        ][-render_limit:]
         return {
-            "request_logs": recent_request_logs[-10:],
+            "request_logs": recent_request_logs[-render_limit:],
             "recent_requests": dashboard_recent_requests,
         }
 
@@ -3124,7 +3134,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             return payload
 
     @app.get("/stats")
-    async def stats(request: Request, cached: bool = False):
+    async def stats(request: Request, cached: bool = False, recent_limit: int = RECENT_REQUEST_RENDER_DEFAULT):
         """Get comprehensive proxy statistics.
 
         This is the main stats endpoint - it aggregates data from all subsystems:
@@ -3139,6 +3149,10 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         Use ``?cached=1`` for the dashboard fast path. That returns a short-TTL
         snapshot to avoid rebuilding the full payload on every UI poll.
 
+        ``recent_limit`` (default 10, capped at 50) controls how many of the
+        recent request logs are rendered in ``recent_requests``/``request_logs``
+        — used by the dashboard's "Show more" pagination.
+
         ``recent_requests`` / ``request_logs`` (per-request ids, providers,
         models, errors) and ``config`` (backend + savings profile) are embedded
         only for loopback callers — the local dashboard. Network callers still
@@ -3149,11 +3163,12 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             payload = dict(await _get_cached_stats_payload())
             if include_sensitive:
                 # Refresh the per-request tail on top of the cached snapshot.
-                payload.update(_build_recent_request_payload())
+                payload.update(_build_recent_request_payload(render_limit=recent_limit))
                 payload["config"] = _dashboard_config_payload()
         else:
             payload = await _build_stats_payload()
             if include_sensitive:
+                payload.update(_build_recent_request_payload(render_limit=recent_limit))
                 payload["config"] = _dashboard_config_payload()
         if not include_sensitive:
             # _build_stats_payload bakes these in; strip for network callers.

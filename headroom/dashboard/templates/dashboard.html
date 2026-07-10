@@ -1626,7 +1626,7 @@
         <div class="bg-surface rounded-lg border border-border overflow-hidden">
             <div class="px-4 py-3 border-b border-border flex justify-between items-center">
                 <span class="text-sm font-medium text-gray-300">Recent Requests</span>
-                <span class="text-xs text-gray-500">Last 10 &mdash; click row to expand</span>
+                <span class="text-xs text-gray-500" x-text="'Last ' + recentRequestLimit + ' — click row to expand'"></span>
             </div>
             <div class="overflow-x-auto">
                 <div>
@@ -1723,6 +1723,14 @@
                         </template>
                     </div>
                 </div>
+                <template x-if="(stats.recent_requests || []).length > 0 && recentRequestLimit < 50">
+                    <div class="px-4 py-3 border-t border-border text-center">
+                        <button type="button" @click="showMoreRecentRequests()"
+                                class="text-xs text-accent hover:text-accent/80 focus:ring-2 focus:ring-accent focus:outline-none rounded px-2 py-1">
+                            Show more
+                        </button>
+                    </div>
+                </template>
             </div>
         </div>
             </div>
@@ -2506,6 +2514,7 @@
                 log_full_messages: false,
                 uptimeSeconds: 0,
                 uptimeText: '',
+                recentRequestLimit: 10,
                 // Restart detection (#uptime heuristic): if uptime drops between
                 // polls the proxy process restarted and in-memory stats reset to 0.
                 restartBannerVisible: false,
@@ -2690,6 +2699,10 @@
                 dismissRestartBanner() {
                     this.restartBannerVisible = false;
                     this.restartBannerDismissed = true;
+                },
+                async showMoreRecentRequests() {
+                    this.recentRequestLimit = Math.min(this.recentRequestLimit + 10, 50);
+                    await this.fetchStats();
                 },
 
                 // --- Embedded MCP dashboards (lazy expand/collapse, iframe with native fallback) ---
@@ -3073,7 +3086,7 @@
                 async fetchStats() {
                     try {
                         const [statsRes, healthRes] = await Promise.all([
-                            fetch('/stats?cached=1'),
+                            fetch('/stats?cached=1&recent_limit=' + this.recentRequestLimit),
                             fetch('/health')
                         ]);
 
