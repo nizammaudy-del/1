@@ -301,11 +301,14 @@
                         </template>
                     </div>
                 </div>
-                <button x-show="log_full_messages" id="feed-toggle"
-                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
+                <button id="feed-toggle"
+                        class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors focus:ring-2 focus:ring-accent focus:outline-none"
                         @click="toggleFeed()"
                         :class="feedOpen ? 'bg-accent text-black' : ''"
-                        data-help-title="Live Feed" data-help="Open the live drawer of message transformations to inspect what the proxy rewrote per request.">
+                        :data-help="log_full_messages
+                            ? 'Open the live drawer of message transformations to inspect what the proxy rewrote per request.'
+                            : 'Open the live drawer of transformation events. Enable HEADROOM_LOG_FULL_MESSAGES in Settings to also see full request/response bodies here.'"
+                        data-help-title="Live Feed">
                     Live Feed
                 </button>
                 <button @click="openSettings()" id="settings-toggle"
@@ -2464,6 +2467,12 @@
                     <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854z"/>
                 </svg>
             </button>
+        </div>
+
+        <!-- Inline notice: full message bodies are gated behind HEADROOM_LOG_FULL_MESSAGES.
+             Lighter transformation events (model, tokens saved, transforms applied) still render below. -->
+        <div x-show="!log_full_messages" class="px-4 py-2 border-b border-border bg-card-alt text-xs text-gray-400">
+            Enable <code class="font-mono text-gray-300">HEADROOM_LOG_FULL_MESSAGES</code> to see full request/response bodies here. Transformation events (model, tokens saved) still show below.
         </div>
 
         <!-- New messages indicator -->
