@@ -14,3 +14,11 @@ def test_incomplete_pr_template_is_reported_without_failing_job() -> None:
     assert "PR template validation found missing fields" in workflow
     assert "Fail when the PR body is incomplete" not in workflow
     assert 'echo "PR template validation failed' not in workflow
+
+
+def test_ready_for_review_label_is_removed_when_changes_are_requested() -> None:
+    workflow = Path(".github/workflows/pr-health.yml").read_text(encoding="utf-8")
+
+    assert "reviewDecision" in workflow
+    assert 'review_decision="$(jq -r \'.reviewDecision // ""\'' in workflow
+    assert '$review_decision" == "CHANGES_REQUESTED"' in workflow
