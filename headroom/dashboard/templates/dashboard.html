@@ -472,32 +472,32 @@
                              data-help-title="Input throughput" data-help="Rate the proxy ingests input tokens. Wall-clock counts total elapsed time; active p50 is the median rate over just the busy processing time.">
                             <span class="text-gray-500">Input (wall / active p50)</span>
                             <span class="font-mono text-accent">
-                                <span x-text="(stats.throughput?.rolling?.input_wall_clock || 0).toFixed(1)"></span> /
-                                <span x-text="(stats.throughput?.rolling?.input_active_p50 || 0).toFixed(1)"></span> tok/s
+                                <span x-text="formatNum(stats.throughput?.rolling?.input_wall_clock || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.input_active_p50 || 0)"></span> tok/s
                             </span>
                         </div>
                         <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5" x-show="(stats.throughput?.rolling?.compression_p50 || 0) > 0"
                              data-help-title="Compression throughput" data-help="How fast the compression stage processes tokens (median / 95th percentile). Higher means compression adds less delay.">
                             <span class="text-gray-500">Compression (p50 / p95)</span>
                             <span class="font-mono text-emerald-400">
-                                <span x-text="(stats.throughput?.rolling?.compression_p50 || 0).toFixed(1)"></span> /
-                                <span x-text="(stats.throughput?.rolling?.compression_p95 || 0).toFixed(1)"></span> tok/s
+                                <span x-text="formatNum(stats.throughput?.rolling?.compression_p50 || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.compression_p95 || 0)"></span> tok/s
                             </span>
                         </div>
                         <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5"
                              data-help-title="Forward throughput" data-help="Rate tokens are forwarded upstream to the provider (median / 95th percentile), after compression.">
                             <span class="text-gray-500">Forward (p50 / p95)</span>
                             <span class="font-mono text-cyan-400">
-                                <span x-text="(stats.throughput?.rolling?.forward_p50 || 0).toFixed(1)"></span> /
-                                <span x-text="(stats.throughput?.rolling?.forward_p95 || 0).toFixed(1)"></span> tok/s
+                                <span x-text="formatNum(stats.throughput?.rolling?.forward_p50 || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.forward_p95 || 0)"></span> tok/s
                             </span>
                         </div>
                         <div class="flex justify-between items-baseline" x-show="(stats.throughput?.rolling?.generation_p50 || 0) > 0"
                              data-help-title="Generation throughput" data-help="Rate the model streams output tokens back (median / 95th percentile). Reflects the provider's generation speed, not the proxy's.">
                             <span class="text-gray-500">Generation (p50 / p95)</span>
                             <span class="font-mono text-yellow-400">
-                                <span x-text="(stats.throughput?.rolling?.generation_p50 || 0).toFixed(1)"></span> /
-                                <span x-text="(stats.throughput?.rolling?.generation_p95 || 0).toFixed(1)"></span> tok/s
+                                <span x-text="formatNum(stats.throughput?.rolling?.generation_p50 || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.generation_p95 || 0)"></span> tok/s
                             </span>
                         </div>
                     </div>
@@ -506,8 +506,8 @@
                      data-help-title="Current 5m (active p50)" data-help="Median input and forward rates over just the last 5 minutes of active processing — a near-real-time snapshot versus the longer rolling window above.">
                     <span>Current 5m (active p50):</span>
                     <span class="font-mono text-gray-400">
-                        In: <span x-text="(stats.throughput?.current?.input_active_p50 || 0).toFixed(0)"></span> ·
-                        Fwd: <span x-text="(stats.throughput?.current?.forward_p50 || 0).toFixed(0)"></span> tok/s
+                        In: <span x-text="formatNum(stats.throughput?.current?.input_active_p50 || 0, 0)"></span> ·
+                        Fwd: <span x-text="formatNum(stats.throughput?.current?.forward_p50 || 0, 0)"></span> tok/s
                     </span>
                 </div>
             </div>
@@ -692,9 +692,9 @@
                                     <div class="text-right shrink-0 text-xs text-gray-400">
                                         <div x-text="'active ' + Math.round(a.seconds_since_last) + 's ago'"></div>
                                         <div class="mt-0.5 text-gray-500">
-                                            <span x-text="formatNumber(a.request_count || 0) + ' req'"></span>
+                                            <span x-text="formatNum(a.request_count || 0) + ' req'"></span>
                                             <span class="mx-1 text-gray-700">/</span>
-                                            <span class="text-accent" x-text="formatNumber(a.tokens_saved || 0) + ' saved'"></span>
+                                            <span class="text-accent" x-text="formatNum(a.tokens_saved || 0) + ' saved'"></span>
                                         </div>
                                     </div>
                                 </div>
@@ -1682,7 +1682,7 @@
                                             <div class="text-gray-200 font-mono" x-text="d.profile"></div>
                                             <div class="text-xs text-gray-500" x-text="d.updated_at || 'unknown time'"></div>
                                         </div>
-                                        <div class="text-xs text-gray-400" x-text="formatNumber(d.artifact_count || 0) + ' artifacts'"></div>
+                                        <div class="text-xs text-gray-400" x-text="formatNum(d.artifact_count || 0) + ' artifacts'"></div>
                                     </div>
                                 </template>
                             </div>
@@ -1707,7 +1707,7 @@
                                         </div>
                                         <div class="text-xs text-gray-500 truncate" x-text="run.project || ''"></div>
                                         <div class="text-xs text-gray-500">
-                                            <span x-text="formatNumber(run.recommendations_count || 0) + ' recommendations'"></span>
+                                            <span x-text="formatNum(run.recommendations_count || 0) + ' recommendations'"></span>
                                             <span class="mx-1 text-gray-700">·</span>
                                             <span x-text="run.timestamp ? new Date(run.timestamp).toLocaleString() : ''"></span>
                                         </div>
@@ -1730,11 +1730,11 @@
                                     <div class="text-sm border-t border-border/40 pt-2 first:border-t-0 first:pt-0">
                                         <div class="text-gray-200" x-text="a.name"></div>
                                         <div class="text-xs text-gray-500">
-                                            <span x-text="'imported ' + formatNumber(a.imported_count || 0)"></span>
+                                            <span x-text="'imported ' + formatNum(a.imported_count || 0)"></span>
                                             <span class="mx-1 text-gray-700">/</span>
-                                            <span x-text="'exported ' + formatNumber(a.exported_count || 0)"></span>
+                                            <span x-text="'exported ' + formatNum(a.exported_count || 0)"></span>
                                             <span class="mx-1 text-gray-700">/</span>
-                                            <span x-text="'skipped ' + formatNumber(a.skipped_dedup || 0)"></span>
+                                            <span x-text="'skipped ' + formatNum(a.skipped_dedup || 0)"></span>
                                         </div>
                                     </div>
                                 </template>
@@ -1830,8 +1830,8 @@
                                                 <tr class="border-t border-border cursor-pointer hover-bg-surface"
                                                     @click="toggleCcrTool(row.name)">
                                                     <td class="py-2 px-4 font-mono text-xs text-gray-300" x-text="row.name"></td>
-                                                    <td class="py-2 px-4 text-right tabular-nums" x-text="formatNumber(row.compressions)"></td>
-                                                    <td class="py-2 px-4 text-right tabular-nums" x-text="formatNumber(row.retrievals)"></td>
+                                                    <td class="py-2 px-4 text-right tabular-nums" x-text="formatNum(row.compressions)"></td>
+                                                    <td class="py-2 px-4 text-right tabular-nums" x-text="formatNum(row.retrievals)"></td>
                                                     <td class="py-2 px-4 text-right tabular-nums"
                                                         :class="row.retrieval_rate > 0.2 ? 'text-amber-400' : 'text-gray-300'"
                                                         x-text="(row.retrieval_rate * 100).toFixed(1) + '%'"></td>
@@ -2966,6 +2966,11 @@
                     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
                     if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
                     return n.toString();
+                },
+
+                formatNum(n, digits = 1) {
+                    if (n === null || n === undefined || isNaN(n)) return '—';
+                    return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: digits }).format(Number(n));
                 },
 
                 formatCurrency(n) {
