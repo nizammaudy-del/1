@@ -218,16 +218,22 @@ def _estimate_cache_savings_usd(model: str, cache_read_tokens: int) -> float:
     """Estimate cache-read savings in USD — the discount delta vs list price.
 
     Cache reads bill at the provider's discounted rate, so the saving per token
-    is ``input_cost_per_token - cache_read_input_token_cost``. Unknown models or
-    an unavailable litellm price as 0.0 (fail open); tokens still accumulate.
+    is ``input_cost_per_token - cache_read_input_token_cost``. Unknown models
+    price as 0.0 (fail open); tokens still accumulate. An unavailable litellm
+    falls back to ``DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN``, matching
+    ``_estimate_input_cost_usd``/``_estimate_compression_savings_usd`` — otherwise
+    cache_savings_usd silently reads as $0 forever on any install without
+    litellm (e.g. Python 3.14, where headroom's own dependency spec excludes it).
 
     Deliberately diverges from ``proxy/cost.py``'s session-scoped provider
     multipliers (``_CACHE_ECONOMICS``): this lifetime figure follows the
     per-model litellm pricing the rest of this module already uses.
     """
     litellm = _get_litellm_module()
-    if cache_read_tokens <= 0 or litellm is None:
+    if cache_read_tokens <= 0:
         return 0.0
+    if litellm is None:
+        return float(cache_read_tokens) * float(DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN)
 
     try:
         resolved = _resolve_litellm_model(model)
