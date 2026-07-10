@@ -106,17 +106,20 @@
 
         [x-cloak] { display: none !important; }
 
-        /* Help sidebar (Logic Pro style): RIGHT-side overlay drawer docked BELOW the
-           header. Overlay (not push) so opening it never dislocates/cramps the nav bar. */
+        /* Help sidebar (Logic Pro style): RIGHT-side drawer docked BELOW the header.
+           When open it pushes the MAIN content left (not the nav) so it never overlaps
+           the site — the drawer sits in the reclaimed gap, not floating on top. */
         #help-rail {
             position: fixed; top: var(--header-h, 60px); right: 0; bottom: 0; width: 260px;
             background: var(--color-surface);
             border-left: 1px solid var(--color-border);
-            box-shadow: 0 0 40px rgba(0,0,0,0.35);
             z-index: 50; display: flex; flex-direction: column;
         }
+        main { transition: margin-right 0.2s ease; }
+        body.help-open main { margin-right: 260px; }
         @media (max-width: 1024px) {
             #help-rail { width: 220px; }
+            body.help-open main { margin-right: 220px; }
         }
 
         /* Collapsible pane chevron */
@@ -642,6 +645,15 @@
                 <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Provider Windows &amp; Cache</span>
             </button>
             <div x-show="!panes.windows">
+        <!-- Empty state: this pane's cards are all data-gated, so show guidance when none are present -->
+        <template x-if="!(stats.subscription_window && stats.subscription_window.latest) && !stats.codex_rate_limits && !stats.copilot_quota && !((stats.prefix_cache?.totals?.requests || 0) > 0)">
+            <div class="bg-surface rounded-lg p-6 border border-border mb-6 text-center"
+                 data-help-title="Provider Windows & Cache"
+                 data-help="Subscription/quota windows (Anthropic 5h/7d, Codex rate limits, Copilot quota) and prefix-cache efficiency appear here once that provider's traffic flows through the proxy.">
+                <p class="text-sm text-gray-500">No provider windows or prefix-cache activity yet.</p>
+                <p class="text-xs text-gray-600 mt-1">Anthropic 5h/7d windows, Codex rate limits, Copilot quota, and prefix-cache stats appear here once you route that provider's traffic through the proxy.</p>
+            </div>
+        </template>
         <!-- Anthropic Subscription Window -->
         <template x-if="stats.subscription_window && stats.subscription_window.latest">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
