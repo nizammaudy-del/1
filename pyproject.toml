@@ -279,12 +279,11 @@ dev = [
 # `benchmark` is deliberately EXCLUDED from `[all]`. It installs the
 # EleutherAI lm-evaluation-harness (lm-eval), which headroom invokes as an
 # external subprocess (`python -m lm_eval`) — it is never imported as a
-# library, so it is not a true runtime dependency. lm-eval pulls two
-# transitive deps with unpatchable High CVEs (sqlitedict CVE-2024-35515,
-# nltk CVE-2026-54293 via rouge-score), neither of which has an upstream
-# fix. Keeping `benchmark` out of `[all]` means `pip install
-# headroom-ai[all]` is CVE-free; researchers who need the accuracy harness
-# opt in explicitly with `pip install headroom-ai[benchmark]`.
+# library, so it is not a true runtime dependency. lm-eval pulls sqlitedict
+# CVE-2024-35515, which has no upstream fix. Keeping `benchmark` out of
+# `[all]` means `pip install headroom-ai[all]` is CVE-free; researchers who
+# need the accuracy harness opt in explicitly with `pip install
+# headroom-ai[benchmark]`.
 all = [
     "headroom-ai[proxy,code,ml,memory,relevance,image,reports,otel,evals,voice,html,mcp,spreadsheet]",
 ]
@@ -325,6 +324,8 @@ constraint-dependencies = [
     "langsmith>=0.9.0",
     # CVE-2026-49825 (High, XSS) — transitive via lxml[html-clean]; fix at 0.4.5
     "lxml-html-clean>=0.4.5",
+    # CVE-2026-54293 (High) — transitive via rouge-score/lm-eval; fix at 3.10.0
+    "nltk>=3.10.0",
 ]
 
 # Pin the project's package index to public PyPI. Without this, `uv lock`
