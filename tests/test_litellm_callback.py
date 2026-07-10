@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from tests._dotenv import importorskip_no_env_leak
 
 importorskip_no_env_leak("litellm")
