@@ -513,6 +513,37 @@
             </div>
         </div>
 
+        <!-- Budget -->
+        <div class="bg-surface rounded-lg p-4 border border-border mb-6" data-help-title="Budget"
+             data-help="Spend against the configured budget for the current period. Set a budget limit in Settings to enable this.">
+            <template x-if="stats.cost?.budget_limit_usd">
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="text-sm font-medium text-gray-300">
+                            Budget <span class="text-xs text-gray-500 font-mono" x-text="'(' + (stats.cost?.budget_period || 'period') + ')'"></span>
+                        </div>
+                        <div class="text-xs text-gray-400">
+                            <span class="font-mono" x-text="'$' + formatCurrency(stats.cost?.period_spend_usd || 0)"></span>
+                            <span class="text-gray-600"> / </span>
+                            <span class="font-mono" x-text="'$' + formatCurrency(stats.cost?.budget_limit_usd || 0)"></span>
+                            <span class="text-gray-500 ml-1" x-text="budgetPercentUsed.toFixed(0) + '%'"></span>
+                        </div>
+                    </div>
+                    <div class="h-2.5 w-full rounded-full bg-border overflow-hidden">
+                        <div class="h-full transition-all duration-500"
+                             :class="budgetPercentUsed > 95 ? 'bg-red-500' : (budgetPercentUsed > 80 ? 'bg-amber-500' : 'bg-emerald-500')"
+                             :style="'width:' + Math.min(100, budgetPercentUsed) + '%'"></div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500">
+                        <span x-text="'$' + formatCurrency(stats.cost?.budget_remaining_usd || 0) + ' remaining this ' + (stats.cost?.budget_period || 'period')"></span>
+                    </div>
+                </div>
+            </template>
+            <template x-if="!stats.cost?.budget_limit_usd">
+                <div class="text-xs text-gray-500">No budget set — configure in Settings.</div>
+            </template>
+        </div>
+
         <!-- Agent Usage -->
         <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
             <div class="px-4 py-3 border-b border-border flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -3170,6 +3201,13 @@
                         return 'Of compressible tokens attempted';
                     }
                     return 'Of whole pre-compression request (attempted-tokens metric unavailable)';
+                },
+
+                get budgetPercentUsed() {
+                    const limit = this.stats.cost?.budget_limit_usd || 0;
+                    if (!limit) return 0;
+                    const spend = this.stats.cost?.period_spend_usd || 0;
+                    return (spend / limit) * 100;
                 },
 
                 // --- Expandable Rows ---
