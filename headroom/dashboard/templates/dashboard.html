@@ -174,7 +174,7 @@
                   data-help-title="Version" data-help="The running Headroom proxy version, reported by the /health endpoint."></span>
             <!-- Status cluster: health · updated · uptime (top-left) -->
             <template x-if="showStatusCluster">
-                <div class="flex items-center gap-2 text-xs text-gray-500">
+                <div class="flex items-center gap-2 text-xs text-gray-500" aria-live="polite">
                     <span class="text-gray-700">|</span>
                     <span class="relative" x-data="{ hcOpen: false }" @mouseenter="hcOpen = true" @mouseleave="hcOpen = false">
                         <span class="flex items-center gap-1.5"
@@ -1615,7 +1615,11 @@
                     <div class="divide-y divide-border">
                         <template x-for="req in (stats.recent_requests || [])" :key="req.request_id">
                             <div>
-                                <div class="cursor-pointer" @click="toggleExpanded(req.request_id)">
+                                <div class="cursor-pointer focus:ring-2 focus:ring-accent focus:outline-none" role="button" tabindex="0"
+                                     :aria-expanded="!!expandedRows[req.request_id]"
+                                     @click="toggleExpanded(req.request_id)"
+                                     @keydown.enter="toggleExpanded(req.request_id)"
+                                     @keydown.space.prevent="toggleExpanded(req.request_id)">
                                     <div class="grid hover:bg-border/30 transition-colors"
                                          style="grid-template-columns: 2rem 12fr 22fr 15fr 12fr 10fr 14fr">
                                         <div class="px-2 py-3 text-gray-500 flex items-center justify-center">
@@ -1860,8 +1864,12 @@
                                         </thead>
                                         <template x-for="row in ccrToolRows" :key="row.name">
                                             <tbody>
-                                                <tr class="border-t border-border cursor-pointer hover-bg-surface"
-                                                    @click="toggleCcrTool(row.name)">
+                                                <tr class="border-t border-border cursor-pointer hover-bg-surface focus:ring-2 focus:ring-accent focus:outline-none"
+                                                    role="button" tabindex="0"
+                                                    :aria-expanded="ccrExpandedTool === row.name"
+                                                    @click="toggleCcrTool(row.name)"
+                                                    @keydown.enter="toggleCcrTool(row.name)"
+                                                    @keydown.space.prevent="toggleCcrTool(row.name)">
                                                     <td class="py-2 px-4 font-mono text-xs text-gray-300" x-text="row.name"></td>
                                                     <td class="py-2 px-4 text-right tabular-nums" x-text="formatNum(row.compressions)"></td>
                                                     <td class="py-2 px-4 text-right tabular-nums" x-text="formatNum(row.retrievals)"></td>
@@ -2206,9 +2214,13 @@
                                             </thead>
                                             <tbody>
                                                 <template x-for="row in historyModelBreakdown" :key="row.model">
-                                                    <tr class="border-t border-border text-gray-300 cursor-pointer transition-colors"
+                                                    <tr class="border-t border-border text-gray-300 cursor-pointer transition-colors focus:ring-2 focus:ring-accent focus:outline-none"
                                                         :class="historySelectedModel === row.model ? 'bg-card-alt' : 'hover-bg-surface'"
+                                                        role="button" tabindex="0"
+                                                        :aria-expanded="historySelectedModel === row.model"
                                                         @click="toggleHistoryModel(row.model)"
+                                                        @keydown.enter="toggleHistoryModel(row.model)"
+                                                        @keydown.space.prevent="toggleHistoryModel(row.model)"
                                                         :title="historySelectedModel === row.model
                                                             ? 'Show all models'
                                                             : 'Show only this model in the chart'">
