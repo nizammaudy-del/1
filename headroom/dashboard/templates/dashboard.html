@@ -1195,12 +1195,12 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-                                <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                                <div class="bg-surface rounded-lg p-4 border border-border">
                                     <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">1h Cache Writes</div>
                                     <div data-testid="ttl-bucket-1h-value" class="mt-2 text-3xl font-light text-cyan-50" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['1h']?.tokens || 0)"></div>
                                     <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['1h']?.requests || 0) + ' requests observed'"></div>
                                 </div>
-                                <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                                <div class="bg-surface rounded-lg p-4 border border-border">
                                     <div class="text-[11px] uppercase tracking-[0.18em] text-violet-300/75">5m Cache Writes</div>
                                     <div data-testid="ttl-bucket-5m-value" class="mt-2 text-3xl font-light text-violet-50" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['5m']?.tokens || 0)"></div>
                                     <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['5m']?.requests || 0) + ' requests observed'"></div>
@@ -1220,22 +1220,22 @@
                             <div data-testid="cvc-net-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]" :class="compressionVsCacheNet >= 0 ? 'border-emerald-400/20 text-emerald-300/90' : 'border-red-400/25 text-red-300/90'" x-text="compressionVsCacheNet >= 0 ? 'Net positive' : 'Net negative'"></div>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-emerald-300/75">Saved by Compression</div>
                                 <div data-testid="cvc-saved-value" class="mt-2 text-3xl font-light text-emerald-50" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.tokens_saved_by_compression || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500">tokens removed before send</div>
                             </div>
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-red-300/75">Lost to Cache Busts</div>
                                 <div data-testid="cvc-bust-value" class="mt-2 text-3xl font-light text-red-50" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.tokens_lost_to_cache_bust || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.cache_bust_count || 0) + ' busts observed'"></div>
                             </div>
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Net</div>
                                 <div data-testid="cvc-net-value" class="mt-2 text-3xl font-light" :class="compressionVsCacheNet >= 0 ? 'text-emerald-400' : 'text-red-400'" x-text="(compressionVsCacheNet >= 0 ? '+' : '-') + formatNumber(Math.abs(compressionVsCacheNet))"></div>
                                 <div class="mt-1 text-xs text-gray-500">saved minus bust losses</div>
                             </div>
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">Prefix Freeze Net</div>
                                 <div data-testid="freeze-net-value" class="mt-2 text-3xl font-light" :class="prefixFreezeNet >= 0 ? 'text-cyan-50' : 'text-red-400'" x-text="(prefixFreezeNet >= 0 ? '+' : '-') + formatNumber(Math.abs(prefixFreezeNet))"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.prefix_freeze?.busts_avoided || 0) + ' busts avoided, ' + formatNumber(stats.prefix_cache?.prefix_freeze?.compression_foregone_tokens || 0) + ' foregone'"></div>
@@ -1256,22 +1256,22 @@
                                  x-text="(missAttribution.ttl_expiry_pct || 0) >= (missAttribution.prefix_change_pct || 0) ? 'Mostly TTL lapse' : 'Mostly prefix change'"></div>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-violet-300/75">TTL Expiry</div>
                                 <div data-testid="miss-attr-ttl-value" class="mt-2 text-3xl font-light text-violet-50" x-text="formatNumber(missAttribution.ttl_expiry || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="(missAttribution.ttl_expiry_pct || 0).toFixed(1) + '% of attributed — idle past cache TTL'"></div>
                             </div>
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-amber-300/75">Prefix Change</div>
                                 <div data-testid="miss-attr-prefix-value" class="mt-2 text-3xl font-light text-amber-50" x-text="formatNumber(missAttribution.prefix_change || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="(missAttribution.prefix_change_pct || 0).toFixed(1) + '% of attributed — cached prefix shifted'"></div>
                             </div>
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Unknown</div>
                                 <div data-testid="miss-attr-unknown-value" class="mt-2 text-3xl font-light text-gray-300" x-text="formatNumber(missAttribution.unknown || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500">stable prefix, within TTL</div>
                             </div>
-                            <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Total Misses</div>
                                 <div data-testid="miss-attr-total-value" class="mt-2 text-3xl font-light text-gray-100" x-text="formatNumber(missAttribution.total || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500">expected a cache hit, got none</div>
