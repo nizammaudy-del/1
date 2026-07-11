@@ -925,7 +925,7 @@ class CostTracker:
             "budget_limit_usd": self.budget_limit_usd,
             "budget_period": self.budget_period,
             "period_spend_usd": round(period_spend, 4),
-            "budget_remaining_usd": (self.budget_limit_usd - period_spend)
+            "budget_remaining_usd": round(max(0.0, self.budget_limit_usd - period_spend), 4)
             if self.budget_limit_usd is not None
             else None,
         }

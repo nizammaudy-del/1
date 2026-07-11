@@ -169,3 +169,14 @@ def test_pricing_override_allows_zero_for_other_fields(tmp_path):
     )
     result = user_config.pricing_override_per_token("some-model")
     assert result["cache_read"] == 0.0
+
+
+def test_budget_remaining_usd_clamps_at_zero_when_over_budget(tmp_path):
+    # check_budget() clamps remaining spend to >= 0; stats()'s
+    # budget_remaining_usd must match, not go negative.
+    model = "some-custom-model"
+    user_config.update({"pricing": {model: {"input_per_1m": 100.0}}})
+    tracker = CostTracker(budget_limit_usd=1.0)
+    # 100.0 $/1M tokens * 1M tokens = $100 spent, way over the $1 budget.
+    tracker.record_tokens(model, tokens_saved=0, tokens_sent=1_000_000, uncached_tokens=1_000_000)
+    assert tracker.stats()["budget_remaining_usd"] == 0.0
