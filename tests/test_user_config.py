@@ -1,0 +1,129 @@
+"""Tests for headroom.proxy.user_config — the dashboard Settings menu's
+persistent pricing/settings override store.
+
+Covers the corruption/type-safety and info-leak fixes from the Copilot review
+on the initial dashboard UX PR:
+- a corrupted/hand-edited config file with non-dict `pricing`/`settings`
+  must not crash callers, it should fall back to empty sections.
+- bool values (JSON `true`/`false`) must never be treated as numeric pricing
+  overrides, since `bool` is a subclass of `int` in Python.
+- `config_response()` (served by the unauthenticated `GET /config` route)
+  must never include the local filesystem config path.
+"""
+
+import json
+
+import pytest
+
+from headroom.proxy import user_config
+from headroom.proxy.cost import CostTracker
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config(tmp_path, monkeypatch):
+    """Point the config store at a scratch dir and reset its in-memory cache."""
+    monkeypatch.setenv("HEADROOM_CONFIG_DIR", str(tmp_path))
+    user_config._cache = None
+    yield
+    user_config._cache = None
+
+
+def _write_raw_config(tmp_path, payload: dict) -> None:
+    (tmp_path / user_config.CONFIG_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_load_falls_back_to_empty_when_pricing_is_not_a_dict(tmp_path):
+    _write_raw_config(tmp_path, {"pricing": [], "settings": {}})
+    data = user_config.load()
+    assert data["pricing"] == {}
+
+
+def test_load_falls_back_to_empty_when_pricing_is_a_non_empty_non_dict(tmp_path):
+    # A truthy, non-dict value (e.g. a hand-edited list) must not pass through
+    # unfiltered — `loaded.get("pricing") or {}` used to let this slip by.
+    _write_raw_config(tmp_path, {"pricing": ["oops"], "settings": {}})
+    data = user_config.load()
+    assert data["pricing"] == {}
+
+
+def test_load_falls_back_to_empty_when_settings_is_not_a_dict(tmp_path):
+    _write_raw_config(tmp_path, {"pricing": {}, "settings": "not-a-dict"})
+    data = user_config.load()
+    assert data["settings"] == {}
+
+
+def test_pricing_override_rejects_bool_input_per_1m(tmp_path):
+    _write_raw_config(
+        tmp_path,
+        {"pricing": {"some-model": {"input_per_1m": True}}, "settings": {}},
+    )
+    assert user_config.pricing_override_per_token("some-model") is None
+
+
+def test_pricing_override_falls_back_to_input_rate_when_output_is_bool(tmp_path):
+    _write_raw_config(
+        tmp_path,
+        {
+            "pricing": {
+                "some-model": {"input_per_1m": 5.0, "output_per_1m": False}
+            },
+            "settings": {},
+        },
+    )
+    result = user_config.pricing_override_per_token("some-model")
+    assert result is not None
+    # output_per_1m=False must be ignored (not treated as 0.0), falling back
+    # to the input rate like an unset field would.
+    assert result["output"] == result["input"]
+
+
+def test_pricing_override_accepts_valid_numeric_entry(tmp_path):
+    _write_raw_config(
+        tmp_path,
+        {
+            "pricing": {
+                "some-model": {
+                    "input_per_1m": 3.0,
+                    "output_per_1m": 15.0,
+                    "cache_read_per_1m": 0.3,
+                    "cache_write_per_1m": 3.75,
+                }
+            },
+            "settings": {},
+        },
+    )
+    result = user_config.pricing_override_per_token("some-model")
+    assert result["input"] == pytest.approx(3.0 / 1_000_000)
+    assert result["output"] == pytest.approx(15.0 / 1_000_000)
+    assert result["cache_read"] == pytest.approx(0.3 / 1_000_000)
+    assert result["cache_write"] == pytest.approx(3.75 / 1_000_000)
+
+
+def test_cost_tracker_estimate_cost_uses_pricing_override(tmp_path):
+    # Integration check: a Settings-menu pricing override must actually change
+    # what CostTracker computes, not just what user_config returns in isolation.
+    # Go through the real write API (same path POST /config uses) so the
+    # in-memory cache is refreshed, matching how a running proxy behaves.
+    model = "some-custom-model"
+    tracker = CostTracker()
+    baseline = tracker.estimate_cost(model, input_tokens=1_000_000, output_tokens=0)
+    assert baseline is None  # unknown to LiteLLM and no override yet
+
+    user_config.update({"pricing": {model: {"input_per_1m": 42.0}}})
+
+    overridden = tracker.estimate_cost(model, input_tokens=1_000_000, output_tokens=0)
+    assert overridden == pytest.approx(42.0)
+
+
+def test_config_response_never_includes_local_filesystem_path(tmp_path):
+    # GET /config is intentionally unauthenticated — it must never leak the
+    # host's config file path to a non-loopback caller.
+    payload = user_config.config_response()
+    assert "config_path" not in payload
+    assert set(payload.keys()) == {
+        "pricing",
+        "settings",
+        "setting_defaults",
+        "pricing_fields",
+        "restart_required_settings",
+    }

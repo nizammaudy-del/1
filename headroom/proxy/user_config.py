@@ -81,8 +81,10 @@ def _load_locked() -> dict[str, Any]:
         if path.exists():
             loaded = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
-                data["pricing"] = loaded.get("pricing") or {}
-                data["settings"] = loaded.get("settings") or {}
+                pricing = loaded.get("pricing")
+                settings = loaded.get("settings")
+                data["pricing"] = pricing if isinstance(pricing, dict) else {}
+                data["settings"] = settings if isinstance(settings, dict) else {}
     except (OSError, ValueError) as exc:
         logger.warning("Failed to read %s: %s — using empty config", path, exc)
         data = _empty()
@@ -121,27 +123,26 @@ def pricing_override_per_token(model: str) -> dict[str, float] | None:
     mirroring LiteLLM's own fallback. Returns None (defer to LiteLLM) unless a
     usable ``input_per_1m`` is configured for the model.
     """
+    def _is_number(value: object) -> bool:
+        # bool is a subclass of int in Python; reject it so a hand-edited
+        # `true`/`false` in the JSON can't silently become a numeric rate.
+        return isinstance(value, int | float) and not isinstance(value, bool)
+
     with _lock:
         overrides = _load_locked()["pricing"]
         entry = overrides.get(model)
     if not isinstance(entry, dict):
         return None
     input_per_1m = entry.get("input_per_1m")
-    if not isinstance(input_per_1m, int | float) or input_per_1m <= 0:
+    if not _is_number(input_per_1m) or input_per_1m <= 0:
         return None
     input_pt = float(input_per_1m) / 1_000_000
     output_per_1m = entry.get("output_per_1m")
-    output_pt = (
-        float(output_per_1m) / 1_000_000 if isinstance(output_per_1m, int | float) else input_pt
-    )
+    output_pt = float(output_per_1m) / 1_000_000 if _is_number(output_per_1m) else input_pt
     cache_read = entry.get("cache_read_per_1m")
-    cache_read_pt = (
-        float(cache_read) / 1_000_000 if isinstance(cache_read, int | float) else input_pt
-    )
+    cache_read_pt = float(cache_read) / 1_000_000 if _is_number(cache_read) else input_pt
     cache_write = entry.get("cache_write_per_1m")
-    cache_write_pt = (
-        float(cache_write) / 1_000_000 if isinstance(cache_write, int | float) else input_pt
-    )
+    cache_write_pt = float(cache_write) / 1_000_000 if _is_number(cache_write) else input_pt
     return {
         "input": input_pt,
         "output": output_pt,
@@ -250,12 +251,16 @@ def update(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def config_response() -> dict[str, Any]:
-    """Full payload for ``GET /config`` — effective values plus metadata."""
+    """Full payload for ``GET /config`` — effective values plus metadata.
+
+    This route is intentionally unguarded (reachable without the loopback
+    check), so it must never include local filesystem details like the
+    config file's path.
+    """
     return {
         "pricing": get_pricing_overrides(),
         "settings": get_settings(),
         "setting_defaults": dict(SETTING_DEFAULTS),
         "pricing_fields": sorted(PRICING_FIELDS),
         "restart_required_settings": sorted(RESTART_REQUIRED_SETTINGS),
-        "config_path": str(_config_path()),
     }

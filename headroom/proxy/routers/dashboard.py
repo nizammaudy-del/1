@@ -764,19 +764,19 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
 
         return JSONResponse(content={"dashboards": await asyncio.to_thread(_collect)})
 
+    # ponytail: the proxy does not track a dedicated per-MCP-server counter, so
+    # this aggregates mcp__<server>__<tool> tool_use blocks out of the recent
+    # request message logs instead of a real-time usage table.
     @router.get("/mcp/usage", dependencies=[Depends(_require_loopback)])
     async def mcp_usage(limit: int = 100):
         """Per-MCP tool-call usage aggregated from recently logged requests.
 
-        ponytail: the proxy does not track a dedicated per-MCP-server counter.
-        This aggregates ``mcp__<server>__<tool>`` tool_use blocks out of the
-        recent request message logs, so it only reflects requests captured while
-        ``log_full_messages`` is enabled and bounded by ``limit``. Token/cost are
-        not attributable to a single tool within a multi-tool request, so only
-        call counts are reported here — deliberately not fabricated.
+        Reflects only requests captured while ``log_full_messages`` is enabled,
+        bounded by ``limit``. Token/cost are not attributable to a single tool
+        within a multi-tool request, so only call counts are reported here —
+        deliberately not fabricated.
         """
-        if limit > 100:
-            limit = 100
+        limit = max(1, min(limit, 100))
 
         log_full_messages = bool(proxy.config.log_full_messages) if proxy else False
         by_server: dict[str, dict[str, Any]] = {}
@@ -796,7 +796,8 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                             continue
                         parts = name.split("__")
                         server = parts[1] if len(parts) > 1 else "unknown"
-                        tool = parts[2] if len(parts) > 2 else name
+                        tool = "__".join(parts[2:]) if len(parts) > 2 else name
+                        tool = tool or name
                         entry = by_server.setdefault(
                             server, {"server": server, "calls": 0, "tools": {}}
                         )
