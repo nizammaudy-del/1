@@ -472,6 +472,16 @@ def parse_tool_call(
         function_call = tool_call.get("functionCall", {})
         name = function_call.get("name")
         input_data = function_call.get("args", {})
+    elif provider == "openai_responses":
+        # Responses API: flat `function_call` item — name and arguments
+        # live directly on it, not nested under "function" like chat
+        # completions tool_calls.
+        name = tool_call.get("name")
+        args_str = tool_call.get("arguments", "{}")
+        try:
+            input_data = json.loads(args_str)
+        except json.JSONDecodeError:
+            input_data = {}
     else:
         # Generic fallback
         name = tool_call.get("name")
