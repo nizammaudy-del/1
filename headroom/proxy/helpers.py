@@ -38,6 +38,15 @@ from headroom.proxy.body_forwarding import (
     prepare_outbound_body_bytes as prepare_outbound_body_bytes,  # noqa: F401 - compatibility export
 )
 from headroom.proxy.body_forwarding import serialize_body_canonical
+from headroom.proxy.tool_injection_config import (
+    ToolInjectionStickyMode,
+)
+from headroom.proxy.tool_injection_config import (
+    get_tool_injection_sticky_mode as _get_tool_injection_sticky_mode,
+)
+from headroom.proxy.tool_injection_config import (
+    get_tool_tracker_max_sessions as _get_tool_tracker_max_sessions,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -1923,13 +1932,6 @@ def log_beta_header_merge(
 # silent fallback. It exists for diagnostic shadow tracing / emergency
 # rollback only.
 
-_TOOL_INJECTION_STICKY_ENV = "HEADROOM_TOOL_INJECTION_STICKY"
-ToolInjectionStickyMode = Literal["enabled", "disabled"]
-_TOOL_INJECTION_STICKY_DEFAULT: ToolInjectionStickyMode = "enabled"
-
-_TOOL_TRACKER_MAX_SESSIONS_ENV = "HEADROOM_TOOL_TRACKER_MAX_SESSIONS"
-_TOOL_TRACKER_MAX_SESSIONS_DEFAULT = 1000
-
 
 def get_tool_injection_sticky_mode() -> ToolInjectionStickyMode:
     """Return the active memory-tool stickiness mode.
@@ -1938,30 +1940,12 @@ def get_tool_injection_sticky_mode() -> ToolInjectionStickyMode:
     restart. Unknown values raise loudly per the no-silent-fallback
     build constraint.
     """
-    raw = os.environ.get(_TOOL_INJECTION_STICKY_ENV, "").strip().lower()
-    if not raw:
-        return _TOOL_INJECTION_STICKY_DEFAULT
-    if raw in ("enabled", "disabled"):
-        return cast(ToolInjectionStickyMode, raw)
-    raise ValueError(
-        f"Invalid {_TOOL_INJECTION_STICKY_ENV}={raw!r}; expected 'enabled' or 'disabled'"
-    )
+    return _get_tool_injection_sticky_mode()
 
 
 def get_tool_tracker_max_sessions() -> int:
     """Return the LRU bound for `SessionToolTracker` (sessions cap)."""
-    raw = os.environ.get(_TOOL_TRACKER_MAX_SESSIONS_ENV, "").strip()
-    if not raw:
-        return _TOOL_TRACKER_MAX_SESSIONS_DEFAULT
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(
-            f"Invalid {_TOOL_TRACKER_MAX_SESSIONS_ENV}={raw!r}; expected positive int"
-        ) from exc
-    if value <= 0:
-        raise ValueError(f"Invalid {_TOOL_TRACKER_MAX_SESSIONS_ENV}={raw!r}; expected positive int")
-    return value
+    return _get_tool_tracker_max_sessions()
 
 
 def serialize_tool_definition_canonical(tool_definition: dict[str, Any]) -> bytes:
