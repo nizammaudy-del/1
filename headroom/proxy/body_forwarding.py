@@ -13,14 +13,16 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
-_PYTHON_FORWARDER_MODE_ENV = "HEADROOM_PROXY_PYTHON_FORWARDER_MODE"
+from headroom.proxy import python_forwarder_mode_policy
 
-PythonForwarderMode = Literal["byte_faithful", "legacy_json_kwarg"]
+_PYTHON_FORWARDER_MODE_ENV = python_forwarder_mode_policy.PYTHON_FORWARDER_MODE_ENV
+
+PythonForwarderMode = python_forwarder_mode_policy.PythonForwarderMode
 OutboundBodySource = Literal["passthrough", "canonical", "legacy"]
 
-_PYTHON_FORWARDER_MODE_DEFAULT: PythonForwarderMode = "byte_faithful"
+_PYTHON_FORWARDER_MODE_DEFAULT = python_forwarder_mode_policy.PYTHON_FORWARDER_MODE_DEFAULT
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,14 +40,8 @@ def get_python_forwarder_mode() -> PythonForwarderMode:
     fallback build constraint. The ``legacy_json_kwarg`` value is an
     explicit operator opt-in for emergency rollback, not a fallback.
     """
-    raw = os.environ.get(_PYTHON_FORWARDER_MODE_ENV, "").strip().lower()
-    if not raw:
-        return _PYTHON_FORWARDER_MODE_DEFAULT
-    if raw in ("byte_faithful", "legacy_json_kwarg"):
-        return cast(PythonForwarderMode, raw)
-    raise ValueError(
-        f"Invalid {_PYTHON_FORWARDER_MODE_ENV}={raw!r}; "
-        "expected 'byte_faithful' or 'legacy_json_kwarg'"
+    return python_forwarder_mode_policy.resolve_python_forwarder_mode(
+        os.environ.get(_PYTHON_FORWARDER_MODE_ENV)
     )
 
 
