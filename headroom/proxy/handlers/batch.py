@@ -393,7 +393,13 @@ class BatchHandlerMixin:
         from headroom.proxy.helpers import log_outbound_request
 
         if body is None:
-            body_content = await request.body()
+            from starlette.requests import ClientDisconnect
+
+            try:
+                body_content = await request.body()
+            except ClientDisconnect:
+                logger.debug("Client disconnected during body read for google batch passthrough")
+                return Response(status_code=204)
             outbound_source = "passthrough"
             body_mutated = False
         else:
@@ -502,7 +508,13 @@ class BatchHandlerMixin:
             else:
                 url = f"{url}?key={api_key}"
 
-        body = await request.body()
+        from starlette.requests import ClientDisconnect
+
+        try:
+            body = await request.body()
+        except ClientDisconnect:
+            logger.debug("Client disconnected during body read for gemini passthrough")
+            return Response(status_code=204)
 
         response = await self.http_client.request(  # type: ignore[union-attr]
             method=request.method,
