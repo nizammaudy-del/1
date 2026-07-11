@@ -11,7 +11,6 @@ from typing import Any
 
 import click
 
-from headroom._subprocess import run
 from headroom.ccr.retrieve_policy import (
     render_retrieve_cli_guidance,
     render_retrieve_cli_workflow_steps,

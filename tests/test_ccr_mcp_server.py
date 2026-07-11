@@ -271,7 +271,10 @@ def test_mcp_retrieve_missing_local_hash_can_still_hit_proxy(
     monkeypatch.setattr(mcp_server, "HTTPX_AVAILABLE", True)
     server = mcp_server.HeadroomMCPServer(check_proxy=True)
 
-    async def retrieve_via_proxy(hash_key: str) -> dict[str, object]:
+    async def retrieve_via_proxy(
+        hash_key: str,
+        query: str | None = None,
+    ) -> dict[str, object]:
         return {"hash": hash_key, "original_content": "from proxy"}
 
     server._retrieve_via_proxy = retrieve_via_proxy
@@ -302,7 +305,10 @@ def test_mcp_retrieve_expired_local_hash_can_still_hit_proxy(
 
     server = mcp_server.HeadroomMCPServer(check_proxy=True)
 
-    async def retrieve_via_proxy(proxy_hash_key: str) -> dict[str, object]:
+    async def retrieve_via_proxy(
+        proxy_hash_key: str,
+        query: str | None = None,
+    ) -> dict[str, object]:
         return {"hash": proxy_hash_key, "original_content": "from proxy"}
 
     server._retrieve_via_proxy = retrieve_via_proxy
@@ -312,6 +318,7 @@ def test_mcp_retrieve_expired_local_hash_can_still_hit_proxy(
     assert result["source"] == "proxy"
     assert result["hash"] == hash_key
     assert result["original_content"] == "from proxy"
+
 
 def test_mcp_retrieve_query_records_feedback_and_returns_full_content(fresh_store) -> None:
     items = [
