@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 
 from ..paths import ensure_workspace_dir, workspace_dir
 
@@ -30,11 +31,16 @@ def record_learn_run(entry: dict) -> None:
 
 
 def read_learn_history(limit: int = 50) -> list[dict]:
-    """Return the last ``limit`` recorded runs. Tolerates missing/corrupt file."""
+    """Return the last ``limit`` recorded runs. Tolerates missing/corrupt file.
+
+    The dashboard polls ``/learn/history`` frequently, so this streams the
+    file and keeps only the last ``limit`` entries in a bounded deque instead
+    of holding the whole (potentially large) file in memory.
+    """
     path = workspace_dir() / _HISTORY_FILE
     if not path.exists():
         return []
-    entries: list[dict] = []
+    entries: deque[dict] = deque(maxlen=max(1, limit))
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
@@ -49,4 +55,4 @@ def read_learn_history(limit: int = 50) -> list[dict]:
                     entries.append(parsed)
     except OSError:
         return []
-    return entries[-limit:]
+    return list(entries)
