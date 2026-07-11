@@ -64,9 +64,7 @@ def test_pricing_override_falls_back_to_input_rate_when_output_is_bool(tmp_path)
     _write_raw_config(
         tmp_path,
         {
-            "pricing": {
-                "some-model": {"input_per_1m": 5.0, "output_per_1m": False}
-            },
+            "pricing": {"some-model": {"input_per_1m": 5.0, "output_per_1m": False}},
             "settings": {},
         },
     )
@@ -164,9 +162,7 @@ def test_pricing_override_rejects_zero_input_per_1m_at_write_time(tmp_path):
 
 def test_pricing_override_allows_zero_for_other_fields(tmp_path):
     # Free cache reads etc. are legitimate; only input_per_1m has the > 0 rule.
-    user_config.update(
-        {"pricing": {"some-model": {"input_per_1m": 3.0, "cache_read_per_1m": 0}}}
-    )
+    user_config.update({"pricing": {"some-model": {"input_per_1m": 3.0, "cache_read_per_1m": 0}}})
     result = user_config.pricing_override_per_token("some-model")
     assert result["cache_read"] == 0.0
 

@@ -645,7 +645,9 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
             return payload
 
     @router.get("/stats")
-    async def stats(request: Request, cached: bool = False, recent_limit: int = RECENT_REQUEST_RENDER_DEFAULT):
+    async def stats(
+        request: Request, cached: bool = False, recent_limit: int = RECENT_REQUEST_RENDER_DEFAULT
+    ):
         """Get comprehensive proxy statistics.
 
         This is the main stats endpoint - it aggregates data from all subsystems:
@@ -738,9 +740,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
             registrars = get_all_registrars()
             out: list[dict[str, Any]] = []
             for name, meta in known.items():
-                installed = any(
-                    r.detect() and r.get_server(name) is not None for r in registrars
-                )
+                installed = any(r.detect() and r.get_server(name) is not None for r in registrars)
                 if not installed:
                     continue
                 available = False
@@ -926,9 +926,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         try:
             body = await request.json()
         except (ValueError, UnicodeDecodeError):
-            return JSONResponse(
-                status_code=400, content={"error": "expected a JSON object"}
-            )
+            return JSONResponse(status_code=400, content={"error": "expected a JSON object"})
         try:
             user_config.update(body)
         except ValueError as exc:

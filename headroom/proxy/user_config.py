@@ -123,6 +123,7 @@ def pricing_override_per_token(model: str) -> dict[str, float] | None:
     mirroring LiteLLM's own fallback. Returns None (defer to LiteLLM) unless a
     usable ``input_per_1m`` is configured for the model.
     """
+
     def _is_number(value: object) -> bool:
         # bool is a subclass of int in Python; reject it so a hand-edited
         # `true`/`false` in the JSON can't silently become a numeric rate.

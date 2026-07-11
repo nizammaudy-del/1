@@ -69,7 +69,13 @@ def test_corrupted_count_field_does_not_crash(tmp_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {"codex:user1": {"last_sync": None, "last_imported": "not-a-number", "last_exported": None}}
+            {
+                "codex:user1": {
+                    "last_sync": None,
+                    "last_imported": "not-a-number",
+                    "last_exported": None,
+                }
+            }
         ),
         encoding="utf-8",
     )
