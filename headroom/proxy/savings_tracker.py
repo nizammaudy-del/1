@@ -14,7 +14,6 @@ import math
 import os
 import tempfile
 import threading
-import urllib.parse
 from csv import DictWriter
 from datetime import datetime, timedelta, timezone
 from io import StringIO
@@ -22,6 +21,10 @@ from pathlib import Path
 from typing import Any
 
 from headroom import paths as _paths
+from headroom.proxy import project_name_policy
+
+PROJECT_NAME_MAX_LENGTH = project_name_policy.PROJECT_NAME_MAX_LENGTH
+sanitize_project_name = project_name_policy.sanitize_project_name
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,6 @@ DEFAULT_SAVINGS_FILE = "proxy_savings.json"
 SCHEMA_VERSION = 4
 DEFAULT_MAX_HISTORY_POINTS = 5000
 DEFAULT_MAX_PROJECTS = 50
-PROJECT_NAME_MAX_LENGTH = 128
 DEFAULT_MAX_HISTORY_AGE_DAYS = 365
 DEFAULT_MAX_RESPONSE_HISTORY_POINTS = 500
 DEFAULT_DISPLAY_SESSION_INACTIVITY_MINUTES = 60
@@ -368,23 +370,6 @@ def _empty_display_session() -> dict[str, Any]:
         "started_at": None,
         "last_activity_at": None,
     }
-
-
-def sanitize_project_name(value: Any) -> str | None:
-    """Normalize a client-supplied project name; ``None`` when unusable.
-
-    Strips control characters, trims whitespace, and caps length so a
-    misbehaving client cannot bloat the persisted state or the dashboard.
-    Percent-encoded values (from non-ASCII cwd names) are decoded first so
-    the stored project name matches the original directory name.
-    """
-    if not isinstance(value, str):
-        return None
-    value = urllib.parse.unquote(value)
-    cleaned = "".join(ch for ch in value if ch.isprintable()).strip()
-    if not cleaned:
-        return None
-    return cleaned[:PROJECT_NAME_MAX_LENGTH]
 
 
 def _empty_project_entry() -> dict[str, Any]:
