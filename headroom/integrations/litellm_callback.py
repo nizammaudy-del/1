@@ -104,7 +104,6 @@ class HeadroomCallback(_CustomLogger):
             data, call_type = cache, data
         if data is None:
             return None
-
         if call_type not in ("completion", "acompletion"):
             return data
 
