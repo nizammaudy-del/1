@@ -219,6 +219,49 @@ class CodeLanguage(Enum):
     UNKNOWN = "unknown"
 
 
+# Common language hints and markdown fence tags that are not the canonical
+# ``CodeLanguage`` value. Mapping them here keeps ``` ```js ``` / ``` ```ts ```
+# / ``` ```py ``` fenced blocks (and callers that pass an alias) on the
+# code-aware path instead of raising ValueError.
+_LANGUAGE_ALIASES: dict[str, CodeLanguage] = {
+    "js": CodeLanguage.JAVASCRIPT,
+    "jsx": CodeLanguage.JAVASCRIPT,
+    "mjs": CodeLanguage.JAVASCRIPT,
+    "cjs": CodeLanguage.JAVASCRIPT,
+    "node": CodeLanguage.JAVASCRIPT,
+    "ts": CodeLanguage.TYPESCRIPT,
+    "tsx": CodeLanguage.TYPESCRIPT,
+    "py": CodeLanguage.PYTHON,
+    "python3": CodeLanguage.PYTHON,
+    "golang": CodeLanguage.GO,
+    "rs": CodeLanguage.RUST,
+    "c++": CodeLanguage.CPP,
+    "cxx": CodeLanguage.CPP,
+    "cc": CodeLanguage.CPP,
+    "hpp": CodeLanguage.CPP,
+    "pl": CodeLanguage.PERL,
+}
+
+
+def coerce_language(value: str) -> CodeLanguage:
+    """Map a language hint or markdown fence tag to a ``CodeLanguage``.
+
+    Accepts the canonical enum values and common aliases/fence tags
+    (``js``/``ts``/``py``/...). Unknown strings return ``CodeLanguage.UNKNOWN``
+    instead of raising ``ValueError`` from ``CodeLanguage(value)``, so an
+    unrecognized fence tag falls back to content-based detection rather than
+    crashing the caller (or, inside the router, silently skipping code-aware
+    compression because the ValueError is swallowed).
+    """
+    key = (value or "").strip().lower()
+    if not key:
+        return CodeLanguage.UNKNOWN
+    try:
+        return CodeLanguage(key)
+    except ValueError:
+        return _LANGUAGE_ALIASES.get(key, CodeLanguage.UNKNOWN)
+
+
 class DocstringMode(Enum):
     """How to handle docstrings."""
 
@@ -1015,13 +1058,22 @@ class CodeAwareCompressor(Transform):
                 syntax_valid=True,
             )
 
-        # Detect or use specified language
+        # Detect or use specified language. An explicit hint or fence tag may be
+        # an alias (js/ts/py/...) or something we don't recognize — coerce it
+        # instead of constructing CodeLanguage() directly (which raises), and
+        # fall back to content detection when the hint is unknown.
         if language:
-            detected_lang = CodeLanguage(language.lower())
-            confidence = 1.0
+            detected_lang = coerce_language(language)
+            if detected_lang == CodeLanguage.UNKNOWN:
+                detected_lang, confidence = detect_language(code)
+            else:
+                confidence = 1.0
         elif self.config.language_hint:
-            detected_lang = CodeLanguage(self.config.language_hint.lower())
-            confidence = 1.0
+            detected_lang = coerce_language(self.config.language_hint)
+            if detected_lang == CodeLanguage.UNKNOWN:
+                detected_lang, confidence = detect_language(code)
+            else:
+                confidence = 1.0
         else:
             detected_lang, confidence = detect_language(code)
 
