@@ -16,14 +16,28 @@ from .. import paths as _paths
 from .sync import _load_sync_state
 
 
+def _safe_int(value: object) -> int:
+    """Coerce a persisted count to int, defaulting to 0 on any bad input."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
 def get_sync_stats() -> dict:
     """Return a per-agent summary of the persisted memory-sync state.
 
+    ``sync.py`` persists exactly one timestamp per adapter (``last_sync``,
+    the moment of the most recent sync run) plus item counts for that run
+    (``last_imported``/``last_exported``) — there are no separate
+    import/export timestamps to report. It also never persists a dedup
+    count, so ``dedup_rate`` is always ``None``: there's no real data to
+    compute it from, and returning a fabricated 0% would be misleading.
+
     Shape::
 
-        {"agents": [{"name", "last_imported", "last_exported",
-                     "imported_count", "exported_count", "skipped_dedup"}...],
-         "dedup_rate": <float|None>}
+        {"agents": [{"name", "last_sync", "imported_count", "exported_count"}...],
+         "dedup_rate": None}
 
     On a missing or unreadable state file returns
     ``{"agents": [], "dedup_rate": None}``.
@@ -37,32 +51,18 @@ def get_sync_stats() -> dict:
         return empty
 
     agents: list[dict] = []
-    total_imported = 0
-    total_dedup = 0
     for adapter_key, entry in state.items():
         if not isinstance(entry, dict):
             continue
         # adapter_key is "<agent_name>:<user_id>"; keep the agent name.
         name = adapter_key.split(":", 1)[0]
-        imported = int(entry.get("last_imported") or 0)
-        exported = int(entry.get("last_exported") or 0)
-        # skipped_dedup is not persisted (see module docstring); default 0.
-        skipped_dedup = int(entry.get("skipped_dedup") or 0)
         agents.append(
             {
                 "name": name,
-                "last_imported": entry.get("last_sync"),
-                "last_exported": entry.get("last_sync"),
-                "imported_count": imported,
-                "exported_count": exported,
-                "skipped_dedup": skipped_dedup,
+                "last_sync": entry.get("last_sync"),
+                "imported_count": _safe_int(entry.get("last_imported")),
+                "exported_count": _safe_int(entry.get("last_exported")),
             }
         )
-        total_imported += imported
-        total_dedup += skipped_dedup
 
-    # dedup_rate = deduped / (deduped + imported); None when nothing to divide.
-    denom = total_imported + total_dedup
-    dedup_rate = (total_dedup / denom) if denom > 0 else None
-
-    return {"agents": agents, "dedup_rate": dedup_rate}
+    return {"agents": agents, "dedup_rate": None}

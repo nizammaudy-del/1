@@ -195,7 +195,10 @@ def _validate_settings(settings: Any) -> dict[str, Any]:
             if value is None:
                 clean[key] = None
             elif isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
-                clean[key] = float(value)
+                # The Settings UI says "leave 0/blank for no limit" — normalize
+                # 0 to None so it actually means unlimited, not "budget is $0"
+                # (which would block all spend).
+                clean[key] = float(value) if value > 0 else None
             else:
                 raise ValueError("budget_limit_usd must be null or a number >= 0")
         elif key == "budget_period":

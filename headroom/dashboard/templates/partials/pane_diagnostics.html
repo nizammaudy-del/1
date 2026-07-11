@@ -71,13 +71,17 @@
                                             <span x-text="'imported ' + formatNum(a.imported_count || 0)"></span>
                                             <span class="mx-1 text-gray-700">/</span>
                                             <span x-text="'exported ' + formatNum(a.exported_count || 0)"></span>
-                                            <span class="mx-1 text-gray-700">/</span>
-                                            <span x-text="'skipped ' + formatNum(a.skipped_dedup || 0)"></span>
+                                            <template x-if="a.last_sync">
+                                                <span>
+                                                    <span class="mx-1 text-gray-700">/</span>
+                                                    <span x-text="'last sync ' + a.last_sync"></span>
+                                                </span>
+                                            </template>
                                         </div>
                                     </div>
                                 </template>
-                                <div class="text-xs text-gray-500 pt-1" x-show="diagnosticsMemorySync.dedup_rate !== null && diagnosticsMemorySync.dedup_rate !== undefined"
-                                     x-text="'Dedup rate: ' + ((diagnosticsMemorySync.dedup_rate || 0) * 100).toFixed(1) + '%'"></div>
+                                <!-- dedup_rate is always null today — sync.py doesn't persist a dedup
+                                     count, so there's nothing honest to show here yet. -->
                             </div>
                         </template>
                         <template x-if="(diagnosticsMemorySync.agents || []).length === 0">

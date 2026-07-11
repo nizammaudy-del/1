@@ -6,14 +6,15 @@ function dashboardBudgetMixin() {
                     if (pct >= 80) return 80;
                     return 0;
                 },
+                // Valid periods are exactly hourly/daily/monthly (see
+                // _BUDGET_PERIODS in user_config.py) — "weekly" is never a
+                // real value here.
                 estimateBudgetResetSeconds(period) {
                     const now = new Date();
                     let next;
-                    if (period === 'weekly') {
+                    if (period === 'hourly') {
                         next = new Date(now);
-                        const daysUntilMonday = (8 - next.getDay()) % 7 || 7;
-                        next.setDate(next.getDate() + daysUntilMonday);
-                        next.setHours(0, 0, 0, 0);
+                        next.setHours(next.getHours() + 1, 0, 0, 0);
                     } else if (period === 'monthly') {
                         next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
                     } else {

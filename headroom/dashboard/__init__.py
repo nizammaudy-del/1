@@ -15,7 +15,12 @@ def get_dashboard_html() -> str:
     shell = (TEMPLATES_DIR / "dashboard.html").read_text(encoding="utf-8")
 
     def _inline(match: re.Match) -> str:
-        partial_path = PARTIALS_DIR / match.group(1)
+        partial_path = (PARTIALS_DIR / match.group(1)).resolve()
+        # Defense in depth: INCLUDE markers only ever come from our own
+        # shipped dashboard.html, never user input, but a `../` in one
+        # should still never be able to read a file outside partials/.
+        if PARTIALS_DIR.resolve() not in partial_path.parents:
+            raise ValueError(f"INCLUDE path escapes partials directory: {match.group(1)!r}")
         return partial_path.read_text(encoding="utf-8")
 
     return INCLUDE_RE.sub(_inline, shell)

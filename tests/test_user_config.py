@@ -127,3 +127,28 @@ def test_config_response_never_includes_local_filesystem_path(tmp_path):
         "pricing_fields",
         "restart_required_settings",
     }
+
+
+def test_budget_limit_zero_is_normalized_to_no_limit(tmp_path):
+    # The Settings UI says "leave 0/blank for no limit" — submitting exactly
+    # 0 must mean unlimited, not "budget is $0" (which would block all spend).
+    user_config.update({"settings": {"budget_limit_usd": 0}})
+    assert user_config.get_settings()["budget_limit_usd"] is None
+
+
+def test_budget_limit_positive_value_is_kept(tmp_path):
+    user_config.update({"settings": {"budget_limit_usd": 25}})
+    assert user_config.get_settings()["budget_limit_usd"] == pytest.approx(25.0)
+
+
+def test_cost_tracker_budget_remaining_is_none_only_when_limit_unset():
+    from headroom.proxy.cost import CostTracker
+
+    unlimited = CostTracker(budget_limit_usd=None)
+    assert unlimited.stats()["budget_remaining_usd"] is None
+
+    # A CostTracker constructed directly with budget_limit_usd=0.0 (bypassing
+    # the Settings-menu normalization, e.g. via a CLI flag) must still report
+    # a real remaining amount, not silently look "unlimited" via truthiness.
+    zero_budget = CostTracker(budget_limit_usd=0.0)
+    assert zero_budget.stats()["budget_remaining_usd"] == pytest.approx(0.0)
