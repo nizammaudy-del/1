@@ -2362,6 +2362,16 @@ class ContentRouter(Transform):
             if compressor:
                 if not compressor.is_ready():
                     compressor.ensure_background_load()
+                    # Surface: warn once per ContentRouter instance so operators
+                    # know compression is degraded — model not cached, or
+                    # HuggingFace unreachable (corporate firewall, SSL, etc.).
+                    if not getattr(self, "_kompress_warned", False):
+                        logger.warning(
+                            "Kompress model not ready; requests will not be "
+                            "compressed. Check HuggingFace connectivity or "
+                            "pre-download: headroom-ai[ml] + first-run warmup."
+                        )
+                        self._kompress_warned = True
                 else:
                     try:
                         result = compressor.compress(
@@ -2713,9 +2723,10 @@ class ContentRouter(Transform):
                     try:
                         backend = compressor.preload(allow_download=False)
                     except KompressModelNotCached:
-                        logger.info(
-                            "Kompress model not cached; deferring download to "
-                            "first use to keep startup non-blocking"
+                        logger.warning(
+                            "Kompress model not cached; compression disabled "
+                            "until model is downloaded. Ensure HuggingFace is "
+                            "accessible or pre-download with headroom-ai[ml]."
                         )
                         status["kompress"] = "deferred"
                     else:
