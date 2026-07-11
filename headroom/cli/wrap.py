@@ -3756,6 +3756,12 @@ def unwrap() -> None:
     help="Skip CLI context-tool setup",
 )
 @click.option(
+    "--context-tool",
+    "context_tool",
+    is_flag=True,
+    help="Enable CLI context-tool setup",
+)
+@click.option(
     "--no-mcp",
     is_flag=True,
     help="Skip headroom MCP server registration (compression markers will be unactionable)",
@@ -3824,6 +3830,7 @@ def unwrap() -> None:
 def claude(
     port: int,
     no_rtk: bool,
+    context_tool: bool,
     no_mcp: bool,
     no_tokensave: bool,
     serena: bool,
@@ -3855,13 +3862,15 @@ def claude(
         headroom wrap claude                    # tokensave code graph (primary)
         headroom wrap claude --no-tokensave     # Skip tokensave; fall back to Serena
         headroom wrap claude --serena           # Also register the Serena backup
+        headroom wrap claude --context-tool     # Enable CLI context-tool setup
         headroom wrap claude --no-context-tool  # Skip CLI context-tool setup
         headroom wrap claude --no-mcp           # Skip MCP retrieve tool registration
         headroom wrap claude --no-serena        # Never register the Serena backup
         headroom wrap claude --1m               # Preserve the 1M context window
     """
+    setup_context_tool = context_tool and not no_rtk
     if prepare_only:
-        if not no_rtk:
+        if setup_context_tool:
             if _selected_context_tool() == _CONTEXT_TOOL_LEAN_CTX:
                 _setup_lean_ctx_agent("claude", verbose=verbose)
             else:
@@ -3984,7 +3993,7 @@ def claude(
         port_holder[0] = actual_port
         _push_runtime_env(actual_port, no_proxy)
 
-        if not no_rtk:
+        if setup_context_tool:
             if _selected_context_tool() == _CONTEXT_TOOL_LEAN_CTX:
                 click.echo("  Setting up lean-ctx...")
                 _setup_lean_ctx_agent("claude", verbose=verbose)
