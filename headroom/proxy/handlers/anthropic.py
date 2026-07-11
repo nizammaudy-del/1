@@ -1052,6 +1052,14 @@ class AnthropicHandlerMixin:
             session_id = self.session_tracker_store.compute_session_id(request, model, messages)
             prefix_tracker = self.session_tracker_store.get_or_create(session_id, "anthropic")
             frozen_message_count = prefix_tracker.get_frozen_message_count()
+            # Idle gap since the previous turn's response, snapshotted at fetch
+            # (before get_or_create bumped the access clock). Forwarded to the
+            # pipeline so the net-cost/TTL gate (HEADROOM_NET_COST_POLICY=1) can
+            # decay P_alive as the ~300s prompt-cache lapse nears and admit
+            # otherwise-frozen compaction as a free rewrite. Harmless when the
+            # policy is off (router ignores idle_seconds unless enabled) and near
+            # 0 for back-to-back agent turns (cache still warm → no decay).
+            idle_seconds = getattr(prefix_tracker, "_idle_seconds_at_fetch", 0.0)
             if is_cache_mode(self.config.mode):
                 frozen_message_count = self._strict_previous_turn_frozen_count(
                     original_client_messages,
@@ -1273,6 +1281,7 @@ class AnthropicHandlerMixin:
                                         model_limit=context_limit,
                                         context=extract_user_query(working_messages),
                                         frozen_message_count=frozen_message_count,
+                                        idle_seconds=idle_seconds,
                                         biases=biases,
                                         request_id=request_id,
                                         compression_policy=compression_policy,
@@ -1302,6 +1311,7 @@ class AnthropicHandlerMixin:
                                             model_limit=context_limit,
                                             context=extract_user_query(working_messages),
                                             frozen_message_count=frozen_message_count,
+                                            idle_seconds=idle_seconds,
                                             biases=biases,
                                             request_id=request_id,
                                             compression_policy=compression_policy,
@@ -1435,6 +1445,7 @@ class AnthropicHandlerMixin:
                                             model_limit=context_limit,
                                             context=extract_user_query(compression_input),
                                             frozen_message_count=prefix_n,
+                                            idle_seconds=idle_seconds,
                                             biases=biases,
                                             request_id=request_id,
                                             compression_policy=compression_policy,
@@ -1493,7 +1504,8 @@ class AnthropicHandlerMixin:
                 prefix_tracker.get_last_original_messages(),
                 prefix_tracker.get_last_forwarded_messages(),
             )
-            if _ov != optimized_messages:
+            _overlay_replayed = _ov != optimized_messages
+            if _overlay_replayed:
                 optimized_messages = _ov
                 optimized_tokens = tokenizer.count_messages(optimized_messages)
 
@@ -1509,7 +1521,18 @@ class AnthropicHandlerMixin:
 
             # Guard: if "optimization" inflated tokens, revert to originals.
             # Skip in cache mode where prefix-stability may legitimately shift counts.
-            if optimized_tokens > original_tokens and not is_cache_mode(self.config.mode):
+            # ALSO skip when overlay_cached_prefix just replayed a byte-identical
+            # cached prefix (token mode): reverting to the raw originals there
+            # would re-forward the uncompressed prefix and BUST the live prompt
+            # cache — trading a 90% read discount for a full re-write — which is
+            # far more expensive than the small tail inflation this guard exists
+            # to avoid. The nominal "inflation" is also an artifact of comparing
+            # the cached (compressed) forwarding against the raw original count.
+            if (
+                optimized_tokens > original_tokens
+                and not is_cache_mode(self.config.mode)
+                and not _overlay_replayed
+            ):
                 logger.warning(
                     f"[{request_id}] Optimization inflated tokens "
                     f"({original_tokens} -> {optimized_tokens}), reverting to original messages"
