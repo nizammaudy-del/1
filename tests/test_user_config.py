@@ -152,3 +152,20 @@ def test_cost_tracker_budget_remaining_is_none_only_when_limit_unset():
     # a real remaining amount, not silently look "unlimited" via truthiness.
     zero_budget = CostTracker(budget_limit_usd=0.0)
     assert zero_budget.stats()["budget_remaining_usd"] == pytest.approx(0.0)
+
+
+def test_pricing_override_rejects_zero_input_per_1m_at_write_time(tmp_path):
+    # pricing_override_per_token() treats input_per_1m <= 0 as "no override",
+    # so accepting 0 at write time would silently save a value that then
+    # never takes effect. Must fail loudly instead.
+    with pytest.raises(ValueError, match="input_per_1m must be > 0"):
+        user_config.update({"pricing": {"some-model": {"input_per_1m": 0}}})
+
+
+def test_pricing_override_allows_zero_for_other_fields(tmp_path):
+    # Free cache reads etc. are legitimate; only input_per_1m has the > 0 rule.
+    user_config.update(
+        {"pricing": {"some-model": {"input_per_1m": 3.0, "cache_read_per_1m": 0}}}
+    )
+    result = user_config.pricing_override_per_token("some-model")
+    assert result["cache_read"] == 0.0

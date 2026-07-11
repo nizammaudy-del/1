@@ -171,7 +171,13 @@ def _validate_pricing(pricing: Any) -> dict[str, dict[str, float]]:
                 continue
             if not isinstance(value, int | float) or isinstance(value, bool):
                 raise ValueError(f"pricing['{model}'].{field} must be a number")
-            if value < 0:
+            if field == "input_per_1m":
+                # pricing_override_per_token() treats input_per_1m <= 0 as
+                # "no override" — accepting 0 here would silently save a
+                # value that then never takes effect.
+                if value <= 0:
+                    raise ValueError(f"pricing['{model}'].input_per_1m must be > 0")
+            elif value < 0:
                 raise ValueError(f"pricing['{model}'].{field} must be >= 0")
             clean_entry[field] = float(value)
         if clean_entry:
