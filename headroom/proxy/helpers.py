@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from headroom import paths as _paths
 from headroom._subprocess import run
+from headroom.proxy import request_limit_policy
 from headroom.proxy.body_forwarding import (
     BodyMutationTracker as BodyMutationTracker,  # noqa: F401 - compatibility export
 )
@@ -518,8 +519,8 @@ MAX_SSE_BUFFER_SIZE = 10 * 1024 * 1024
 # HEADROOM_SSE_BUFFER_MAX_BYTES. Guards against pathological huge events
 # (a single event > 1 MB by default is treated as an upstream protocol bug
 # and surfaces loudly rather than silently growing the buffer).
-_SSE_EVENT_MAX_BYTES_ENV = "HEADROOM_SSE_BUFFER_MAX_BYTES"
-_SSE_EVENT_MAX_BYTES_DEFAULT = 1 * 1024 * 1024  # 1 MB
+_SSE_EVENT_MAX_BYTES_ENV = request_limit_policy.SSE_EVENT_MAX_BYTES_ENV
+_SSE_EVENT_MAX_BYTES_DEFAULT = request_limit_policy.SSE_EVENT_MAX_BYTES_DEFAULT
 
 
 def get_sse_event_max_bytes() -> int:
@@ -528,37 +529,23 @@ def get_sse_event_max_bytes() -> int:
     Read at request time so operators can flip the env var without a
     restart. Negative values are rejected loudly (no silent fallback).
     """
-    raw = os.environ.get(_SSE_EVENT_MAX_BYTES_ENV)
-    if raw is None or raw == "":
-        return _SSE_EVENT_MAX_BYTES_DEFAULT
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{_SSE_EVENT_MAX_BYTES_ENV} must be an integer, got {raw!r}") from exc
-    if value <= 0:
-        raise ValueError(f"{_SSE_EVENT_MAX_BYTES_ENV} must be positive, got {value}")
-    return value
+    return request_limit_policy.resolve_sse_event_max_bytes(
+        os.environ.get(_SSE_EVENT_MAX_BYTES_ENV)
+    )
 
 
 # Body-too-large status code (PR-A8 / P5-59). Default 413 (RFC 7231 §6.5.11).
 # Configurable via HEADROOM_PROXY_BODY_TOO_LARGE_STATUS for operators who need
 # to override (no expected production use; documentation knob).
-_BODY_TOO_LARGE_STATUS_ENV = "HEADROOM_PROXY_BODY_TOO_LARGE_STATUS"
-_BODY_TOO_LARGE_STATUS_DEFAULT = 413
+_BODY_TOO_LARGE_STATUS_ENV = request_limit_policy.BODY_TOO_LARGE_STATUS_ENV
+_BODY_TOO_LARGE_STATUS_DEFAULT = request_limit_policy.BODY_TOO_LARGE_STATUS_DEFAULT
 
 
 def get_body_too_large_status() -> int:
     """Return the HTTP status code for body-too-large rejections."""
-    raw = os.environ.get(_BODY_TOO_LARGE_STATUS_ENV)
-    if raw is None or raw == "":
-        return _BODY_TOO_LARGE_STATUS_DEFAULT
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{_BODY_TOO_LARGE_STATUS_ENV} must be an integer, got {raw!r}") from exc
-    if not 400 <= value < 600:
-        raise ValueError(f"{_BODY_TOO_LARGE_STATUS_ENV} must be a 4xx/5xx status, got {value}")
-    return value
+    return request_limit_policy.resolve_body_too_large_status(
+        os.environ.get(_BODY_TOO_LARGE_STATUS_ENV)
+    )
 
 
 # SSE byte-buffer helper supports LF and CRLF event separators. Per the SSE
