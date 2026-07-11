@@ -13,11 +13,18 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from headroom._subprocess import run
+from headroom._subprocess import pid_alive, run
 
 from .health import probe_ready
 from .models import DeploymentManifest, InstallPreset, RuntimeKind
 from .paths import log_path, pid_path, profile_root
+
+# Inside the container the proxy must listen on every interface so the
+# host-side published port (127.0.0.1:<port>) can reach it.
+CONTAINER_BIND_HOST = "0.0.0.0"  # noqa: S104 — container-internal bind, published only on 127.0.0.1
+# proxy_args always starts with the host flag/value pair (see planner.py); we
+# drop it and substitute CONTAINER_BIND_HOST for the in-container bind.
+_PROXY_ARGS_HOST_PAIR_LEN = 2
 
 PASSTHROUGH_ENV_PREFIXES = (
     "HEADROOM_",
@@ -38,7 +45,6 @@ PASSTHROUGH_ENV_PREFIXES = (
     "OLLAMA_",
     "LITELLM_",
     "OTEL_",
-    "SUPABASE_",
     "QDRANT_",
     "NEO4J_",
     "LANGSMITH_",
@@ -136,14 +142,16 @@ def build_runtime_command(manifest: DeploymentManifest) -> list[str]:
     for name in sorted(os.environ):
         if name.startswith(PASSTHROUGH_ENV_PREFIXES):
             command.extend(["--env", name])
+    # The image ENTRYPOINT already runs `headroom proxy` (see Dockerfile), so
+    # the args appended after the image name are only the proxy flags — never
+    # `headroom proxy` again, or Docker would run `headroom proxy headroom
+    # proxy ...` and Click aborts on the extra arguments (issue #833).
     command.extend(
         [
             manifest.image,
-            "headroom",
-            "proxy",
             "--host",
-            "0.0.0.0",
-            *manifest.proxy_args[2:],
+            CONTAINER_BIND_HOST,
+            *manifest.proxy_args[_PROXY_ARGS_HOST_PAIR_LEN:],
         ]
     )
     return command
@@ -267,7 +275,15 @@ def start_detached_agent(profile: str) -> subprocess.Popen[str]:
         )
     else:
         kwargs["start_new_session"] = True
-    return subprocess.Popen(command, **kwargs)
+    try:
+        proc = subprocess.Popen(command, **kwargs)
+    finally:
+        # The child has inherited the log file descriptor, so the parent's
+        # copy is dead weight. Closing it (even when Popen raises) avoids
+        # leaking one fd per `headroom install start` and lets the log file
+        # be rotated. Wrapped in try/finally so a Popen failure can't leak.
+        log_file.close()
+    return proc
 
 
 def start_persistent_docker(manifest: DeploymentManifest) -> None:
@@ -313,7 +329,8 @@ def stop_runtime(manifest: DeploymentManifest) -> None:
         return
     try:
         os.kill(pid, signal.SIGTERM)
-    except OSError:
+    except (OSError, SystemError):
+        # SystemError covers the Windows WinError 87 surfacing described in #1544.
         pass
     _clear_pid(manifest.profile)
 
@@ -343,8 +360,7 @@ def runtime_status(manifest: DeploymentManifest) -> str:
     pid = _read_pid(manifest.profile)
     if pid is None:
         return "stopped"
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return "stopped"
-    return "running"
+    # Windows-safe liveness probe: a bare os.kill(pid, 0) here raised WinError 87
+    # as a SystemError against the detached agent, crashing status and taking the
+    # live proxy down with it (#1544).
+    return "running" if pid_alive(pid) else "stopped"
