@@ -62,6 +62,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from headroom._version import __version__
 from headroom.agent_savings import proxy_pipeline_kwargs
+from headroom.cache.compression_feedback import get_compression_feedback  # noqa: F401
 from headroom.cache.compression_store import format_retrieval_miss_detail, get_compression_store
 from headroom.ccr import (
     CCR_TOOL_NAME,
@@ -120,6 +121,7 @@ from headroom.proxy.helpers import (
     MAX_MESSAGE_ARRAY_LENGTH,  # noqa: F401
     MAX_REQUEST_BODY_SIZE,  # noqa: F401
     MAX_SSE_BUFFER_SIZE,  # noqa: F401
+    _get_context_tool_stats,  # noqa: F401
     _get_image_compressor,  # noqa: F401
     _get_rtk_stats,  # noqa: F401
     _read_request_json,  # noqa: F401
@@ -1983,6 +1985,16 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     app.state.rust_core_status = "missing"
     app.state.rust_core_error = None
 
+    # Dashboard-support routes (stats, config, admin, MCP monitoring).
+    # Registered EARLY, before any other route in this function, so specific
+    # dashboard paths (e.g. /v1/retrieve/stats) always win against
+    # parametrized routes defined later (e.g. /v1/retrieve/{hash_key}) —
+    # FastAPI matches routes in registration order. Still well before
+    # register_provider_routes's "/{path:path}" catch-all at the end.
+    from headroom.proxy.routers.dashboard import build_dashboard_router
+
+    app.include_router(build_dashboard_router(proxy, config))
+
     def _iso_utc_now() -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -3074,13 +3086,6 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     @app.post("/v1/compress", dependencies=[Depends(_require_loopback)])
     async def compress_messages(request: Request):
         return await proxy.handle_compress(request)
-
-    # Dashboard-support routes (stats, config, admin, MCP monitoring).
-    # Registered BEFORE register_provider_routes so the provider "/{path:path}"
-    # catch-all below does not shadow them. See headroom/proxy/routers/dashboard.py.
-    from headroom.proxy.routers.dashboard import build_dashboard_router
-
-    app.include_router(build_dashboard_router(proxy, config))
 
     # Provider catch-all ("/{path:path}") must be registered last so the
     # explicit routes above take precedence.

@@ -557,7 +557,9 @@ def test_stats_reset_clears_runtime_proxy_counters(monkeypatch: pytest.MonkeyPat
 def test_dashboard_uses_cached_stats_and_lazy_history_feed_polling() -> None:
     html = get_dashboard_html()
 
-    assert "fetch('/stats?cached=1')" in html
+    # Recent Requests pagination (added after this test was written) appends
+    # a recent_limit param; the cached=1 query itself is unchanged.
+    assert "fetch('/stats?cached=1" in html
     assert "@click=\"setViewMode('history')\"" in html
     assert '@click="toggleFeed()"' in html
     assert "this.viewMode === 'history'" in html

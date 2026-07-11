@@ -18,13 +18,12 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from headroom.agent_savings import proxy_pipeline_kwargs
-from headroom.cache.compression_feedback import get_compression_feedback
-from headroom.cache.compression_store import get_compression_store
 from headroom.dashboard import get_dashboard_html
 from headroom.observability import get_langfuse_tracing_status, get_otel_metrics_status
+from headroom.proxy import server as _server
 from headroom.proxy import user_config
 from headroom.proxy.cost import build_prefix_cache_stats, build_session_summary, merge_cost_stats
-from headroom.proxy.helpers import _get_context_tool_stats, initialize_context_tool_session_baseline
+from headroom.proxy.helpers import initialize_context_tool_session_baseline
 from headroom.proxy.loopback_guard import require_loopback as _require_loopback
 from headroom.proxy.modes import PROXY_MODE_TOKEN
 from headroom.proxy.savings_tracker import LITELLM_AVAILABLE
@@ -37,9 +36,7 @@ from headroom.proxy.server import (
     logger,
 )
 from headroom.subscription.base import get_quota_registry
-from headroom.telemetry import get_telemetry_collector
 from headroom.telemetry.beacon import is_telemetry_enabled
-from headroom.telemetry.toin import get_toin
 
 
 def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRouter:
@@ -168,15 +165,15 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
             return round((float(part) / float(whole)) * 100.0, 2) if whole else 0.0
 
         # Get compression store stats
-        store = get_compression_store()
+        store = _server.get_compression_store()
         compression_stats = store.get_stats()
 
         # Get telemetry/TOIN stats
-        telemetry = get_telemetry_collector()
+        telemetry = _server.get_telemetry_collector()
         telemetry_stats = telemetry.get_stats()
 
         # Get feedback loop stats
-        feedback = get_compression_feedback()
+        feedback = _server.get_compression_feedback()
         feedback_stats = feedback.get_stats()
 
         # Build prefix cache stats once (used in both prefix_cache and cost)
@@ -184,7 +181,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
 
         # Fetch CLI filtering savings from the selected context tool. These
         # tokens are avoided before they reach model context.
-        cli_filtering_stats = await asyncio.to_thread(_get_context_tool_stats)
+        cli_filtering_stats = await asyncio.to_thread(_server._get_context_tool_stats)
         cli_filtering_tool = (
             str(cli_filtering_stats.get("tool", "rtk")) if cli_filtering_stats else "rtk"
         )
@@ -578,7 +575,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                     if p.get("retrieval_rate", 0) > 0.3
                 ),
             },
-            "toin": get_toin().get_stats(),
+            "toin": _server.get_toin().get_stats(),
             "context_tool": {
                 "configured": cli_filtering_tool,
                 "label": cli_filtering_label,
@@ -827,7 +824,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
     @router.get("/v1/retrieve/stats", dependencies=[Depends(_require_loopback)])
     async def ccr_stats():
         """Get CCR compression store statistics."""
-        store = get_compression_store()
+        store = _server.get_compression_store()
         stats = store.get_stats()
         events = store.get_retrieval_events(limit=20)
         return {
@@ -858,7 +855,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         Use this to understand how well compression is working and whether
         the feedback loop is adjusting appropriately.
         """
-        feedback = get_compression_feedback()
+        feedback = _server.get_compression_feedback()
         stats = feedback.get_stats()
         return {
             "feedback": stats,
@@ -885,7 +882,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         Returns feedback-based hints that would be used for compressing
         this tool's output.
         """
-        feedback = get_compression_feedback()
+        feedback = _server.get_compression_feedback()
         hints = feedback.get_compression_hints(tool_name)
         patterns = feedback.get_all_patterns().get(tool_name)
 
