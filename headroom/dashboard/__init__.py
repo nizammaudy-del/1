@@ -7,7 +7,7 @@ DASHBOARD_DIR = Path(__file__).parent
 TEMPLATES_DIR = DASHBOARD_DIR / "templates"
 PARTIALS_DIR = TEMPLATES_DIR / "partials"
 
-INCLUDE_RE = re.compile(r"[ \t]*<!-- INCLUDE: ([\w.-]+) -->\n?")
+INCLUDE_RE = re.compile(r"[ \t]*<!-- INCLUDE: ([\w./-]+) -->\n?")
 
 
 def get_dashboard_html() -> str:
