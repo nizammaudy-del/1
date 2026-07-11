@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/headroom-core",
     "crates/headroom-proxy",
+    "crates/headroom-simulators",
     "crates/headroom-py",
     "crates/headroom-parity",
 ]
@@ -14,6 +15,7 @@ members = [
 default-members = [
     "crates/headroom-core",
     "crates/headroom-proxy",
+    "crates/headroom-simulators",
     "crates/headroom-parity",
 ]
 

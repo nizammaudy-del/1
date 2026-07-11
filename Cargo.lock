@@ -1868,6 +1868,7 @@ dependencies = [
  "http 1.4.2",
  "magika",
  "md-5",
+ "ort",
  "proptest",
  "rayon",
  "redis",
@@ -1915,6 +1916,7 @@ dependencies = [
  "futures-util",
  "gcp_auth",
  "headroom-core",
+ "headroom-simulators",
  "http 1.4.2",
  "http-body-util",
  "humantime",
@@ -1952,6 +1954,26 @@ dependencies = [
  "pyo3",
  "pyo3-log",
  "serde_json",
+]
+
+[[package]]
+name = "headroom-simulators"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "clap",
+ "crc32fast",
+ "http 1.4.2",
+ "http-body-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

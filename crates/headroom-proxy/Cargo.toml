@@ -117,3 +117,4 @@ sha2 = "0.10"
 # noise). 100K cases is the project default for "no panic" parser
 # invariants — see `feedback_realignment_build_constraints.md`.
 proptest = "1"
+headroom-simulators = { path = "../headroom-simulators" }
