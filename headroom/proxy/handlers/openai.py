@@ -648,6 +648,23 @@ def _has_headroom_retrieve_tool_responses(tools: Any) -> bool:
     return False
 
 
+def _should_buffer_openai_responses_stream_ccr(
+    *,
+    stream: bool,
+    ccr_response_handler_enabled: bool,
+    tools: Any,
+    is_chatgpt_auth: bool,
+) -> bool:
+    """Return whether streaming Responses CCR should use buffered JSON mode."""
+
+    return bool(
+        stream
+        and ccr_response_handler_enabled
+        and not is_chatgpt_auth
+        and _has_headroom_retrieve_tool_responses(tools)
+    )
+
+
 def _responses_input_to_items(input_data: Any) -> list[dict[str, Any]]:
     """Normalize a Responses ``input`` field into an item list for CCR continuation.
 
@@ -4206,10 +4223,11 @@ class OpenAIHandlerMixin:
         _ccr_response_handler_enabled = bool(
             _ccr_response_handler and getattr(_ccr_handler_config, "enabled", True)
         )
-        buffered_stream_ccr = bool(
-            stream
-            and _ccr_response_handler_enabled
-            and _has_headroom_retrieve_tool_responses(body.get("tools"))
+        buffered_stream_ccr = _should_buffer_openai_responses_stream_ccr(
+            stream=stream,
+            ccr_response_handler_enabled=_ccr_response_handler_enabled,
+            tools=body.get("tools"),
+            is_chatgpt_auth=is_chatgpt_auth,
         )
         if buffered_stream_ccr:
             if body.get("stream") is not False:
