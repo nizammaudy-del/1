@@ -1,0 +1,33 @@
+    <div id="methodology-modal" x-show="showMethodology" x-cloak
+         class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
+         @keydown.escape.window="showMethodology = false"
+         style="display: none;">
+        <div @click.away="showMethodology = false"
+             class="w-full max-w-xl rounded-lg border border-border bg-surface shadow-xl">
+            <div class="flex items-center justify-between border-b border-border px-6 py-4">
+                <h2 class="text-lg font-semibold text-gray-100">How savings are calculated</h2>
+                <button @click="showMethodology = false"
+                        class="text-gray-500 hover:text-gray-200 focus:ring-2 focus:ring-accent focus:outline-none rounded p-1" title="Close">&#10005;</button>
+            </div>
+            <div class="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-4 text-sm text-gray-300">
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">The formula</h3>
+                    <p><code class="text-accent">savings = tokens_saved &times; list input price per token</code></p>
+                    <p class="mt-1 text-gray-400">Headroom counts every token it removed from a request before it went to the model (compression only — cache discounts are tracked separately and never mixed into this number). Each saved token is priced at the model's published <em>input</em> rate, so the total scales linearly and never moves backwards as traffic mixes change.</p>
+                </section>
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Where the price comes from</h3>
+                    <p class="text-gray-400">Prices come from LiteLLM's community-maintained pricing table, unless you've set a per-model override in <button type="button" class="text-accent underline decoration-dotted focus:ring-2 focus:ring-accent focus:outline-none rounded" @click="showMethodology = false; settingsOpen = true;">Settings</button> — an override always wins.</p>
+                </section>
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Why a figure can show $0.00</h3>
+                    <p class="text-gray-400">Pricing tables go stale or simply don't list newer/unlisted models. When that happens the dollar estimate falls back to $0.00 even though real tokens were saved — check the token counts (directly measured, not priced) if a $ figure looks wrong, and add a pricing override in Settings for any model that's missing.</p>
+                </section>
+                <section>
+                    <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Estimated vs measured</h3>
+                    <p class="text-gray-400">Anything marked <span class="text-[10px] uppercase tracking-wide text-gray-500">estimated</span> depends on this pricing table and can drift. Token counts are measured directly from the tokenizer/API usage fields and don't depend on pricing at all.</p>
+                </section>
+            </div>
+        </div>
+    </div>
+

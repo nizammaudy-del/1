@@ -1,0 +1,536 @@
+
+        <!-- Pane: Provider Windows & Cache -->
+        <section x-show="paneVisible('windows')" class="mb-6" :class="panes.windows ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('windows')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Provider Windows & Cache" data-help="Subscription/rate-limit windows for Anthropic, Codex, and Copilot, plus prefix-cache impact. Only cards with data appear.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Provider Windows &amp; Cache</span>
+            </button>
+            <div x-show="!panes.windows">
+        <!-- Empty state: this pane's cards are all data-gated, so show guidance when none are present -->
+        <template x-if="!(stats.subscription_window && stats.subscription_window.latest) && !stats.codex_rate_limits && !stats.copilot_quota && !((stats.prefix_cache?.totals?.requests || 0) > 0)">
+            <div class="bg-surface rounded-lg p-6 border border-border mb-6 text-center"
+                 data-help-title="Provider Windows & Cache"
+                 data-help="Subscription/quota windows (Anthropic 5h/7d, Codex rate limits, Copilot quota) and prefix-cache efficiency appear here once that provider's traffic flows through the proxy.">
+                <p class="text-sm text-gray-500">No provider windows or prefix-cache activity yet.</p>
+                <p class="text-xs text-gray-600 mt-1">Anthropic 5h/7d windows, Codex rate limits, Copilot quota, and prefix-cache stats appear here once you route that provider's traffic through the proxy.</p>
+            </div>
+        </template>
+        <!-- Anthropic Subscription Window -->
+        <template x-if="stats.subscription_window && stats.subscription_window.latest">
+            <div class="bg-surface rounded-lg p-4 border border-border mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div class="text-sm font-medium text-gray-300">Anthropic Subscription Window</div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full pulse-live"
+                              :class="stats.subscription_window.last_active_at ? 'bg-emerald-400' : 'bg-gray-600'"></span>
+                        <span class="text-xs text-gray-500" x-text="stats.subscription_window.last_active_at ? 'Active' : 'Idle'"></span>
+                    </div>
+                </div>
+
+                <!-- 5h / 7d progress bars -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <!-- 5-hour window -->
+                    <template x-if="stats.subscription_window.latest.five_hour">
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-gray-400 uppercase tracking-wide">5-Hour Window</span>
+                                <span class="tabular-nums font-mono"
+                                      :class="stats.subscription_window.latest.five_hour.utilization_pct > 80 ? 'text-red-400' : stats.subscription_window.latest.five_hour.utilization_pct > 60 ? 'text-amber-400' : 'text-emerald-400'"
+                                      x-text="(stats.subscription_window.latest.five_hour.utilization_pct || 0).toFixed(1) + '%'"></span>
+                            </div>
+                            <div class="w-full h-3 bg-border rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all duration-500"
+                                     :class="stats.subscription_window.latest.five_hour.utilization_pct > 80 ? 'bg-red-500' : stats.subscription_window.latest.five_hour.utilization_pct > 60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                                     :style="'width: ' + Math.min(stats.subscription_window.latest.five_hour.utilization_pct || 0, 100) + '%'"></div>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1"
+                                 x-text="'Resets in ' + formatResetTime(stats.subscription_window.latest.five_hour.seconds_to_reset)"></div>
+                        </div>
+                    </template>
+
+                    <!-- 7-day window -->
+                    <template x-if="stats.subscription_window.latest.seven_day">
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-gray-400 uppercase tracking-wide">7-Day Window</span>
+                                <span class="tabular-nums font-mono"
+                                      :class="stats.subscription_window.latest.seven_day.utilization_pct > 80 ? 'text-red-400' : stats.subscription_window.latest.seven_day.utilization_pct > 60 ? 'text-amber-400' : 'text-emerald-400'"
+                                      x-text="(stats.subscription_window.latest.seven_day.utilization_pct || 0).toFixed(1) + '%'"></span>
+                            </div>
+                            <div class="w-full h-3 bg-border rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all duration-500"
+                                     :class="stats.subscription_window.latest.seven_day.utilization_pct > 80 ? 'bg-red-500' : stats.subscription_window.latest.seven_day.utilization_pct > 60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                                     :style="'width: ' + Math.min(stats.subscription_window.latest.seven_day.utilization_pct || 0, 100) + '%'"></div>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1"
+                                 x-text="'Resets in ' + formatResetTime(stats.subscription_window.latest.seven_day.seconds_to_reset)"></div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Overage / extra usage -->
+                <template x-if="stats.subscription_window.latest.extra_usage && stats.subscription_window.latest.extra_usage.is_enabled">
+                    <div class="border-t border-border pt-3 mb-3">
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-gray-400 uppercase tracking-wide">Extra Usage (Overage)</span>
+                            <span class="text-amber-400 tabular-nums font-mono"
+                                  x-text="'$' + formatCurrency(stats.subscription_window.latest.extra_usage.used_credits_usd || 0) + (stats.subscription_window.latest.extra_usage.monthly_limit_usd ? ' / $' + formatCurrency(stats.subscription_window.latest.extra_usage.monthly_limit_usd) : '')"></span>
+                        </div>
+                        <template x-if="stats.subscription_window.latest.extra_usage.utilization_pct != null">
+                            <div class="w-full h-2 bg-border rounded-full overflow-hidden">
+                                <div class="h-full bg-amber-500 rounded-full transition-all duration-500"
+                                     :style="'width: ' + Math.min(stats.subscription_window.latest.extra_usage.utilization_pct || 0, 100) + '%'"></div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- Headroom contribution row -->
+                <template x-if="stats.subscription_window.contribution && stats.subscription_window.contribution.tokens_submitted > 0">
+                    <div class="border-t border-border pt-3">
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mb-2">Headroom Contribution This Window</div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div>
+                                <div class="text-xs text-gray-500 mb-0.5">Efficiency</div>
+                                <div class="text-lg font-light tabular-nums text-accent"
+                                     x-text="(stats.subscription_window.contribution.efficiency_pct || 0).toFixed(1) + '%'"></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500 mb-0.5">Tokens Saved</div>
+                                <div class="text-lg font-light tabular-nums text-emerald-400"
+                                     x-text="formatNumber(stats.subscription_window.contribution.tokens_saved?.total || 0)"></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500 mb-0.5">Compression</div>
+                                <div class="text-sm tabular-nums text-gray-300"
+                                     x-text="formatNumber(stats.subscription_window.contribution.tokens_saved?.compression || 0) + ' tok'"></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500 mb-0.5">Cache Reads</div>
+                                <div class="text-sm tabular-nums text-cyan-400"
+                                     x-text="formatNumber(stats.subscription_window.contribution.tokens_saved?.cache_reads || 0) + ' tok'"></div>
+                            </div>
+                        </div>
+
+                        <!-- Efficiency bar: tokens submitted vs what would have been sent without headroom -->
+                        <template x-if="stats.subscription_window.contribution.raw_without_headroom > 0">
+                            <div class="mt-3">
+                                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                                    <span>Raw vs Submitted</span>
+                                    <span x-text="formatNumber(stats.subscription_window.contribution.tokens_submitted) + ' / ' + formatNumber(stats.subscription_window.contribution.raw_without_headroom) + ' tokens forwarded'"></span>
+                                </div>
+                                <div class="w-full h-2 bg-border rounded-full overflow-hidden flex">
+                                    <div class="h-full bg-accent rounded-l-full"
+                                         :style="'width: ' + ((stats.subscription_window.contribution.tokens_submitted / stats.subscription_window.contribution.raw_without_headroom) * 100).toFixed(1) + '%'"></div>
+                                </div>
+                                <div class="flex gap-4 mt-1 text-xs text-gray-500">
+                                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-accent inline-block"></span>Forwarded to Anthropic</span>
+                                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-border inline-block"></span>Saved by Headroom</span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- Discrepancies -->
+                <template x-if="stats.subscription_window.discrepancies && stats.subscription_window.discrepancies.length > 0">
+                    <div class="border-t border-border pt-3 mt-3">
+                        <div class="text-xs text-amber-400 uppercase tracking-wide mb-2">⚠ Anomalies Detected</div>
+                        <template x-for="d in stats.subscription_window.discrepancies" :key="d.kind + d.description">
+                            <div class="text-xs mb-1"
+                                 :class="d.severity === 'alert' ? 'text-red-400' : 'text-amber-400'"
+                                 x-text="d.description"></div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </template>
+        <!-- Codex Rate-Limit Window -->
+        <template x-if="stats.codex_rate_limits && stats.codex_rate_limits.primary">
+            <div class="bg-surface rounded-lg p-4 border border-border mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div class="text-sm font-medium text-gray-300">OpenAI Codex Rate-Limit Window</div>
+                    <template x-if="stats.codex_rate_limits.limit_name">
+                        <span class="text-xs text-gray-500 font-mono" x-text="stats.codex_rate_limits.limit_name"></span>
+                    </template>
+                </div>
+
+                <!-- Primary / Secondary window grid (mirrors Anthropic 5h/7d layout) -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <!-- Primary window -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-gray-400 uppercase tracking-wide">Primary
+                                <template x-if="stats.codex_rate_limits.primary.window_label">
+                                    <span class="text-gray-600 normal-case font-mono ml-1"
+                                          x-text="'(' + stats.codex_rate_limits.primary.window_label + ')'"></span>
+                                </template>
+                            </span>
+                            <span class="tabular-nums font-mono"
+                                  :class="(stats.codex_rate_limits.primary.used_percent||0) > 80 ? 'text-red-400' : (stats.codex_rate_limits.primary.used_percent||0) > 60 ? 'text-amber-400' : 'text-emerald-400'"
+                                  x-text="(stats.codex_rate_limits.primary.used_percent||0).toFixed(1) + '%'"></span>
+                        </div>
+                        <div class="w-full h-3 bg-border rounded-full overflow-hidden">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="(stats.codex_rate_limits.primary.used_percent||0) > 80 ? 'bg-red-500' : (stats.codex_rate_limits.primary.used_percent||0) > 60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                                 :style="'width: ' + Math.min(stats.codex_rate_limits.primary.used_percent||0, 100) + '%'"></div>
+                        </div>
+                        <template x-if="stats.codex_rate_limits.primary.seconds_until_reset !== null">
+                            <div class="text-xs text-gray-500 mt-1"
+                                 x-text="'Resets in ' + formatResetTime(stats.codex_rate_limits.primary.seconds_until_reset)"></div>
+                        </template>
+                    </div>
+                    <!-- Secondary window -->
+                    <template x-if="stats.codex_rate_limits.secondary">
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-gray-400 uppercase tracking-wide">Secondary
+                                    <template x-if="stats.codex_rate_limits.secondary.window_label">
+                                        <span class="text-gray-600 normal-case font-mono ml-1"
+                                              x-text="'(' + stats.codex_rate_limits.secondary.window_label + ')'"></span>
+                                    </template>
+                                </span>
+                                <span class="tabular-nums font-mono"
+                                      :class="(stats.codex_rate_limits.secondary.used_percent||0) > 80 ? 'text-red-400' : (stats.codex_rate_limits.secondary.used_percent||0) > 60 ? 'text-amber-400' : 'text-emerald-400'"
+                                      x-text="(stats.codex_rate_limits.secondary.used_percent||0).toFixed(1) + '%'"></span>
+                            </div>
+                            <div class="w-full h-3 bg-border rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all duration-500"
+                                     :class="(stats.codex_rate_limits.secondary.used_percent||0) > 80 ? 'bg-red-500' : (stats.codex_rate_limits.secondary.used_percent||0) > 60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                                     :style="'width: ' + Math.min(stats.codex_rate_limits.secondary.used_percent||0, 100) + '%'"></div>
+                            </div>
+                            <template x-if="stats.codex_rate_limits.secondary.seconds_until_reset !== null">
+                                <div class="text-xs text-gray-500 mt-1"
+                                     x-text="'Resets in ' + formatResetTime(stats.codex_rate_limits.secondary.seconds_until_reset)"></div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Credits section (mirrors Anthropic extra-usage section) -->
+                <template x-if="stats.codex_rate_limits.credits">
+                    <div class="border-t border-border pt-3 mb-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs text-gray-400 uppercase tracking-wide">Credits</span>
+                            <span class="text-sm font-mono font-medium"
+                                  :class="stats.codex_rate_limits.credits.unlimited ? 'text-purple-400' : stats.codex_rate_limits.credits.has_credits ? 'text-emerald-400' : 'text-red-400'"
+                                  x-text="stats.codex_rate_limits.credits.unlimited ? '∞ Unlimited' : stats.codex_rate_limits.credits.balance ? stats.codex_rate_limits.credits.balance : (stats.codex_rate_limits.credits.has_credits ? 'Active' : 'No Credits')"></span>
+                        </div>
+                        <template x-if="stats.codex_rate_limits.credits.balance && !stats.codex_rate_limits.credits.unlimited">
+                            <div class="text-xs text-gray-500 mt-0.5">Pay-as-you-go credits balance</div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- Promo message -->
+                <template x-if="stats.codex_rate_limits.promo_message">
+                    <div class="mt-2 text-xs text-blue-400 italic"
+                         x-text="stats.codex_rate_limits.promo_message"></div>
+                </template>
+            </div>
+        </template>
+
+        <!-- GitHub Copilot Quota -->
+        <template x-if="stats.copilot_quota && stats.copilot_quota.latest">
+            <div class="bg-surface rounded-lg p-4 border border-border mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div class="text-sm font-medium text-gray-300">GitHub Copilot Quota</div>
+                    <div class="flex items-center gap-2">
+                        <template x-if="stats.copilot_quota.latest.copilot_plan">
+                            <span class="text-xs text-gray-500 font-mono capitalize" x-text="stats.copilot_quota.latest.copilot_plan + ' plan'"></span>
+                        </template>
+                        <template x-if="stats.copilot_quota.latest.login">
+                            <span class="text-xs text-gray-400" x-text="'@' + stats.copilot_quota.latest.login"></span>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Per-category quota grid (3 columns, mirrors Anthropic 5h/7d structure) -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <template x-for="[catKey, catLabel] in [['chat','Chat'],['completions','Completions'],['premium_interactions','Premium']]" :key="catKey">
+                        <template x-if="stats.copilot_quota.latest.categories[catKey]">
+                            <div>
+                                <div class="flex justify-between text-xs mb-1">
+                                    <span class="text-gray-400 uppercase tracking-wide" x-text="catLabel"></span>
+                                    <template x-if="stats.copilot_quota.latest.categories[catKey].unlimited">
+                                        <span class="text-purple-400 font-mono">∞</span>
+                                    </template>
+                                    <template x-if="!stats.copilot_quota.latest.categories[catKey].unlimited">
+                                        <span class="tabular-nums font-mono"
+                                              :class="(stats.copilot_quota.latest.categories[catKey].used_percent||0) > 80 ? 'text-red-400' : (stats.copilot_quota.latest.categories[catKey].used_percent||0) > 50 ? 'text-amber-400' : 'text-emerald-400'"
+                                              x-text="(stats.copilot_quota.latest.categories[catKey].used_percent||0).toFixed(0) + '%'"></span>
+                                    </template>
+                                </div>
+                                <!-- Used / entitlement count (big number like Anthropic window) -->
+                                <template x-if="!stats.copilot_quota.latest.categories[catKey].unlimited">
+                                    <div class="flex items-baseline gap-1 mb-1">
+                                        <span class="text-lg font-light tabular-nums"
+                                              :class="(stats.copilot_quota.latest.categories[catKey].used_percent||0) > 80 ? 'text-red-400' : (stats.copilot_quota.latest.categories[catKey].used_percent||0) > 50 ? 'text-amber-400' : 'text-emerald-400'"
+                                              x-text="stats.copilot_quota.latest.categories[catKey].used ?? '-'"></span>
+                                        <span class="text-xs text-gray-500 font-mono"
+                                              x-text="'/ ' + (stats.copilot_quota.latest.categories[catKey].entitlement ?? '∞')"></span>
+                                        <span class="text-xs text-gray-500 ml-auto font-mono"
+                                              x-text="(stats.copilot_quota.latest.categories[catKey].remaining ?? '') + ' left'"></span>
+                                    </div>
+                                </template>
+                                <template x-if="stats.copilot_quota.latest.categories[catKey].unlimited">
+                                    <div class="text-lg font-light text-purple-400 mb-1">Unlimited</div>
+                                </template>
+                                <!-- Progress bar -->
+                                <template x-if="!stats.copilot_quota.latest.categories[catKey].unlimited">
+                                    <div class="w-full h-3 bg-border rounded-full overflow-hidden">
+                                        <div class="h-full rounded-full transition-all duration-500"
+                                             :class="(stats.copilot_quota.latest.categories[catKey].used_percent||0) > 80 ? 'bg-red-500' : (stats.copilot_quota.latest.categories[catKey].used_percent||0) > 50 ? 'bg-amber-500' : 'bg-emerald-500'"
+                                             :style="'width: ' + Math.min(stats.copilot_quota.latest.categories[catKey].used_percent||0, 100) + '%'"></div>
+                                    </div>
+                                </template>
+                                <!-- Overage info -->
+                                <template x-if="stats.copilot_quota.latest.categories[catKey].overage_count > 0">
+                                    <div class="text-xs text-amber-400 mt-1"
+                                         x-text="stats.copilot_quota.latest.categories[catKey].overage_count + ' overage uses'"></div>
+                                </template>
+                                <div class="mt-1">
+                                    <span class="text-xs"
+                                          :class="stats.copilot_quota.latest.categories[catKey].overage_permitted ? 'text-gray-500' : 'text-gray-600'"
+                                          x-text="stats.copilot_quota.latest.categories[catKey].overage_permitted ? 'Overage allowed' : 'No overage'"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </template>
+                </div>
+
+                <!-- Monthly reset section (mirrors Anthropic extra-usage border section) -->
+                <div class="border-t border-border pt-3">
+                    <div class="flex justify-between text-xs mb-2">
+                        <span class="text-gray-400 uppercase tracking-wide">Monthly Reset</span>
+                        <template x-if="stats.copilot_quota.latest.quota_reset_date_utc">
+                            <span class="text-gray-400 font-mono"
+                                  x-text="formatMonthlyReset(stats.copilot_quota.latest.quota_reset_date_utc)"></span>
+                        </template>
+                    </div>
+                    <template x-if="stats.copilot_quota.latest.quota_reset_date_utc">
+                        <div>
+                            <!-- Month-elapsed bar: filled = time elapsed, empty = time remaining -->
+                            <div class="w-full h-2 bg-border rounded-full overflow-hidden">
+                                <div class="h-full bg-accent/50 rounded-full transition-all duration-500"
+                                     :style="'width: ' + (100 - Math.min(100, Math.max(0, (new Date(stats.copilot_quota.latest.quota_reset_date_utc) - new Date()) / (30 * 86400000) * 100))) + '%'"></div>
+                            </div>
+                            <div class="flex justify-between text-xs text-gray-600 mt-0.5">
+                                <span>Month start</span>
+                                <span x-text="new Date(stats.copilot_quota.latest.quota_reset_date_utc).toLocaleDateString(undefined, {month:'short', day:'numeric'})"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+
+        <template x-if="(stats.prefix_cache?.totals?.requests || 0) > 0">
+            <div class="bg-surface rounded-lg p-4 border border-border mb-6">
+                <div class="flex justify-between items-center mb-3">
+                    <div class="text-sm font-medium text-gray-300">Prefix Cache Impact</div>
+                    <div class="text-xs text-emerald-400 font-mono" x-text="'Net savings: $' + formatCurrency(stats.prefix_cache?.totals?.net_savings_usd || 0)"></div>
+                </div>
+                <!-- Totals row -->
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Reads</div>
+                        <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="formatNumber(stats.prefix_cache?.totals?.cache_read_tokens || 0)"></div>
+                        <div class="text-xs text-emerald-400/70" x-text="'$' + formatCurrency(stats.prefix_cache?.totals?.savings_usd || 0) + ' saved'"></div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Writes</div>
+                        <div class="text-2xl font-light tabular-nums text-amber-400" x-text="formatNumber(stats.prefix_cache?.totals?.cache_write_tokens || 0)"></div>
+                        <div class="text-xs text-amber-400/70" x-text="'$' + formatCurrency(stats.prefix_cache?.totals?.write_premium_usd || 0) + ' write premium'"></div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Hit Rate</div>
+                        <div class="text-2xl font-light tabular-nums" :class="(stats.prefix_cache?.totals?.hit_rate || 0) > 80 ? 'text-emerald-400' : (stats.prefix_cache?.totals?.hit_rate || 0) > 50 ? 'text-amber-400' : 'text-red-400'" x-text="(stats.prefix_cache?.totals?.hit_rate || 0).toFixed(0) + '%'"></div>
+                        <div class="text-xs text-gray-500" x-text="(stats.prefix_cache?.totals?.hit_requests || 0) + ' / ' + (stats.prefix_cache?.totals?.requests || 0) + ' requests'"></div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Busts</div>
+                        <div class="text-2xl font-light tabular-nums" :class="(stats.prefix_cache?.totals?.bust_count || 0) > 5 ? 'text-red-400' : (stats.prefix_cache?.totals?.bust_count || 0) > 0 ? 'text-amber-400' : 'text-emerald-400'" x-text="stats.prefix_cache?.totals?.bust_count || 0"></div>
+                        <div class="text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.bust_write_tokens || 0) + ' tokens re-written'"></div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Providers</div>
+                        <div class="text-2xl font-light tabular-nums text-gray-300" x-text="Object.keys(stats.prefix_cache?.by_provider || {}).length"></div>
+                        <div class="text-xs text-gray-500">with cache data</div>
+                    </div>
+                </div>
+                <!-- Cache efficiency bar -->
+                <div>
+                    <div class="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Cache Efficiency</span>
+                        <span x-text="cacheSavingsPercent + '% of input served from cache'"></span>
+                    </div>
+                    <div class="w-full h-3 bg-border rounded-full overflow-hidden flex">
+                        <div class="h-full bg-emerald-500 transition-all duration-500"
+                             :style="'width: ' + cacheSavingsPercent + '%'"></div>
+                        <div class="h-full bg-amber-500 transition-all duration-500"
+                             :style="'width: ' + cacheWritePercent + '%'"></div>
+                    </div>
+                    <div class="flex gap-4 mt-1 text-xs text-gray-500">
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> Reads (discounted)</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span> Writes</span>
+                        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-border inline-block"></span> Uncached</span>
+                    </div>
+                </div>
+                <template x-if="hasObservedTtlBuckets">
+                    <div class="mt-5 border-t border-border pt-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <div class="text-xs text-gray-500 uppercase tracking-[0.22em]">Observed TTL Buckets</div>
+                                <div class="text-sm text-gray-300 mt-1">Provider-reported cache write mix</div>
+                            </div>
+                            <div class="text-xs text-gray-500 font-mono" x-text="observedTtlWindowLabel"></div>
+                        </div>
+                        <div class="grid grid-cols-1 xl:grid-cols-[1.3fr_0.9fr] gap-4">
+                            <div class="ttl-bucket-gradient-card rounded-2xl border border-cyan-500/20 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="text-[11px] uppercase tracking-[0.22em] text-cyan-300/75">Bucket Mix</div>
+                                <div class="mt-1 text-2xl font-light text-cyan-50">
+                                    <span data-testid="ttl-bucket-mix-1h-total" x-text="formatNumber(stats.prefix_cache?.totals?.cache_write_1h_tokens || 0)"></span>
+                                    <span class="text-sm text-cyan-300/70">1h</span>
+                                    <span class="mx-2 text-cyan-500/60">/</span>
+                                    <span data-testid="ttl-bucket-mix-5m-total" x-text="formatNumber(stats.prefix_cache?.totals?.cache_write_5m_tokens || 0)"></span>
+                                    <span class="text-sm text-cyan-300/70">5m</span>
+                                </div>
+                            </div>
+                            <div data-testid="ttl-bucket-headline" class="rounded-full border border-cyan-400/20 bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-cyan-200/80" x-text="observedTtlHeadline"></div>
+                                </div>
+                                <div class="mt-4">
+                                    <div class="flex justify-between text-xs text-gray-500 mb-1">
+                                        <span>Observed write-token split</span>
+                                        <span x-text="(stats.prefix_cache?.totals?.observed_ttl_mix?.active_buckets || []).join(' + ')"></span>
+                                    </div>
+                                    <div class="h-3 overflow-hidden rounded-full bg-black/30 ring-1 ring-white/5 flex">
+                                        <div class="h-full bg-cyan-400 transition-all duration-500" :style="'width:' + (stats.prefix_cache?.totals?.observed_ttl_mix?.['1h_pct'] || 0) + '%'"></div>
+                                        <div class="h-full bg-violet-400 transition-all duration-500" :style="'width:' + (stats.prefix_cache?.totals?.observed_ttl_mix?.['5m_pct'] || 0) + '%'"></div>
+                                    </div>
+                                    <div class="mt-2 flex flex-wrap gap-3 text-xs text-gray-400">
+                                        <span class="inline-flex items-center gap-1.5"><span class="inline-block h-2 w-2 rounded-full bg-cyan-400"></span><span data-testid="ttl-bucket-mix-1h-pct" x-text="'1h ' + (stats.prefix_cache?.totals?.observed_ttl_mix?.['1h_pct'] || 0).toFixed(1) + '%'"></span></span>
+                                        <span class="inline-flex items-center gap-1.5"><span class="inline-block h-2 w-2 rounded-full bg-violet-400"></span><span data-testid="ttl-bucket-mix-5m-pct" x-text="'5m ' + (stats.prefix_cache?.totals?.observed_ttl_mix?.['5m_pct'] || 0).toFixed(1) + '%'"></span></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
+                                <div class="bg-surface rounded-lg p-4 border border-border">
+                                    <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">1h Cache Writes</div>
+                                    <div data-testid="ttl-bucket-1h-value" class="mt-2 text-3xl font-light text-cyan-50" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['1h']?.tokens || 0)"></div>
+                                    <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['1h']?.requests || 0) + ' requests observed'"></div>
+                                </div>
+                                <div class="bg-surface rounded-lg p-4 border border-border">
+                                    <div class="text-[11px] uppercase tracking-[0.18em] text-violet-300/75">5m Cache Writes</div>
+                                    <div data-testid="ttl-bucket-5m-value" class="mt-2 text-3xl font-light text-violet-50" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['5m']?.tokens || 0)"></div>
+                                    <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['5m']?.requests || 0) + ' requests observed'"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <!-- Compression vs cache: net impact of prefix-mutating layers -->
+                <template x-if="hasCompressionVsCache">
+                    <div class="mt-5 border-t border-border pt-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide">Compression vs Cache</div>
+                                <div class="text-[11px] text-gray-600 mt-0.5">Tokens saved by compression against cached-prefix tokens its mutations invalidated</div>
+                            </div>
+                            <div data-testid="cvc-net-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]" :class="compressionVsCacheNet >= 0 ? 'border-emerald-400/20 text-emerald-300/90' : 'border-red-400/25 text-red-300/90'" x-text="compressionVsCacheNet >= 0 ? 'Net positive' : 'Net negative'"></div>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-emerald-300/75">Saved by Compression</div>
+                                <div data-testid="cvc-saved-value" class="mt-2 text-3xl font-light text-emerald-50" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.tokens_saved_by_compression || 0)"></div>
+                                <div class="mt-1 text-xs text-gray-500">tokens removed before send</div>
+                            </div>
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-red-300/75">Lost to Cache Busts</div>
+                                <div data-testid="cvc-bust-value" class="mt-2 text-3xl font-light text-red-50" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.tokens_lost_to_cache_bust || 0)"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.cache_bust_count || 0) + ' busts observed'"></div>
+                            </div>
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Net</div>
+                                <div data-testid="cvc-net-value" class="mt-2 text-3xl font-light" :class="compressionVsCacheNet >= 0 ? 'text-emerald-400' : 'text-red-400'" x-text="(compressionVsCacheNet >= 0 ? '+' : '-') + formatNumber(Math.abs(compressionVsCacheNet))"></div>
+                                <div class="mt-1 text-xs text-gray-500">saved minus bust losses</div>
+                            </div>
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">Prefix Freeze Net</div>
+                                <div data-testid="freeze-net-value" class="mt-2 text-3xl font-light" :class="prefixFreezeNet >= 0 ? 'text-cyan-50' : 'text-red-400'" x-text="(prefixFreezeNet >= 0 ? '+' : '-') + formatNumber(Math.abs(prefixFreezeNet))"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.prefix_freeze?.busts_avoided || 0) + ' busts avoided, ' + formatNumber(stats.prefix_cache?.prefix_freeze?.compression_foregone_tokens || 0) + ' foregone'"></div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <!-- Cache miss attribution: why expected-cache turns missed (#1313) -->
+                <template x-if="hasMissAttribution">
+                    <div class="mt-5 border-t border-border pt-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <div class="text-xs text-gray-500 uppercase tracking-wide">Cache Miss Attribution</div>
+                                <div class="text-[11px] text-gray-600 mt-0.5">Why turns that expected a prompt-cache hit missed — TTL lapse (consider a longer TTL) vs the cacheable prefix changing</div>
+                            </div>
+                            <div data-testid="miss-attr-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]"
+                                 :class="(missAttribution.ttl_expiry_pct || 0) >= (missAttribution.prefix_change_pct || 0) ? 'border-violet-400/25 text-violet-300/90' : 'border-amber-400/25 text-amber-300/90'"
+                                 x-text="(missAttribution.ttl_expiry_pct || 0) >= (missAttribution.prefix_change_pct || 0) ? 'Mostly TTL lapse' : 'Mostly prefix change'"></div>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-violet-300/75">TTL Expiry</div>
+                                <div data-testid="miss-attr-ttl-value" class="mt-2 text-3xl font-light text-violet-50" x-text="formatNumber(missAttribution.ttl_expiry || 0)"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="(missAttribution.ttl_expiry_pct || 0).toFixed(1) + '% of attributed — idle past cache TTL'"></div>
+                            </div>
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-amber-300/75">Prefix Change</div>
+                                <div data-testid="miss-attr-prefix-value" class="mt-2 text-3xl font-light text-amber-50" x-text="formatNumber(missAttribution.prefix_change || 0)"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="(missAttribution.prefix_change_pct || 0).toFixed(1) + '% of attributed — cached prefix shifted'"></div>
+                            </div>
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Unknown</div>
+                                <div data-testid="miss-attr-unknown-value" class="mt-2 text-3xl font-light text-gray-300" x-text="formatNumber(missAttribution.unknown || 0)"></div>
+                                <div class="mt-1 text-xs text-gray-500">stable prefix, within TTL</div>
+                            </div>
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Total Misses</div>
+                                <div data-testid="miss-attr-total-value" class="mt-2 text-3xl font-light text-gray-100" x-text="formatNumber(missAttribution.total || 0)"></div>
+                                <div class="mt-1 text-xs text-gray-500">expected a cache hit, got none</div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <!-- Per-provider breakdown -->
+                <template x-if="Object.keys(stats.prefix_cache?.by_provider || {}).length > 0">
+                    <div class="mt-4 border-t border-border pt-3">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Per-Provider Breakdown</div>
+                        <div class="space-y-3">
+                            <template x-for="[prov, pc] in Object.entries(stats.prefix_cache?.by_provider || {})" :key="prov">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <span class="px-2 py-0.5 bg-border rounded text-xs font-mono" x-text="prov"></span>
+                                        <span class="text-xs text-gray-500" x-text="pc.label"></span>
+                                    </div>
+                                    <div class="flex flex-wrap items-center justify-end gap-4 text-xs font-mono">
+                                        <span class="text-emerald-400" x-text="formatNumber(pc.cache_read_tokens) + ' reads (' + pc.read_discount + ' off)'"></span>
+                                        <template x-if="pc.write_premium !== 'none'">
+                                            <span class="text-amber-400" x-text="formatNumber(pc.cache_write_tokens) + ' writes (+' + pc.write_premium + ')'"></span>
+                                        </template>
+                                        <template x-if="pc.observed_ttl_mix">
+                                            <span class="text-cyan-300" x-text="'TTL 1h ' + (pc.observed_ttl_mix['1h_pct'] || 0).toFixed(1) + '% / 5m ' + (pc.observed_ttl_mix['5m_pct'] || 0).toFixed(1) + '%'"></span>
+                                        </template>
+                                        <span :class="pc.bust_count > 0 ? 'text-red-400' : 'text-gray-500'" x-text="pc.bust_count + ' busts'"></span>
+                                        <span class="text-emerald-400" x-text="'$' + formatCurrency(pc.net_savings_usd)"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+            </div>
+        </section>

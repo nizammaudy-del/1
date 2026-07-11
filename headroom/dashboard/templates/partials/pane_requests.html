@@ -1,0 +1,121 @@
+        <!-- Pane: Recent Requests -->
+        <section x-show="paneVisible('requests')" class="mb-6" :class="panes.requests ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('requests')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="Recent Requests" data-help="The last 10 requests through the proxy — timing, tokens, and savings. Click a row to expand transforms.">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Recent Requests</span>
+            </button>
+            <div x-show="!panes.requests">
+        <!-- Recent Requests Table (with expandable rows) -->
+        <div class="bg-surface rounded-lg border border-border overflow-hidden">
+            <div class="px-4 py-3 border-b border-border flex justify-between items-center">
+                <span class="text-sm font-medium text-gray-300">Recent Requests</span>
+                <span class="text-xs text-gray-500" x-text="'Last ' + recentRequestLimit + ' — click row to expand'"></span>
+            </div>
+            <div class="overflow-x-auto">
+                <div>
+                    <!-- Header -->
+                    <div class="grid text-xs text-gray-500 uppercase tracking-wide border-b border-border"
+                         style="grid-template-columns: 2rem 12fr 22fr 15fr 12fr 10fr 14fr">
+                        <div class="px-2 py-3"></div>
+                        <div class="px-4 py-3 font-medium" data-help-title="Time" data-help="When the request was received by the proxy.">Time</div>
+                        <div class="px-4 py-3 font-medium" data-help-title="Model" data-help="The model the request targeted.">Model</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Input" data-help="Input tokens sent upstream after compression for this request.">Input</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Output" data-help="Tokens the model generated in the response.">Output</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Saved" data-help="Percentage of input tokens compression removed on this request.">Saved</div>
+                        <div class="px-4 py-3 font-medium text-right" data-help-title="Latency" data-help="Total round-trip time for this request, including proxy overhead and upstream response.">Latency</div>
+                    </div>
+                    <!-- Data rows -->
+                    <div class="divide-y divide-border">
+                        <template x-for="req in (stats.recent_requests || [])" :key="req.request_id">
+                            <div>
+                                <div class="cursor-pointer focus:ring-2 focus:ring-accent focus:outline-none" role="button" tabindex="0"
+                                     :aria-expanded="!!expandedRows[req.request_id]"
+                                     @click="toggleExpanded(req.request_id)"
+                                     @keydown.enter="toggleExpanded(req.request_id)"
+                                     @keydown.space.prevent="toggleExpanded(req.request_id)">
+                                    <div class="grid hover:bg-border/30 transition-colors"
+                                         style="grid-template-columns: 2rem 12fr 22fr 15fr 12fr 10fr 14fr">
+                                        <div class="px-2 py-3 text-gray-500 flex items-center justify-center">
+                                            <span x-text="expandedRows[req.request_id] ? '-' : '+'"></span>
+                                        </div>
+                                        <div class="px-4 py-3 font-mono text-gray-400 truncate" x-text="formatTime(req.timestamp)"></div>
+                                        <div class="px-4 py-3 min-w-0">
+                                            <span class="px-2 py-0.5 bg-border rounded text-xs truncate" x-text="truncateModel(req.model)"></span>
+                                        </div>
+                                        <div class="px-4 py-3 text-right font-mono tabular-nums" x-text="formatNumber(req.input_tokens_optimized)"></div>
+                                        <div class="px-4 py-3 text-right font-mono tabular-nums" x-text="formatNumber(req.output_tokens || 0)"></div>
+                                        <div class="px-4 py-3 text-right">
+                                            <span class="text-accent font-mono tabular-nums" x-text="req.savings_percent.toFixed(0) + '%'"></span>
+                                        </div>
+                                        <div class="px-4 py-3 text-right font-mono tabular-nums text-gray-400" x-text="(req.total_latency_ms || 0).toFixed(0) + 'ms'"></div>
+                                    </div>
+                                </div>
+                                <!-- Expanded detail row -->
+                                <template x-if="expandedRows[req.request_id]">
+                                    <div class="px-8 py-4 border-t border-border" style="background: var(--card-alt-bg);">
+                                        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                                            <div>
+                                                <div class="text-gray-500 uppercase tracking-wide mb-1">Original Tokens</div>
+                                                <div class="font-mono" x-text="formatNumber(req.input_tokens_original)"></div>
+                                            </div>
+                                            <div>
+                                                <div class="text-gray-500 uppercase tracking-wide mb-1">Compressed Tokens</div>
+                                                <div class="font-mono" x-text="formatNumber(req.input_tokens_optimized)"></div>
+                                            </div>
+                                            <div>
+                                                <div class="text-gray-500 uppercase tracking-wide mb-1">Tokens Removed</div>
+                                                <div class="font-mono text-accent" x-text="formatNumber(req.tokens_saved)"></div>
+                                            </div>
+                                            <div>
+                                                <div class="text-gray-500 uppercase tracking-wide mb-1">Optimization Time</div>
+                                                <div class="font-mono" x-text="(req.optimization_latency_ms || 0).toFixed(0) + 'ms'"></div>
+                                            </div>
+                                        </div>
+                                        <!-- Transforms Applied -->
+                                        <template x-if="(req.transforms_applied || []).length > 0">
+                                            <div class="mt-3">
+                                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Transforms Applied</div>
+                                                <div class="flex flex-wrap gap-1">
+                                                    <template x-for="t in req.transforms_applied" :key="t">
+                                                        <span class="px-2 py-0.5 bg-border rounded text-xs font-mono" x-text="t"></span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                        <!-- Waste Signals for this request -->
+                                        <template x-if="req.waste_signals && Object.keys(req.waste_signals).length > 0">
+                                            <div class="mt-3">
+                                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Waste Detected</div>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="[signal, tokens] in Object.entries(req.waste_signals).filter(([,v]) => v > 0)" :key="signal">
+                                                        <span class="px-2 py-0.5 rounded text-xs font-mono"
+                                                              :class="wasteSignalBadgeColor(signal)"
+                                                              x-text="wasteSignalLabel(signal) + ': ' + formatNumber(tokens)"></span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                        <template x-if="(stats.recent_requests || []).length === 0">
+                            <div class="px-4 py-8 text-center text-gray-500 italic">
+                                No requests yet. Start using the proxy to see activity here.
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <template x-if="(stats.recent_requests || []).length > 0 && recentRequestLimit < 50">
+                    <div class="px-4 py-3 border-t border-border text-center">
+                        <button type="button" @click="showMoreRecentRequests()"
+                                class="text-xs text-accent hover:text-accent/80 focus:ring-2 focus:ring-accent focus:outline-none rounded px-2 py-1">
+                            Show more
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+            </div>
+        </section>
