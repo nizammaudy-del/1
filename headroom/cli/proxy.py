@@ -1098,6 +1098,27 @@ def proxy(
         ),
     )
 
+    # Apply dashboard-persisted settings (Settings panel → dashboard_config.json).
+    # These are "restart required" in the UI: an explicit CLI flag / env var
+    # always wins, but when one is unset the stored value takes effect on launch.
+    # Without this the UI happily saves budget/profile/ratio that never apply.
+    from headroom.proxy import user_config as _user_config
+
+    _stored_settings = _user_config.get_settings()
+    if config.budget_limit_usd is None and _stored_settings.get("budget_limit_usd") is not None:
+        config.budget_limit_usd = _stored_settings["budget_limit_usd"]
+        # Pair the period with the dashboard-provided budget (CLI --budget-period
+        # can't be distinguished from its "daily" default, so only override here).
+        stored_period = _stored_settings.get("budget_period")
+        if stored_period:
+            config.budget_period = cast(
+                Literal["hourly", "daily", "monthly"], stored_period
+            )
+    if config.savings_profile is None and _stored_settings.get("savings_profile"):
+        config.savings_profile = _stored_settings["savings_profile"]
+    if config.target_ratio is None and _stored_settings.get("target_ratio") is not None:
+        config.target_ratio = _stored_settings["target_ratio"]
+
     memory_status = "DISABLED"
     if config.memory_enabled:
         memory_status = "ENABLED (multi-provider)"

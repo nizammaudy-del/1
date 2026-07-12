@@ -234,7 +234,7 @@ def check_savings(stats: dict[str, Any] | None, savings_file: Path) -> CheckResu
             return CheckResult(
                 name=name, status=WARN, summary=f"could not read savings file {savings_file}"
             )
-    if payload is None:
+    if not isinstance(payload, dict):
         return CheckResult(
             name=name,
             status=WARN,
@@ -242,7 +242,8 @@ def check_savings(stats: dict[str, Any] | None, savings_file: Path) -> CheckResu
             hint="route a client through the proxy and make a request",
         )
 
-    lifetime = payload.get("lifetime") or {}
+    lifetime = payload.get("lifetime")
+    lifetime = lifetime if isinstance(lifetime, dict) else {}
     tokens = lifetime.get("tokens_saved", 0) or 0
     usd = lifetime.get("compression_savings_usd", 0.0) or 0.0
     if not tokens:
@@ -253,7 +254,8 @@ def check_savings(stats: dict[str, Any] | None, savings_file: Path) -> CheckResu
             hint="route a client through the proxy and make a request",
         )
 
-    session = payload.get("display_session") or {}
+    session = payload.get("display_session")
+    session = session if isinstance(session, dict) else {}
     freshness = None
     last_activity = session.get("last_activity_at")
     if isinstance(last_activity, str):

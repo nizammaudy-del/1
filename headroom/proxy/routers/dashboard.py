@@ -681,7 +681,11 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         else:
             payload = await _build_stats_payload()
             if include_sensitive:
-                payload.update(_build_recent_request_payload(render_limit=recent_limit))
+                # _build_stats_payload already baked in the recent tail at the
+                # default limit; only rebuild (re-reading the logger) when a
+                # non-default limit was requested.
+                if recent_limit != RECENT_REQUEST_RENDER_DEFAULT:
+                    payload.update(_build_recent_request_payload(render_limit=recent_limit))
                 payload["config"] = _dashboard_config_payload()
         if not include_sensitive:
             # _build_stats_payload bakes these in; strip for network callers.
@@ -1076,9 +1080,13 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
     @router.get("/learn/history", dependencies=[Depends(_require_loopback)])
     async def learn_history(limit: int = 50):
         """Recent ``headroom learn`` runs recorded to the workspace."""
+        from starlette.concurrency import run_in_threadpool
+
         from headroom.cli.learn_history import read_learn_history
 
-        return JSONResponse(content={"runs": read_learn_history(limit)})
+        limit = max(1, min(limit, 200))
+        runs = await run_in_threadpool(read_learn_history, limit)
+        return JSONResponse(content={"runs": runs})
 
     @router.get("/debug/memory/sync", dependencies=[Depends(_require_loopback)])
     async def debug_memory_sync():

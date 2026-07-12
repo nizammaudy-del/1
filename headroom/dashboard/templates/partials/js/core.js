@@ -104,20 +104,30 @@ function dashboardCore() {
                 },
                 async pollDashboard(force = false) {
                     if (!force && document.hidden) return;
+                    // Skip if a previous tick is still in flight, so a slow poll
+                    // can't be overtaken by a later one and then overwrite it with
+                    // stale /stats data.
+                    if (this._polling) return;
+                    this._polling = true;
+                    try {
+                        await this.fetchStats();
+                        await this.fetchActiveAgents();
+                        // Diagnostics pane only renders in session view; skip its
+                        // filesystem-backed fetch while on other tabs.
+                        if (this.viewMode === 'session') this.fetchDiagnostics();
 
-                    await this.fetchStats();
-                    await this.fetchActiveAgents();
-                    this.fetchDiagnostics();
-
-                    const now = Date.now();
-                    if (this.viewMode === 'history' && (force || now - this.lastHistoryFetchMs >= this.historyPollMs)) {
-                        await this.fetchHistoryStats();
-                    }
-                    if (this.feedOpen && (force || now - this.lastFeedFetchMs >= this.feedPollMs)) {
-                        await this.fetchTransformations();
-                    }
-                    if (this.viewMode === 'mcp') {
-                        await this.fetchMcpUsage();
+                        const now = Date.now();
+                        if (this.viewMode === 'history' && (force || now - this.lastHistoryFetchMs >= this.historyPollMs)) {
+                            await this.fetchHistoryStats();
+                        }
+                        if (this.feedOpen && (force || now - this.lastFeedFetchMs >= this.feedPollMs)) {
+                            await this.fetchTransformations();
+                        }
+                        if (this.viewMode === 'mcp') {
+                            await this.fetchMcpUsage();
+                        }
+                    } finally {
+                        this._polling = false;
                     }
                 },
 
@@ -171,14 +181,17 @@ function dashboardCore() {
                             // since the last poll would allow, the proxy process restarted
                             // and in-memory session stats reset to 0.
                             if (
-                                !this.restartBannerDismissed &&
                                 this._lastSeenUptimeSeconds !== null &&
                                 this._lastPollAtMs !== null
                             ) {
                                 const elapsedSeconds = (now - this._lastPollAtMs) / 1000;
                                 const expectedMinUptime = this._lastSeenUptimeSeconds + elapsedSeconds - 5;
                                 if (health.uptime_seconds < this._lastSeenUptimeSeconds || health.uptime_seconds < expectedMinUptime) {
+                                    // A fresh restart re-arms the banner even if a
+                                    // previous one was dismissed — otherwise dismissing
+                                    // once would suppress every future restart notice.
                                     this.restartBannerVisible = true;
+                                    this.restartBannerDismissed = false;
                                 }
                             }
                             this._lastSeenUptimeSeconds = health.uptime_seconds;

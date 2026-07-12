@@ -11,7 +11,13 @@ function dashboardMcpMixin() {
                 toggleMcpDashboard(dash) {
                     const name = dash.name;
                     this.mcpDashboardExpanded[name] = !this.mcpDashboardExpanded[name];
-                    if (!this.mcpDashboardExpanded[name] || this.mcpDashboardStatus[name]) return;
+                    if (!this.mcpDashboardExpanded[name]) {
+                        // Collapsing: cancel any pending fallback timer so it
+                        // doesn't fire against a now-hidden row.
+                        clearTimeout(this.mcpDashboardTimers[name]);
+                        return;
+                    }
+                    if (this.mcpDashboardStatus[name]) return;
                     if (name !== 'serena') return; // no iframe attempt for unknown MCPs, link-only
                     this.mcpDashboardStatus[name] = 'loading';
                     this.mcpDashboardTimers[name] = setTimeout(() => {

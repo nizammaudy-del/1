@@ -6,7 +6,7 @@
              class="w-full max-w-2xl rounded-lg border border-border bg-surface shadow-xl">
             <div class="flex items-center justify-between border-b border-border px-6 py-4">
                 <h2 class="text-lg font-semibold text-gray-100">Settings</h2>
-                <button @click="settingsOpen = false" class="text-gray-500 hover:text-gray-200" title="Close">&#10005;</button>
+                <button type="button" @click="settingsOpen = false" aria-label="Close settings" class="text-gray-500 hover:text-gray-200" title="Close">&#10005;</button>
             </div>
 
             <div class="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-6">

@@ -18,9 +18,11 @@ from .sync import _load_sync_state
 
 def _safe_int(value: object) -> int:
     """Coerce a persisted count to int, defaulting to 0 on any bad input."""
+    if isinstance(value, bool):  # bool is an int subclass; not a real count
+        return 0
     try:
         return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
