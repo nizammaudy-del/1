@@ -48,7 +48,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
     router = APIRouter()
 
     @router.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard():
+    async def dashboard() -> str:
         """Serve the Headroom dashboard UI."""
         return get_dashboard_html()
 
@@ -126,7 +126,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
             now = time.time()
             if _throughput_cache["expires_at"] < now or _throughput_cache["value"] is None:
 
-                def _compute_throughput():
+                def _compute_throughput() -> Any:
                     from headroom.perf.analyzer import build_perf_summary, parse_log_files
 
                     perf_report = parse_log_files(last_n_hours=1.0)
@@ -688,7 +688,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
     @router.get("/stats")
     async def stats(
         request: Request, cached: bool = False, recent_limit: int = RECENT_REQUEST_RENDER_DEFAULT
-    ):
+    ) -> dict[str, Any]:
         """Get comprehensive proxy statistics.
 
         This is the main stats endpoint - it aggregates data from all subsystems:
@@ -735,7 +735,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         return payload
 
     @router.post("/stats/reset", dependencies=[Depends(_require_loopback)])
-    async def stats_reset():
+    async def stats_reset() -> JSONResponse:
         """Reset in-memory proxy stats for local test/debug isolation."""
         await proxy.metrics.reset_runtime()
         if proxy.cost_tracker:
@@ -751,7 +751,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         format: Literal["json", "csv"] = "json",
         series: Literal["history", "hourly", "daily", "weekly", "monthly"] = "history",
         history_mode: Literal["compact", "full", "none"] = "compact",
-    ):
+    ) -> Response | dict[str, Any]:
         """Get durable proxy compression history plus display-session state.
 
         The JSON payload also carries a ``cli_filtering`` key with live RTK
@@ -798,7 +798,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         return history
 
     @router.get("/mcp/dashboards", dependencies=[Depends(_require_loopback)])
-    async def mcp_dashboards():
+    async def mcp_dashboards() -> JSONResponse:
         """List installed MCP servers that expose their own web dashboard.
 
         Only servers we know ship a dashboard are considered; for each we check
@@ -844,7 +844,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
     # this aggregates mcp__<server>__<tool> tool_use blocks out of the recent
     # request message logs instead of a real-time usage table.
     @router.get("/mcp/usage", dependencies=[Depends(_require_loopback)])
-    async def mcp_usage(limit: int = 100):
+    async def mcp_usage(limit: int = 100) -> JSONResponse:
         """Per-MCP tool-call usage aggregated from recently logged requests.
 
         Reflects only requests captured while ``log_full_messages`` is enabled,
@@ -901,7 +901,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         )
 
     @router.get("/v1/retrieve/stats", dependencies=[Depends(_require_loopback)])
-    async def ccr_stats():
+    async def ccr_stats() -> dict[str, Any]:
         """Get CCR compression store statistics."""
         store = _server.get_compression_store()
         stats = store.get_stats()
@@ -922,7 +922,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         }
 
     @router.get("/v1/feedback", dependencies=[Depends(_require_loopback)])
-    async def ccr_feedback():
+    async def ccr_feedback() -> dict[str, Any]:
         """Get CCR feedback loop statistics and learned patterns.
 
         This endpoint exposes the feedback loop's learned patterns for monitoring
@@ -955,7 +955,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         }
 
     @router.get("/v1/feedback/{tool_name}", dependencies=[Depends(_require_loopback)])
-    async def ccr_feedback_for_tool(tool_name: str):
+    async def ccr_feedback_for_tool(tool_name: str) -> dict[str, Any]:
         """Get compression hints for a specific tool.
 
         Returns feedback-based hints that would be used for compressing
@@ -990,12 +990,12 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         }
 
     @router.get("/config")
-    async def get_config():
+    async def get_config() -> JSONResponse:
         """Return dashboard-editable config (pricing overrides + settings)."""
         return JSONResponse(status_code=200, content=user_config.config_response())
 
     @router.post("/config", dependencies=[Depends(_require_loopback)])
-    async def post_config(request: Request):
+    async def post_config(request: Request) -> JSONResponse:
         """Validate and persist dashboard config changes. Loopback-only.
 
         Body: ``{"pricing": {model: {input_per_1m, ...}}, "settings": {...}}``.
@@ -1017,7 +1017,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         )
 
     @router.get("/admin/deployments", dependencies=[Depends(_require_loopback)])
-    async def admin_deployments():
+    async def admin_deployments() -> JSONResponse:
         """List LOCAL install profiles recorded on this machine.
 
         ponytail: these are local deployment manifests written by
@@ -1044,7 +1044,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         "/mcp/dashboards/serena/summary",
         dependencies=[Depends(_require_loopback)],
     )
-    async def mcp_serena_summary():
+    async def mcp_serena_summary() -> JSONResponse:
         """Serena's live tool stats + active project, if it is reachable.
 
         Probes Serena's local dashboard API on 127.0.0.1:24282. On any error
@@ -1082,7 +1082,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         return JSONResponse(content=await asyncio.to_thread(_fetch))
 
     @router.get("/stats/active_agents", dependencies=[Depends(_require_loopback)])
-    async def stats_active_agents(window_seconds: int = 60):
+    async def stats_active_agents(window_seconds: int = 60) -> JSONResponse:
         """Agents seen in completed request logs within the recent window.
 
         ponytail: this is "recently active" derived from COMPLETED request
@@ -1153,7 +1153,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         return JSONResponse(content={"window_seconds": window, "agents": agents})
 
     @router.get("/learn/history", dependencies=[Depends(_require_loopback)])
-    async def learn_history(limit: int = 50):
+    async def learn_history(limit: int = 50) -> JSONResponse:
         """Recent ``headroom learn`` runs recorded to the workspace."""
         from starlette.concurrency import run_in_threadpool
 
@@ -1164,7 +1164,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         return JSONResponse(content={"runs": runs})
 
     @router.get("/debug/memory/sync", dependencies=[Depends(_require_loopback)])
-    async def debug_memory_sync():
+    async def debug_memory_sync() -> JSONResponse:
         """Per-agent memory sync counters from persisted sync state."""
         from headroom.memory.sync_stats import get_sync_stats
 

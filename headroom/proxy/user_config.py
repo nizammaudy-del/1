@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from typing import Any
+from typing import Any, TypeGuard, cast
 
 from headroom import paths
 
@@ -95,7 +95,7 @@ def _load_locked() -> dict[str, Any]:
 def load() -> dict[str, Any]:
     """Return the raw stored config ({"pricing": ..., "settings": ...})."""
     with _lock:
-        return json.loads(json.dumps(_load_locked()))
+        return cast("dict[str, Any]", json.loads(json.dumps(_load_locked())))
 
 
 def get_settings() -> dict[str, Any]:
@@ -112,7 +112,9 @@ def get_settings() -> dict[str, Any]:
 def get_pricing_overrides() -> dict[str, dict[str, float]]:
     """Return the raw per-model pricing override map."""
     with _lock:
-        return json.loads(json.dumps(_load_locked()["pricing"]))
+        return cast(
+            "dict[str, dict[str, float]]", json.loads(json.dumps(_load_locked()["pricing"]))
+        )
 
 
 def pricing_override_per_token(model: str) -> dict[str, float] | None:
@@ -124,7 +126,7 @@ def pricing_override_per_token(model: str) -> dict[str, float] | None:
     usable ``input_per_1m`` is configured for the model.
     """
 
-    def _is_number(value: object) -> bool:
+    def _is_number(value: object) -> TypeGuard[int | float]:
         # bool is a subclass of int in Python; reject it so a hand-edited
         # `true`/`false` in the JSON can't silently become a numeric rate.
         return isinstance(value, int | float) and not isinstance(value, bool)
@@ -135,7 +137,9 @@ def pricing_override_per_token(model: str) -> dict[str, float] | None:
     if not isinstance(entry, dict):
         return None
     input_per_1m = entry.get("input_per_1m")
-    if not _is_number(input_per_1m) or input_per_1m <= 0:
+    if not _is_number(input_per_1m):
+        return None
+    if input_per_1m <= 0:
         return None
     input_pt = float(input_per_1m) / 1_000_000
     output_per_1m = entry.get("output_per_1m")
@@ -242,7 +246,7 @@ def update(body: dict[str, Any]) -> dict[str, Any]:
 
     global _cache
     with _lock:
-        current = json.loads(json.dumps(_load_locked()))
+        current = cast("dict[str, Any]", json.loads(json.dumps(_load_locked())))
         if "pricing" in body:
             current["pricing"] = _validate_pricing(body["pricing"])
         if "settings" in body:
