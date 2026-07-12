@@ -133,8 +133,8 @@ class ProxyConfig:
     ccr_inject_tool: bool = True
     ccr_inject_system_instructions: bool = False
     # Proxy-level mirror of ContentRouterConfig.ccr_inject_marker, so retrieval
-    # markers can be toggled from the CLI (--no-ccr-marker). Threaded into the
-    # router in server.py; default preserves current behavior.
+    # markers can be toggled from the CLI (--no-ccr, which also drops the retrieve
+    # tool). Threaded into the router in server.py; default preserves current behavior.
     ccr_inject_marker: bool = True
 
     # CCR Response Handling
@@ -171,6 +171,17 @@ class ProxyConfig:
     disable_kompress_anthropic: bool | None = None
     disable_kompress_openai: bool | None = None
 
+    # Force ALL compressible content through Kompress (kompress-v2-base),
+    # bypassing per-type compressor selection (SmartCrusher/CodeAware/log/
+    # diff/html/tabular/search). Tool ground truth stays protected: excluded
+    # tools (Read/Glob/Grep/...) and reversibility-gated tool output are never
+    # touched. Off by default; opt-in for systems that want one uniform
+    # compressor at the cost of per-type structural fidelity.
+    # CLI: --force-kompress-all; env: HEADROOM_FORCE_KOMPRESS_ALL=1.
+    force_kompress_all: bool = False
+
+    lossless: bool = False  # CLI: --lossless; env: HEADROOM_LOSSLESS=1. No-CCR mode: compress without any retrieval marker.
+
     # Code graph live watcher (triggers incremental reindex on file changes)
     code_graph_watcher: bool = False
 
@@ -197,6 +208,11 @@ class ProxyConfig:
     # built-in DEFAULT_EXCLUDE_TOOLS. None means built-in defaults only.
     # CLI: --exclude-tools <name1,name2>; env: HEADROOM_EXCLUDE_TOOLS=<name1,name2>
     exclude_tools: set[str] | None = None
+
+    # Tool names whose results must never be lossy-compressed (e.g. Bash, WebFetch).
+    # Merged into exclude_tools before ContentRouter processes the conversation.
+    # CLI: --protect-tool-results <name1,name2>; env: HEADROOM_PROTECT_TOOL_RESULTS=<name1,name2>
+    protect_tool_results: frozenset[str] = field(default_factory=frozenset)
 
     # Read lifecycle management
     read_lifecycle: bool = True
@@ -271,6 +287,7 @@ class ProxyConfig:
     max_keepalive_connections: int = 100
     keepalive_expiry: float = 90.0
     http2: bool = True
+    http_proxy: str | None = None
 
     # Memory System
     memory_enabled: bool = False
@@ -337,6 +354,18 @@ class ProxyConfig:
     # Stateless mode — disable all filesystem writes for read-only / container deployments
     stateless: bool = False
 
+    # Optional inbound auth. When set, non-loopback requests to the data-plane
+    # routes must present this token (``Authorization: Bearer <token>`` or the
+    # ``X-Headroom-Proxy-Token`` header). Loopback callers are exempt. Closes the
+    # gap where a container bound to 0.0.0.0 exposes unauthenticated /v1/* routes
+    # to the pod network. Env: HEADROOM_PROXY_TOKEN.
+    proxy_token: str | None = None
+
+    # Air-gap master switch — hard-disable ALL outbound network egress
+    # (telemetry beacon, update check, license/usage reporter, HuggingFace model
+    # downloads) for fully offline / regulated deployments. Env: HEADROOM_OFFLINE=1.
+    offline: bool = False
+
     # Unit 4: Bounded pre-upstream concurrency for Anthropic replay storms.
     #
     # Caps the number of simultaneous requests allowed to run the
@@ -356,7 +385,7 @@ class ProxyConfig:
     # Precedence: CLI > env > auto-compute.
     anthropic_pre_upstream_concurrency: int | None = None
     # Upper bound for waiting on the Anthropic pre-upstream semaphore
-    # before failing fast with a 503 + Retry-After. Keeps the queue bounded
+    # before failing open to passthrough compression. Keeps the queue bounded
     # when all pre-upstream slots are occupied by slow/hung work.
     anthropic_pre_upstream_acquire_timeout_seconds: float = 15.0
     # Fail-open timeout for Anthropic memory-context lookup while the request
@@ -367,9 +396,9 @@ class ProxyConfig:
     # Bound the dedicated compression threadpool. CPU-bound Rust work runs
     # here; the pool is separate from asyncio's default executor so other
     # ``asyncio.to_thread`` callers (file IO, etc.) are not contended by
-    # compression bursts. ``None`` resolves to ``min(32, (cpu_count or 1) * 4)``,
-    # matching asyncio's default executor sizing today. Lower the cap to
-    # tighten resource use on multi-tenant hosts; raise it to handle larger
+    # compression bursts. ``None`` resolves to ``cpu_count or 1`` so CPU-bound
+    # compression work does not oversubscribe hosts by default. Lower the cap
+    # to tighten resource use on multi-tenant hosts; raise it to handle larger
     # bursts. CLI: ``--compression-max-workers``. Env:
     # ``HEADROOM_COMPRESSION_MAX_WORKERS``.
     #
