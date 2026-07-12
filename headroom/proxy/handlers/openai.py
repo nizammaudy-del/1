@@ -1128,6 +1128,72 @@ class OpenAIHandlerMixin:
         """
         return _resolve_openai_upstream_base(request.headers) or self.OPENAI_API_URL
 
+    def _emit_openai_responses_payload_stage(
+        self,
+        stage: PipelineStage,
+        *,
+        request_id: str,
+        model: str,
+        payload: dict[str, Any],
+        headers: dict[str, str] | None = None,
+        transport: str,
+        stream: bool | None = None,
+        frame_index: int | None = None,
+        frame_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        bypass: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, str] | None, bool]:
+        """Emit canonical pipeline events for OpenAI Responses payloads.
+
+        The classic OpenAI chat and Anthropic handlers expose ``messages`` to
+        pipeline extensions. The Responses API is payload-native instead, so
+        extensions need the whole mutable Responses payload to inspect or
+        rewrite ``input`` items such as ``function_call_output`` before the
+        built-in Responses compressor runs. Explicit bypass is a full passthrough
+        contract, so payload extensions must not observe or mutate the payload.
+        """
+
+        if bypass:
+            return payload, headers, False
+
+        manager = getattr(self, "pipeline_extensions", None)
+        if manager is None or not getattr(manager, "enabled", False):
+            return payload, headers, False
+
+        before_payload = copy.deepcopy(payload)
+        before_headers = copy.deepcopy(headers) if headers is not None else None
+        event_metadata: dict[str, Any] = {
+            "path": "/v1/responses",
+            "api_style": "responses",
+            "transport": transport,
+        }
+        if stream is not None:
+            event_metadata["stream"] = stream
+        if frame_index is not None:
+            event_metadata["frame_index"] = frame_index
+        if frame_type is not None:
+            event_metadata["frame_type"] = frame_type
+        if metadata:
+            event_metadata.update(metadata)
+
+        event = manager.emit(
+            stage,
+            operation="proxy.request",
+            request_id=request_id,
+            provider="openai",
+            model=model,
+            headers=headers,
+            payload=payload,
+            metadata=event_metadata,
+        )
+        if isinstance(event.payload, dict):
+            payload = event.payload
+        if event.headers is not None:
+            headers = event.headers
+
+        changed = payload != before_payload or headers != before_headers
+        return payload, headers, changed
+
     @staticmethod
     def _strict_previous_turn_frozen_count(
         messages: list[dict[str, Any]],
@@ -3685,6 +3751,13 @@ class OpenAIHandlerMixin:
                 },
             )
 
+        _bypass = self._headroom_bypass_enabled(request.headers)
+        if _bypass:
+            logger.info(
+                "[%s] Responses passthrough reason=bypass_header mutation=disabled",
+                request_id,
+            )
+
         model = body.get("model", "unknown")
         stream = body.get("stream", False)
         body_mutation_tracker = BodyMutationTracker()
@@ -3694,6 +3767,18 @@ class OpenAIHandlerMixin:
                 "[%s] Responses passthrough reason=bypass_header mutation=disabled",
                 request_id,
             )
+
+        body, _, _ = self._emit_openai_responses_payload_stage(
+            PipelineStage.INPUT_RECEIVED,
+            request_id=request_id,
+            model=str(model or ""),
+            payload=body,
+            transport="http",
+            stream=bool(stream),
+            bypass=_bypass,
+        )
+        model = body.get("model", model)
+        stream = body.get("stream", stream)
 
         from headroom.proxy.helpers import capture_codex_wire_debug
 
@@ -4154,6 +4239,23 @@ class OpenAIHandlerMixin:
                         },
                     ) from _e
 
+            body, headers, _ = self._emit_openai_responses_payload_stage(
+                PipelineStage.INPUT_COMPRESSED,
+                request_id=request_id,
+                model=str(model or ""),
+                payload=body,
+                headers=headers,
+                transport="http",
+                stream=bool(stream),
+                metadata={
+                    "modified": bool(tokens_saved),
+                    "tokens_saved": tokens_saved,
+                    "attempted_input_tokens": attempted_input_tokens,
+                    "transforms_applied": transforms_applied,
+                },
+                bypass=_bypass,
+            )
+
         if not _bypass:
             _http_conversation_key = request.headers.get("x-headroom-session-id")
             _shape_result = _shape_openai_responses_for_output(
@@ -4175,24 +4277,40 @@ class OpenAIHandlerMixin:
                     _shape_result.labels,
                 )
 
-            capture_codex_wire_debug(
-                "http_upstream_request",
-                request_id=request_id,
-                transport="http",
-                direction="headroom_to_upstream",
-                method="POST",
-                url=url,
-                headers=headers,
-                body=body,
-                metadata={
-                    "path": request.url.path,
-                    "stream": stream,
-                    "auth_mode": auth_mode.value,
-                    "is_chatgpt_auth": is_chatgpt_auth,
-                    "tokens_saved": tokens_saved,
-                    "transforms_applied": transforms_applied,
-                },
-            )
+        body, headers, _ = self._emit_openai_responses_payload_stage(
+            PipelineStage.PRE_SEND,
+            request_id=request_id,
+            model=str(model or ""),
+            payload=body,
+            headers=headers,
+            transport="http",
+            stream=bool(stream),
+            metadata={
+                "tokens_saved": tokens_saved,
+                "transforms_applied": transforms_applied,
+            },
+            bypass=_bypass,
+        )
+        headers = headers or {}
+
+        capture_codex_wire_debug(
+            "http_upstream_request",
+            request_id=request_id,
+            transport="http",
+            direction="headroom_to_upstream",
+            method="POST",
+            url=url,
+            headers=headers,
+            body=body,
+            metadata={
+                "path": request.url.path,
+                "stream": stream,
+                "auth_mode": auth_mode.value,
+                "is_chatgpt_auth": is_chatgpt_auth,
+                "tokens_saved": tokens_saved,
+                "transforms_applied": transforms_applied,
+            },
+        )
 
         # Waste-signal detection for the Responses path (#820). The transform
         # pipeline never runs here (compression goes through CompressionUnits),
@@ -5178,6 +5296,33 @@ class OpenAIHandlerMixin:
                     request_id,
                 )
 
+            _first_pipeline_changed = False
+            if body:
+                _first_wrapped = isinstance(body.get("response"), dict)
+                _first_inner = body["response"] if _first_wrapped else body
+                if isinstance(_first_inner, dict):
+                    _first_model = str(_first_inner.get("model") or body.get("model") or "")
+                    _first_inner, _, _first_pipeline_changed = (
+                        self._emit_openai_responses_payload_stage(
+                            PipelineStage.INPUT_RECEIVED,
+                            request_id=request_id,
+                            model=_first_model,
+                            payload=_first_inner,
+                            headers=dict(ws_headers),
+                            transport="websocket",
+                            stream=True,
+                            frame_index=1,
+                            frame_type=str(body.get("type") or "response.create"),
+                            bypass=_ws_bypass,
+                        )
+                    )
+                    if _first_pipeline_changed:
+                        if _first_wrapped:
+                            body["response"] = _first_inner
+                        else:
+                            body = _first_inner
+                        first_msg_raw = json.dumps(body)
+
             capture_codex_wire_debug(
                 "ws_inbound_first_frame",
                 request_id=request_id,
@@ -5556,6 +5701,45 @@ class OpenAIHandlerMixin:
                                 _first_frame_compression_elapsed_ms,
                             )
                             _record_ws_compression_overhead(_first_frame_compression_elapsed_ms)
+                        _compressed_pipeline_changed = False
+                        _presend_pipeline_changed = False
+                        if isinstance(_new_inner, dict):
+                            _new_inner, _, _compressed_pipeline_changed = (
+                                self._emit_openai_responses_payload_stage(
+                                    PipelineStage.INPUT_COMPRESSED,
+                                    request_id=request_id,
+                                    model=str(_model or ""),
+                                    payload=_new_inner,
+                                    headers=dict(ws_headers),
+                                    transport="websocket",
+                                    stream=True,
+                                    frame_index=1,
+                                    frame_type=str(_send_body.get("type") or "response.create"),
+                                    metadata={
+                                        "modified": bool(_modified),
+                                        "tokens_saved": int(_ws_saved),
+                                        "attempted_input_tokens": int(_ws_attempted_tokens),
+                                        "transforms_applied": _ws_transforms,
+                                    },
+                                )
+                            )
+                            _new_inner, _, _presend_pipeline_changed = (
+                                self._emit_openai_responses_payload_stage(
+                                    PipelineStage.PRE_SEND,
+                                    request_id=request_id,
+                                    model=str(_model or ""),
+                                    payload=_new_inner,
+                                    headers=dict(ws_headers),
+                                    transport="websocket",
+                                    stream=True,
+                                    frame_index=1,
+                                    frame_type=str(_send_body.get("type") or "response.create"),
+                                    metadata={
+                                        "tokens_saved": int(_ws_saved),
+                                        "transforms_applied": _ws_transforms,
+                                    },
+                                )
+                            )
                         record_frame = getattr(
                             getattr(self, "metrics", None), "record_codex_ws_frame", None
                         )
@@ -5570,7 +5754,12 @@ class OpenAIHandlerMixin:
                                 strategy_chain=_codex_ws_strategy_chain(_ws_transforms),
                                 final_strategies=_codex_ws_final_strategies(_ws_compression_timing),
                             )
-                        if _modified:
+                        _pipeline_payload_changed = (
+                            _first_pipeline_changed
+                            or _compressed_pipeline_changed
+                            or _presend_pipeline_changed
+                        )
+                        if _modified or _pipeline_payload_changed:
                             if isinstance(_new_inner, dict):
                                 _rewrite_started = time.perf_counter()
                                 if _wrapped:
@@ -5584,23 +5773,29 @@ class OpenAIHandlerMixin:
                                     _rewrite_ms,
                                 )
                                 _record_ws_compression_overhead(_rewrite_ms)
-                                tokens_saved += int(_ws_saved)
-                                attempted_input_tokens_total += int(_ws_attempted_tokens)
-                                for _t in _ws_transforms:
-                                    if _t not in transforms_applied:
-                                        transforms_applied.append(_t)
-                                logger.info(
-                                    "[%s] WS /v1/responses compressed "
-                                    "%d→%d bytes (%d tokens saved, "
-                                    "auth_mode=%s, transforms=%s)",
-                                    request_id,
-                                    _bytes_before,
-                                    _bytes_after,
-                                    int(_ws_saved),
-                                    _ws_auth_mode.value,
-                                    transforms_applied,
-                                )
-                                ws_frames_compressed += 1
+                                if _modified:
+                                    tokens_saved += int(_ws_saved)
+                                    attempted_input_tokens_total += int(_ws_attempted_tokens)
+                                    for _t in _ws_transforms:
+                                        if _t not in transforms_applied:
+                                            transforms_applied.append(_t)
+                                    logger.info(
+                                        "[%s] WS /v1/responses compressed "
+                                        "%d→%d bytes (%d tokens saved, "
+                                        "auth_mode=%s, transforms=%s)",
+                                        request_id,
+                                        _bytes_before,
+                                        _bytes_after,
+                                        int(_ws_saved),
+                                        _ws_auth_mode.value,
+                                        transforms_applied,
+                                    )
+                                    ws_frames_compressed += 1
+                                else:
+                                    logger.info(
+                                        "[%s] WS /v1/responses pipeline extension modified first frame",
+                                        request_id,
+                                    )
                                 first_frame_rewritten = True
                         else:
                             _log_ws_passthrough(
@@ -5831,9 +6026,23 @@ class OpenAIHandlerMixin:
                                 frame_type="response.create",
                             )
                             return raw_msg, False, "invalid_inner_payload"
+                        model_for_frame = str(inner_payload.get("model") or "")
+                        inner_payload, _, pre_pipeline_changed = (
+                            self._emit_openai_responses_payload_stage(
+                                PipelineStage.INPUT_RECEIVED,
+                                request_id=request_id,
+                                model=model_for_frame,
+                                payload=inner_payload,
+                                headers=dict(ws_headers),
+                                transport="websocket",
+                                stream=True,
+                                frame_index=frame_index,
+                                frame_type="response.create",
+                            )
+                        )
                         frame_compression_elapsed_ms = 0.0
                         try:
-                            model_for_frame = inner_payload.get("model") or ""
+                            model_for_frame = str(inner_payload.get("model") or model_for_frame)
                             _frame_auth_mode = classify_auth_mode(ws_headers)
                             _preflight_ms = (time.perf_counter() - _preflight_started) * 1000.0
                             _record_ws_compression_timing(
@@ -5905,6 +6114,45 @@ class OpenAIHandlerMixin:
                                     frame_compression_elapsed_ms,
                                 )
                                 _record_ws_compression_overhead(frame_compression_elapsed_ms)
+                            compressed_pipeline_changed = False
+                            presend_pipeline_changed = False
+                            if isinstance(new_inner, dict):
+                                new_inner, _, compressed_pipeline_changed = (
+                                    self._emit_openai_responses_payload_stage(
+                                        PipelineStage.INPUT_COMPRESSED,
+                                        request_id=request_id,
+                                        model=model_for_frame,
+                                        payload=new_inner,
+                                        headers=dict(ws_headers),
+                                        transport="websocket",
+                                        stream=True,
+                                        frame_index=frame_index,
+                                        frame_type="response.create",
+                                        metadata={
+                                            "modified": bool(modified),
+                                            "tokens_saved": int(frame_saved),
+                                            "attempted_input_tokens": int(frame_attempted_tokens),
+                                            "transforms_applied": frame_transforms,
+                                        },
+                                    )
+                                )
+                                new_inner, _, presend_pipeline_changed = (
+                                    self._emit_openai_responses_payload_stage(
+                                        PipelineStage.PRE_SEND,
+                                        request_id=request_id,
+                                        model=model_for_frame,
+                                        payload=new_inner,
+                                        headers=dict(ws_headers),
+                                        transport="websocket",
+                                        stream=True,
+                                        frame_index=frame_index,
+                                        frame_type="response.create",
+                                        metadata={
+                                            "tokens_saved": int(frame_saved),
+                                            "transforms_applied": frame_transforms,
+                                        },
+                                    )
+                                )
                             record_frame = getattr(
                                 getattr(self, "metrics", None),
                                 "record_codex_ws_frame",
@@ -5951,7 +6199,12 @@ class OpenAIHandlerMixin:
                                 model=str(inner_payload.get("model") or "unknown"),
                             )
                             return raw_msg, False, "compression_exception"
-                        if not modified:
+                        pipeline_payload_changed = (
+                            pre_pipeline_changed
+                            or compressed_pipeline_changed
+                            or presend_pipeline_changed
+                        )
+                        if not modified and not pipeline_payload_changed:
                             reason = frame_reason or "no_compression"
                             _log_ws_passthrough(
                                 reason,
@@ -5983,24 +6236,31 @@ class OpenAIHandlerMixin:
                             _rewrite_ms,
                         )
                         _record_ws_compression_overhead(_rewrite_ms)
-                        tokens_saved += int(frame_saved)
-                        attempted_input_tokens_total += int(frame_attempted_tokens)
-                        for t in frame_transforms:
-                            if t not in transforms_applied:
-                                transforms_applied.append(t)
-                        ws_frames_compressed += 1
+                        if modified:
+                            tokens_saved += int(frame_saved)
+                            attempted_input_tokens_total += int(frame_attempted_tokens)
+                            for t in frame_transforms:
+                                if t not in transforms_applied:
+                                    transforms_applied.append(t)
+                            ws_frames_compressed += 1
+                            logger.info(
+                                "[%s] WS /v1/responses frame compressed "
+                                "%d→%d bytes (%d tokens saved, "
+                                "auth_mode=%s, frame=%d)",
+                                request_id,
+                                bytes_before,
+                                bytes_after,
+                                int(frame_saved),
+                                _frame_auth_mode.value,
+                                ws_frames_compressed,
+                            )
+                            return rewritten, True, frame_reason or "compressed"
                         logger.info(
-                            "[%s] WS /v1/responses frame compressed "
-                            "%d→%d bytes (%d tokens saved, "
-                            "auth_mode=%s, frame=%d)",
+                            "[%s] WS /v1/responses pipeline extension modified frame=%d",
                             request_id,
-                            bytes_before,
-                            bytes_after,
-                            int(frame_saved),
-                            _frame_auth_mode.value,
-                            ws_frames_compressed,
+                            frame_index,
                         )
-                        return rewritten, True, frame_reason or "compressed"
+                        return rewritten, True, "pipeline_modified"
 
                     async def _client_to_upstream() -> None:
                         nonlocal client_relay_error, ws_response_create_frames
