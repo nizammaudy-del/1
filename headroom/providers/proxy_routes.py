@@ -11,7 +11,11 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import Response
 
-from headroom.proxy.handlers.openai import _resolve_codex_routing_headers
+from headroom.proxy.handlers.openai import (
+    _custom_base_passthrough_telemetry,
+    _resolve_codex_routing_headers,
+    _sanitize_forwarded_response_headers,
+)
 
 logger = logging.getLogger("headroom.proxy.routes")
 
@@ -391,7 +395,13 @@ async def _handle_chatgpt_model_metadata(
     if request.url.query:
         url = f"{url}?{request.url.query}"
 
-    body = await request.body()
+    from starlette.requests import ClientDisconnect
+
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.debug("Client disconnected during body read for passthrough")
+        return Response(status_code=204)
     try:
         assert proxy.http_client is not None
         resp = await proxy.http_client.request(
@@ -411,8 +421,76 @@ async def _handle_chatgpt_model_metadata(
         return Response(content=str(exc), status_code=502)
 
 
+async def _handle_chatgpt_codex_images(
+    proxy: Any,
+    request: Request,
+    sub_path: str,
+) -> Response | None:
+    """Forward Codex OAuth image requests to ChatGPT's Codex image backend."""
+    from headroom.proxy.helpers import _strip_internal_headers
+
+    headers = dict(request.headers.items())
+    headers.pop("host", None)
+    headers.pop("accept-encoding", None)
+    headers = _strip_internal_headers(headers)
+    headers, is_chatgpt_auth = _resolve_codex_routing_headers(headers)
+    if not is_chatgpt_auth:
+        return None
+
+    url = f"https://chatgpt.com/backend-api/codex/images/{sub_path}"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+
+    from starlette.requests import ClientDisconnect
+
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.debug("Client disconnected during body read for passthrough")
+        return Response(status_code=204)
+    try:
+        client = getattr(proxy, "http_client_h1", None) or getattr(proxy, "http_client", None)
+        if client is None:
+            raise RuntimeError("No HTTP client configured for Codex image forwarding")
+        # OAuth image traffic intentionally skips request-outcome telemetry; no token usage is available here.
+        resp = await client.request(
+            request.method,
+            url,
+            headers=headers,
+            content=body,
+            timeout=120.0,
+        )
+        response_headers = _sanitize_forwarded_response_headers(resp.headers)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers=response_headers,
+        )
+    except Exception as exc:
+        logger.error("Passthrough /v1/images/%s failed: %s", sub_path, exc)
+        return Response(
+            content=json.dumps(
+                {
+                    "error": {
+                        "type": "upstream_error",
+                        "message": "Failed to forward Codex image request",
+                    }
+                }
+            ),
+            status_code=502,
+            media_type="application/json",
+        )
+
+
 def register_provider_routes(app: FastAPI, proxy: Any) -> None:
     """Register provider-specific proxy endpoints."""
+
+    def normalize_request_path(request: Request, path: str) -> None:
+        request.scope["path"] = path
+        if "raw_path" in request.scope:
+            request.scope["raw_path"] = quote(path).encode("ascii")
+        if hasattr(request, "_url"):
+            delattr(request, "_url")
 
     async def vertex_publisher_passthrough(request: Request, publisher: str, action: str):
         return await proxy.handle_passthrough(
@@ -424,7 +502,21 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.post("/v1/messages")
     async def anthropic_messages(request: Request):
+        # Honor the per-request upstream override so clients that speak the
+        # Anthropic Messages wire format but authenticate against a
+        # non-Anthropic gateway route correctly, consistent with the
+        # OpenAI-compatible and generic passthrough routes.
+        custom_base = request.headers.get("x-headroom-base-url", "").strip()
+        if custom_base:
+            return await proxy.handle_anthropic_messages(
+                request, upstream_base_url=custom_base.rstrip("/")
+            )
         return await proxy.handle_anthropic_messages(request)
+
+    @app.post("/anthropic/v1/messages")
+    async def foundry_anthropic_messages(request: Request):
+        normalize_request_path(request, "/v1/messages")
+        return await proxy.handle_anthropic_messages(request, _api_target(proxy, "anthropic"))
 
     # AWS Bedrock InvokeModel passthrough. Registered ONLY when an upstream is
     # configured (`--bedrock-api-url` / BEDROCK_TARGET_API_URL): without it,
@@ -514,7 +606,13 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
         if request.url.query:
             url = f"{url}?{request.url.query}"
 
-        body = await request.body()
+        from starlette.requests import ClientDisconnect
+
+        try:
+            body = await request.body()
+        except ClientDisconnect:
+            logger.debug("Client disconnected during body read for codex responses passthrough")
+            return Response(status_code=204)
         try:
             assert proxy.http_client is not None
             resp = await proxy.http_client.request(
@@ -676,6 +774,27 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
         return await vertex_publisher_passthrough(request, publisher, "rawPredict")
 
     @app.post(
+        "/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:rawPredict"
+    )
+    async def vertex_raw_predict_no_version(
+        request: Request,
+        project: str,
+        location: str,
+        publisher: str,
+        model: str,
+    ):
+        if publisher == "anthropic":
+            del project
+            target = _vertex_target_for_location(proxy, location).rstrip("/") + "/v1"
+            return await proxy.handle_anthropic_messages(
+                request,
+                target,
+                "vertex:anthropic",
+                model,
+            )
+        return await vertex_publisher_passthrough(request, publisher, "rawPredict")
+
+    @app.post(
         "/{api_version}/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:streamRawPredict"
     )
     async def vertex_stream_raw_predict(
@@ -691,6 +810,28 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
             return await proxy.handle_anthropic_messages(
                 request,
                 _vertex_target_for_location(proxy, location),
+                "vertex:anthropic",
+                model,
+                True,
+            )
+        return await vertex_publisher_passthrough(request, publisher, "streamRawPredict")
+
+    @app.post(
+        "/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:streamRawPredict"
+    )
+    async def vertex_stream_raw_predict_no_version(
+        request: Request,
+        project: str,
+        location: str,
+        publisher: str,
+        model: str,
+    ):
+        if publisher == "anthropic":
+            del project
+            target = _vertex_target_for_location(proxy, location).rstrip("/") + "/v1"
+            return await proxy.handle_anthropic_messages(
+                request,
+                target,
                 "vertex:anthropic",
                 model,
                 True,
@@ -753,10 +894,35 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.post("/v1/images/generations")
     async def openai_images_generations(request: Request):
+        chatgpt_response = await _handle_chatgpt_codex_images(
+            proxy,
+            request,
+            "generations",
+        )
+        if chatgpt_response is not None:
+            return chatgpt_response
+
         return await proxy.handle_passthrough(
             request,
             _api_target(proxy, "openai"),
             "images/generations",
+            "openai",
+        )
+
+    @app.post("/v1/images/edits")
+    async def openai_images_edits(request: Request):
+        chatgpt_response = await _handle_chatgpt_codex_images(
+            proxy,
+            request,
+            "edits",
+        )
+        if chatgpt_response is not None:
+            return chatgpt_response
+
+        return await proxy.handle_passthrough(
+            request,
+            _api_target(proxy, "openai"),
+            "images/edits",
             "openai",
         )
 
@@ -870,7 +1036,18 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
     async def passthrough(request: Request, path: str):
         custom_base = request.headers.get("x-headroom-base-url")
         if custom_base:
-            return await proxy.handle_passthrough(request, custom_base.rstrip("/"))
+            base_url = custom_base.rstrip("/")
+            endpoint_name, provider_name = _custom_base_passthrough_telemetry(
+                request.method,
+                path,
+                base_url,
+            )
+            return await proxy.handle_passthrough(
+                request,
+                base_url,
+                endpoint_name,
+                provider_name,
+            )
 
         # Intercept Code Assist authentication and onboarding routes
         clean_path = path.lstrip("/")

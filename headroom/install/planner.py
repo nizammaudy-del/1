@@ -27,11 +27,13 @@ SUPPORTED_TARGETS = [
     ToolTarget.AIDER,
     ToolTarget.CURSOR,
     ToolTarget.OPENCLAW,
+    ToolTarget.OPENCODE,
 ]
 PROVIDER_SCOPE_TARGETS = [
     ToolTarget.CLAUDE,
     ToolTarget.CODEX,
     ToolTarget.OPENCLAW,
+    ToolTarget.OPENCODE,
 ]
 
 
@@ -72,7 +74,7 @@ def resolve_targets(
         if unsupported:
             unsupported_list = ", ".join(sorted(set(unsupported)))
             raise click.ClickException(
-                "Provider scope supports only claude, codex, and openclaw; "
+                "Provider scope supports only claude, codex, openclaw, and opencode; "
                 f"unsupported targets: {unsupported_list}"
             )
 
@@ -117,6 +119,7 @@ def build_manifest(
     memory_enabled: bool,
     telemetry_enabled: bool,
     image: str,
+    no_http2: bool = False,
 ) -> DeploymentManifest:
     """Create a normalized deployment manifest."""
 
@@ -141,8 +144,9 @@ def build_manifest(
         base_env["HEADROOM_ANYLLM_PROVIDER"] = anyllm_provider
     if region:
         base_env["HEADROOM_REGION"] = region
-    if not telemetry_enabled:
-        base_env["HEADROOM_TELEMETRY"] = "off"
+    # Telemetry is opt-in (off by default). Write the value explicitly so the
+    # generated manifest is unambiguous and doesn't depend on the runtime default.
+    base_env["HEADROOM_TELEMETRY"] = "on" if telemetry_enabled else "off"
     if memory_enabled:
         base_env["HEADROOM_MEMORY_ENABLED"] = "1"
 
@@ -156,14 +160,15 @@ def build_manifest(
         "--backend",
         backend,
     ]
-    if not telemetry_enabled:
-        proxy_args.append("--no-telemetry")
+    proxy_args.append("--telemetry" if telemetry_enabled else "--no-telemetry")
     if memory_enabled:
         proxy_args.extend(["--memory", "--memory-db-path", str(_paths.memory_db_path())])
     if anyllm_provider:
         proxy_args.extend(["--anyllm-provider", anyllm_provider])
     if region:
         proxy_args.extend(["--region", region])
+    if no_http2:
+        proxy_args.append("--no-http2")
 
     container_name = f"headroom-{normalized_profile}"
     return DeploymentManifest(

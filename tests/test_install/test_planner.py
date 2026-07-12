@@ -39,6 +39,7 @@ def test_build_manifest_for_persistent_docker_sets_expected_defaults() -> None:
     assert manifest.health_url == "http://127.0.0.1:8787/readyz"
     assert manifest.base_env["HEADROOM_PORT"] == "8787"
     assert manifest.base_env["HEADROOM_TELEMETRY"] == "off"
+    assert "--no-telemetry" in manifest.proxy_args
     assert manifest.tool_envs["claude"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8787"
     assert manifest.tool_envs["copilot"]["COPILOT_PROVIDER_TYPE"] == "anthropic"
     assert "--memory" in manifest.proxy_args
@@ -62,6 +63,9 @@ def test_build_manifest_uses_provider_slice_env_builders_for_all_supported_targe
         image="ghcr.io/chopratejas/headroom:latest",
     )
 
+    # telemetry_enabled=True must write the explicit opt-in value + flag.
+    assert manifest.base_env["HEADROOM_TELEMETRY"] == "on"
+    assert "--telemetry" in manifest.proxy_args
     assert manifest.tool_envs["claude"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:9999"
     assert manifest.tool_envs["codex"]["OPENAI_BASE_URL"] == "http://127.0.0.1:9999/v1"
     assert manifest.tool_envs["aider"] == {
@@ -98,3 +102,47 @@ def test_resolve_targets_manual_dedupes_and_filters_invalid() -> None:
     )
 
     assert targets == [ToolTarget.CLAUDE.value, ToolTarget.COPILOT.value]
+
+
+def test_build_manifest_omits_no_http2_by_default() -> None:
+    manifest = build_manifest(
+        profile="default",
+        preset=InstallPreset.PERSISTENT_SERVICE.value,
+        runtime_kind="python",
+        scope="user",
+        provider_mode="manual",
+        targets=["claude"],
+        port=8787,
+        backend="anthropic",
+        anyllm_provider=None,
+        region=None,
+        proxy_mode="token",
+        memory_enabled=False,
+        telemetry_enabled=True,
+        image="ghcr.io/chopratejas/headroom:latest",
+    )
+
+    assert "--no-http2" not in manifest.proxy_args
+
+
+def test_build_manifest_persists_no_http2_override() -> None:
+    manifest = build_manifest(
+        profile="default",
+        preset=InstallPreset.PERSISTENT_SERVICE.value,
+        runtime_kind="python",
+        scope="user",
+        provider_mode="manual",
+        targets=["claude"],
+        port=8787,
+        backend="anthropic",
+        anyllm_provider=None,
+        region=None,
+        proxy_mode="token",
+        memory_enabled=False,
+        telemetry_enabled=True,
+        image="ghcr.io/chopratejas/headroom:latest",
+        no_http2=True,
+    )
+
+    assert manifest.proxy_args.count("--no-http2") == 1
+    assert "HEADROOM_HTTP2" not in manifest.base_env
