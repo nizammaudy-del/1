@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from ..memory.tracker import ComponentStats
 
 from headroom.proxy.models import CacheEntry
-from headroom.proxy.semantic_cache_key import compute_semantic_cache_key, strip_cache_control
+from headroom.proxy.semantic_cache_key_policy import compute_semantic_cache_key, strip_cache_control
 
 _strip_cache_control = strip_cache_control
 

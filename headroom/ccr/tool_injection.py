@@ -465,7 +465,8 @@ def parse_tool_call(
         args_str = function.get("arguments", "{}")
         try:
             input_data = json.loads(args_str)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
+            # TypeError covers a null/None `arguments` value (json.loads(None)).
             input_data = {}
     elif provider == "google":
         # Google/Gemini format: {"functionCall": {"name": "...", "args": {...}}}
@@ -480,7 +481,8 @@ def parse_tool_call(
         args_str = tool_call.get("arguments", "{}")
         try:
             input_data = json.loads(args_str)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
+            # TypeError covers a null/None `arguments` value (json.loads(None)).
             input_data = {}
     else:
         # Generic fallback
@@ -488,6 +490,12 @@ def parse_tool_call(
         input_data = tool_call.get("input", tool_call.get("args", {}))
 
     if name != CCR_TOOL_NAME:
+        return None
+
+    # A CCR-named tool call whose decoded arguments/input are not an object
+    # (a JSON array/string/number, or a non-dict Anthropic `input`) is simply
+    # not a valid CCR call — return None instead of crashing on `.get`.
+    if not isinstance(input_data, dict):
         return None
 
     hash_key = input_data.get("hash")

@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
 from headroom.proxy import runtime_env
@@ -54,6 +53,11 @@ from headroom.proxy.output_steering import (
     apply_verbosity_steering,
     replace_or_append_steering_block,
     steering_text,
+)
+from headroom.proxy.output_turn_policy import (
+    TurnKind,
+    classify_openai_responses_input,
+    classify_turn,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,25 +80,7 @@ __all__ = [
     "steering_text",
 ]
 
-_OPENAI_RESPONSES_OUTPUT_ITEM_TYPES = frozenset(
-    {
-        "custom_tool_call_output",
-        "function_call_output",
-        "local_shell_call_output",
-        "apply_patch_call_output",
-    }
-)
-
 _replace_or_append_steering_block = replace_or_append_steering_block
-
-
-class TurnKind(Enum):
-    """Structural classification of the latest conversation turn."""
-
-    NEW_USER_ASK = "new_user_ask"
-    MECHANICAL_CONTINUATION = "mechanical_continuation"
-    ERROR_CONTINUATION = "error_continuation"
-    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
@@ -200,53 +186,6 @@ class ShapeResult:
             self.labels = []
 
 
-def classify_turn(messages: list[dict[str, Any]]) -> TurnKind:
-    """Classify the latest turn from message structure alone.
-
-    - Any text block in the last user message → the user is asking something
-      new: full effort.
-    - Only tool_result blocks, none flagged ``is_error`` → mechanical
-      continuation: the model is resuming after a routine tool call.
-    - Any tool_result with ``is_error: true`` → error continuation: the model
-      must reason about a failure, keep full effort.
-    """
-    if not messages:
-        return TurnKind.UNKNOWN
-    last = messages[-1]
-    if not isinstance(last, dict) or last.get("role") != "user":
-        return TurnKind.UNKNOWN
-
-    content = last.get("content")
-    if isinstance(content, str):
-        return TurnKind.NEW_USER_ASK if content.strip() else TurnKind.UNKNOWN
-    if not isinstance(content, list) or not content:
-        return TurnKind.UNKNOWN
-
-    saw_tool_result = False
-    saw_error = False
-    for block in content:
-        if not isinstance(block, dict):
-            return TurnKind.UNKNOWN
-        btype = block.get("type")
-        if btype == "tool_result":
-            saw_tool_result = True
-            if block.get("is_error") is True:
-                saw_error = True
-        elif btype == "text":
-            # Fresh user text alongside (or instead of) tool results means
-            # the user interjected — treat as a new ask.
-            return TurnKind.NEW_USER_ASK
-        elif btype in ("image", "document"):
-            return TurnKind.NEW_USER_ASK
-        # Unknown block types are ignored rather than guessed at.
-
-    if saw_error:
-        return TurnKind.ERROR_CONTINUATION
-    if saw_tool_result:
-        return TurnKind.MECHANICAL_CONTINUATION
-    return TurnKind.UNKNOWN
-
-
 def route_effort(
     body: dict[str, Any],
     kind: TurnKind,
@@ -286,70 +225,6 @@ def route_effort(
             labels.append(f"output_shaper:thinking_budget:{budget}->{clamped}")
 
     return labels
-
-
-def _responses_part_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list):
-        texts: list[str] = []
-        for part in value:
-            if isinstance(part, str):
-                texts.append(part)
-            elif isinstance(part, dict) and isinstance(part.get("text"), str):
-                texts.append(part["text"])
-        return "\n".join(text for text in texts if text)
-    return ""
-
-
-def _responses_user_signal(item: dict[str, Any]) -> bool:
-    item_type = item.get("type")
-    role = item.get("role")
-    if role == "user":
-        content = item.get("content")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") in {
-                    "input_file",
-                    "input_image",
-                }:
-                    return True
-        text = _responses_part_text(content)
-        return bool(text.strip())
-    if item_type == "input_text":
-        text = _responses_part_text(item.get("text"))
-        return bool(text.strip())
-    if item_type == "input_image":
-        return True
-    return False
-
-
-def classify_openai_responses_input(input_data: Any) -> TurnKind:
-    """Classify OpenAI Responses ``input`` without content heuristics."""
-    if isinstance(input_data, str):
-        return TurnKind.NEW_USER_ASK if input_data.strip() else TurnKind.UNKNOWN
-    if not isinstance(input_data, list) or not input_data:
-        return TurnKind.UNKNOWN
-
-    saw_tool_output = False
-    saw_unknown = False
-    for item in input_data:
-        if not isinstance(item, dict):
-            saw_unknown = True
-            continue
-        item_type = item.get("type")
-        if item_type in _OPENAI_RESPONSES_OUTPUT_ITEM_TYPES:
-            saw_tool_output = True
-            continue
-        if _responses_user_signal(item):
-            return TurnKind.NEW_USER_ASK
-        if item_type in {"message", "function_call", "reasoning"}:
-            continue
-        saw_unknown = True
-
-    if saw_tool_output and not saw_unknown:
-        return TurnKind.MECHANICAL_CONTINUATION
-    return TurnKind.UNKNOWN
 
 
 def route_openai_reasoning_effort(
