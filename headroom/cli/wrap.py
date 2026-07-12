@@ -998,6 +998,7 @@ def _setup_headroom_retrieve_mcp_agy(registrar: Any, *, verbose: bool = False) -
         # must be re-claimed as Headroom-owned so ledger-gated uninstall works.
         # record_install upserts on spec.name, so this never double-counts.
         record_install(registrar.name, spec)
+        _prime_agy_retrieve_tool_cache(registrar)
         if verbose:
             click.echo(
                 "  MCP retrieve tool: headroom MCP registered persistently "
@@ -1015,6 +1016,48 @@ def _setup_headroom_retrieve_mcp_agy(registrar: Any, *, verbose: bool = False) -
         "  MCP retrieve tool: headroom MCP failed handshake — entry removed (agy left transport-only)."
     )
     return False
+
+
+def _prime_agy_retrieve_tool_cache(registrar: Any) -> None:
+    """Pre-write agy's per-tool cache for ``headroom_retrieve`` on first run.
+
+    agy only surfaces a server's tools from its persistent per-tool cache
+    (``<cache_dir>/<server>/<tool>.json``), which it otherwise writes only
+    *during* a session. So on a clean install the h76.5 exposure gate
+    (``_agy_exposes_retrieve_tool``) sees no cache file, withholds ``WIRED``,
+    and ccr downgrades to lossless for that first run — the "launch, exit,
+    re-launch" tax. Seeding the file here (verified: agy reads it at startup and
+    exposes the tool immediately) removes it. The schema mirrors the live
+    ``list_tools()`` entry via the shared ``CCR_RETRIEVE_TOOL_*`` constants, so
+    the primed cache cannot drift from what the server actually offers; ``agy``
+    serialises MCP ``inputSchema`` under the ``parameters`` key. Existing caches
+    are left untouched, and any write error degrades to the pre-fix behavior.
+    """
+    from headroom.ccr.mcp_server import (
+        CCR_RETRIEVE_TOOL_DESCRIPTION,
+        CCR_RETRIEVE_TOOL_INPUT_SCHEMA,
+        CCR_TOOL_NAME,
+    )
+
+    tool_cache = registrar.cache_dir / "headroom" / f"{CCR_TOOL_NAME}.json"
+    if tool_cache.is_file():
+        return
+    try:
+        tool_cache.parent.mkdir(parents=True, exist_ok=True)
+        tool_cache.write_text(
+            json.dumps(
+                {
+                    "name": CCR_TOOL_NAME,
+                    "description": CCR_RETRIEVE_TOOL_DESCRIPTION,
+                    "parameters": CCR_RETRIEVE_TOOL_INPUT_SCHEMA,
+                }
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        # A cache-write failure must never abort setup; the exposure gate simply
+        # falls back to the pre-fix downgrade-to-lossless for the first run.
+        pass
 
 
 def _ccr_backend_is_cross_process() -> bool:

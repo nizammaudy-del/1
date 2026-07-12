@@ -133,3 +133,51 @@ class TestMarkerToolAlignment:
         # disambiguating from lean-ctx ctx_expand.
         assert "ONLY" in src and "Headroom compression markers" in src
         assert "functionResponse compressed. Call headroom_retrieve" in src
+
+
+class TestFirstRunToolCachePriming:
+    """wrap agy pre-seeds agy's per-tool cache so retrieve is exposed run 1."""
+
+    def _cache_file(self, reg: AgyRegistrar) -> Path:
+        return reg.cache_dir / "headroom" / f"{CCR_TOOL_NAME}.json"
+
+    def test_setup_primes_retrieve_tool_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        from headroom.ccr.mcp_server import (
+            CCR_RETRIEVE_TOOL_DESCRIPTION,
+            CCR_RETRIEVE_TOOL_INPUT_SCHEMA,
+        )
+
+        monkeypatch.setattr("headroom.cli.wrap._smoke_verify_mcp_handshake", lambda *a, **k: True)
+        reg = _reg(tmp_path)
+        cache = self._cache_file(reg)
+        assert not cache.exists()  # clean install: no cache yet
+
+        assert _setup_headroom_retrieve_mcp_agy(reg) is True
+
+        assert cache.is_file()  # primed on the first setup, not after a relaunch
+        payload = json.loads(cache.read_text(encoding="utf-8"))
+        # Schema must mirror the live list_tools() entry (single source), with
+        # MCP inputSchema serialised under agy's ``parameters`` key.
+        assert payload == {
+            "name": CCR_TOOL_NAME,
+            "description": CCR_RETRIEVE_TOOL_DESCRIPTION,
+            "parameters": CCR_RETRIEVE_TOOL_INPUT_SCHEMA,
+        }
+
+    def test_priming_does_not_clobber_existing_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("headroom.cli.wrap._smoke_verify_mcp_handshake", lambda *a, **k: True)
+        reg = _reg(tmp_path)
+        cache = self._cache_file(reg)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text('{"name": "headroom_retrieve", "stale": true}', encoding="utf-8")
+
+        assert _setup_headroom_retrieve_mcp_agy(reg) is True
+
+        # An agy-written cache is authoritative; priming must not overwrite it.
+        assert cache.read_text(encoding="utf-8") == '{"name": "headroom_retrieve", "stale": true}'
