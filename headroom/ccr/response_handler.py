@@ -20,17 +20,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..cache.compression_store import format_retrieval_miss_detail, get_compression_store
-from .tool_injection import CCR_TOOL_NAME, parse_tool_call
+from .tool_calls import (
+    CCRToolCall,
+    extract_tool_calls,
+    has_ccr_tool_calls,
+    parse_ccr_tool_calls,
+)
+from .tool_injection import CCR_TOOL_NAME
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class CCRToolCall:
-    """Represents a detected CCR tool call."""
-
-    tool_call_id: str
-    hash_key: str
 
 
 @dataclass
@@ -110,13 +108,7 @@ class CCRResponseHandler:
         Returns:
             True if response contains headroom_retrieve tool calls.
         """
-        tool_calls = self._extract_tool_calls(response, provider)
-        return any(
-            tc.get("name") == CCR_TOOL_NAME
-            or tc.get("function", {}).get("name") == CCR_TOOL_NAME
-            or tc.get("functionCall", {}).get("name") == CCR_TOOL_NAME  # Google format
-            for tc in tool_calls
-        )
+        return has_ccr_tool_calls(response, provider)
 
     def _extract_tool_calls(
         self,
@@ -124,42 +116,10 @@ class CCRResponseHandler:
         provider: str,
     ) -> list[dict[str, Any]]:
         """Extract tool calls from response based on provider format."""
-        if provider == "anthropic":
-            # Anthropic format: content blocks with type=tool_use
-            content = response.get("content", [])
-            if isinstance(content, list):
-                return [block for block in content if block.get("type") == "tool_use"]
-            return []
-
-        elif provider == "openai":
-            # OpenAI format: message.tool_calls array
-            message = response.get("choices", [{}])[0].get("message", {})
-            tool_calls = message.get("tool_calls", [])
-            return list(tool_calls) if tool_calls else []
-
-        elif provider == "google":
-            # Google/Gemini format: candidates[0].content.parts contains functionCall objects
-            # Each part with a functionCall has: {"functionCall": {"name": "...", "args": {...}}}
-            candidates = response.get("candidates", [])
-            if not candidates:
-                return []
-            parts = candidates[0].get("content", {}).get("parts", [])
-            return [part for part in parts if "functionCall" in part]
-
-        elif provider == "openai_responses":
-            # OpenAI Responses API format: top-level `output[]` array with
-            # flat `function_call` items (no nested "function" object, no
-            # `choices[].message.tool_calls` wrapper like chat completions).
-            output = response.get("output", [])
-            if isinstance(output, list):
-                return [
-                    item
-                    for item in output
-                    if isinstance(item, dict) and item.get("type") == "function_call"
-                ]
-            return []
-
-        return []
+        if provider == "openai" and response.get("choices") == []:
+            # Preserve legacy private-method behavior for existing tests/callers.
+            raise IndexError("list index out of range")
+        return extract_tool_calls(response, provider)
 
     def _parse_ccr_tool_calls(
         self,
@@ -171,39 +131,7 @@ class CCRResponseHandler:
         Returns:
             Tuple of (ccr_tool_calls, other_tool_calls)
         """
-        all_tool_calls = self._extract_tool_calls(response, provider)
-
-        ccr_calls = []
-        other_calls = []
-
-        for tc in all_tool_calls:
-            hash_key = parse_tool_call(tc, provider)
-
-            if hash_key is not None:
-                # This is a CCR tool call - extract tool_call_id based on provider
-                if provider == "google":
-                    # Google uses function name as identifier for matching responses
-                    # The functionResponse.name must match the functionCall.name
-                    tool_call_id = tc.get("functionCall", {}).get("name", CCR_TOOL_NAME)
-                elif provider == "openai_responses":
-                    # Responses API function_call items key off `call_id`,
-                    # which is what the matching `function_call_output` item
-                    # must echo back (its own `id` is a separate item id).
-                    tool_call_id = tc.get("call_id", tc.get("id", ""))
-                else:
-                    # Anthropic and OpenAI use explicit IDs
-                    tool_call_id = tc.get("id", "")
-                ccr_calls.append(
-                    CCRToolCall(
-                        tool_call_id=tool_call_id,
-                        hash_key=hash_key,
-                    )
-                )
-            else:
-                # Not a CCR tool call
-                other_calls.append(tc)
-
-        return ccr_calls, other_calls
+        return parse_ccr_tool_calls(response, provider)
 
     def _execute_retrieval(self, ccr_call: CCRToolCall) -> CCRToolResult:
         """Execute a CCR retrieval.

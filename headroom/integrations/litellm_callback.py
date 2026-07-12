@@ -102,8 +102,10 @@ class HeadroomCallback(_CustomLogger):
         """Called by LiteLLM before each API call. Compresses messages."""
         if isinstance(cache, dict) and isinstance(data, str):
             data, call_type = cache, data
+
         if data is None:
             return None
+
         if call_type not in ("completion", "acompletion"):
             return data
 

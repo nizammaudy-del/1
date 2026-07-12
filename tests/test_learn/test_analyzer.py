@@ -592,6 +592,23 @@ class TestStripFencedJson:
         with pytest.raises(json.JSONDecodeError):
             _strip_fenced_json("not json at all")
 
+    def test_prose_preamble_before_fence(self):
+        # Models sometimes add a preamble before the fence despite being told
+        # to return JSON only (e.g. "Here it is:\n\n```json ...").
+        raw = 'The JSON is my deliverable. Here it is:\n\n```json\n{"key": "value"}\n```'
+        result = _strip_fenced_json(raw)
+        assert result == {"key": "value"}
+
+    def test_prose_around_bare_object(self):
+        raw = 'Sure, here you go: {"key": "value"} hope that helps!'
+        result = _strip_fenced_json(raw)
+        assert result == {"key": "value"}
+
+    def test_triple_backtick_inside_payload(self):
+        raw = '```json\n{"note": "run ```code``` here", "n": 1}\n```'
+        result = _strip_fenced_json(raw)
+        assert result == {"note": "run ```code``` here", "n": 1}
+
 
 def _fake_claude_popen(
     *,

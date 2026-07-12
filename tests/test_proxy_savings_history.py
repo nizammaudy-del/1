@@ -1689,7 +1689,13 @@ def test_active_display_session_without_cache_fields_reloads_safely(tmp_path, mo
     assert session["requests"] == 2
 
 
-def test_cache_savings_edge_cases_zero_and_unpriced(tmp_path):
+def test_cache_savings_edge_cases_zero_and_unpriced(tmp_path, monkeypatch):
+    # Pin a litellm whose price table doesn't know the model, so this stays a
+    # test of the unpriced-model path on every environment — on installs
+    # without litellm (e.g. Python 3.14) the blended-rate fallback would
+    # otherwise kick in and produce a nonzero estimate.
+    fake_litellm = SimpleNamespace(model_cost={})
+    monkeypatch.setattr(savings_tracker_module, "_get_litellm_module", lambda: fake_litellm)
     path = tmp_path / "proxy_savings.json"
     tracker = SavingsTracker(path=str(path))
 
@@ -1783,6 +1789,35 @@ def test_cache_savings_usd_uses_litellm_discount_delta(tmp_path, monkeypatch):
         timestamp="2026-07-02T00:00:00Z",
     )
     assert tracker.snapshot()["lifetime"]["cache_savings_usd"] == pytest.approx(2.7)
+
+
+def test_cache_savings_usd_falls_back_when_litellm_unavailable(tmp_path, monkeypatch):
+    # Regression: on any install without litellm (e.g. Python 3.14, where
+    # headroom-ai's own dependency spec excludes it), cache_savings_usd must
+    # use the same DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN estimate that
+    # _estimate_input_cost_usd already falls back to — not silently read as
+    # $0 forever while cache_read_tokens and total_input_cost_usd keep
+    # accumulating normally.
+    monkeypatch.setattr(savings_tracker_module, "LITELLM_AVAILABLE", False)
+    monkeypatch.setattr(savings_tracker_module, "litellm", None)
+
+    fallback_rate = savings_tracker_module.DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN
+    assert savings_tracker_module._estimate_cache_savings_usd(
+        "claude-sonnet-4-6", 1_000_000
+    ) == pytest.approx(1_000_000 * fallback_rate)
+
+    tracker = SavingsTracker(path=str(tmp_path / "proxy_savings.json"))
+    tracker.record_request(
+        model="claude-sonnet-4-6",
+        input_tokens=1_000,
+        tokens_saved=0,
+        cache_read_tokens=1_000_000,
+        timestamp="2026-07-02T00:00:00Z",
+    )
+    snapshot = tracker.snapshot()
+    assert snapshot["lifetime"]["cache_read_tokens"] == 1_000_000
+    assert snapshot["lifetime"]["cache_savings_usd"] > 0.0
+    assert snapshot["lifetime"]["cache_savings_usd"] == pytest.approx(1_000_000 * fallback_rate)
 
 
 def test_non_finite_state_values_coerce_to_defaults(tmp_path):

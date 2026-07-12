@@ -1006,3 +1006,55 @@ def test_strict_frozen_count_tool_and_function_tail_are_mutable():
         )
         == 3
     )
+
+
+class _ClientDisconnectRequest:
+    """Mock request whose body() raises ClientDisconnect to simulate mid-stream cancel."""
+
+    method = "POST"
+    headers = {"content-type": "application/json"}
+    url = SimpleNamespace(path="/v1/chat/completions", query="")
+
+    async def body(self) -> bytes:
+        from starlette.requests import ClientDisconnect
+
+        raise ClientDisconnect()
+
+
+class _ClientDisconnectStreamRequest:
+    """Mock request for streaming passthrough with ClientDisconnect."""
+
+    method = "POST"
+    headers = {"content-type": "application/json"}
+    url = SimpleNamespace(
+        path="/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:streamGenerateContent",
+        query="alt=sse",
+    )
+
+    async def body(self) -> bytes:
+        from starlette.requests import ClientDisconnect
+
+        raise ClientDisconnect()
+
+
+def test_handle_passthrough_client_disconnect():
+    """ClientDisconnect during body read returns 204 instead of crashing TaskGroup."""
+    handler = object.__new__(OpenAIHandlerMixin)
+    response = asyncio.run(
+        handler.handle_passthrough(_ClientDisconnectRequest(), "https://api.openai.com")
+    )
+    assert response.status_code == 204
+
+
+def test_handle_streaming_passthrough_client_disconnect():
+    """ClientDisconnect during streaming body read returns 204."""
+    handler = object.__new__(OpenAIHandlerMixin)
+    response = asyncio.run(
+        handler.handle_passthrough(
+            _ClientDisconnectStreamRequest(),
+            "https://us-central1-aiplatform.googleapis.com",
+            endpoint_name="streamRawPredict",
+            provider="vertex:google",
+        )
+    )
+    assert response.status_code == 204

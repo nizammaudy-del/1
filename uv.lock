@@ -48,7 +48,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/8e/ac2a9566747a93f8be36ee08532eb0160558b07630a081a6056a9f89bf1d/accelerate-1.12.0.tar.gz", hash = "sha256:70988c352feb481887077d2ab845125024b2a137a5090d6d7a32b57d03a45df6", size = 398399, upload-time = "2025-11-21T11:27:46.973Z" }
 wheels = [
@@ -1563,10 +1563,10 @@ all = [
     { name = "rapidocr-onnxruntime", marker = "python_full_version < '3.13'" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version >= '3.11'" },
-    { name = "sentence-transformers" },
+    { name = "sentence-transformers", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "sentencepiece" },
     { name = "sqlite-vec" },
-    { name = "torch" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "trafilatura" },
     { name = "transformers" },
     { name = "tree-sitter" },
@@ -1626,7 +1626,7 @@ evals = [
     { name = "openai" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version >= '3.11'" },
-    { name = "sentence-transformers" },
+    { name = "sentence-transformers", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
 ]
 html = [
     { name = "trafilatura" },
@@ -1648,7 +1648,7 @@ mcp = [
     { name = "mcp" },
 ]
 memory = [
-    { name = "sentence-transformers" },
+    { name = "sentence-transformers", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "sqlite-vec" },
 ]
 memory-stack = [
@@ -1658,7 +1658,7 @@ memory-stack = [
 ]
 ml = [
     { name = "huggingface-hub" },
-    { name = "torch" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "transformers" },
 ]
 otel = [
@@ -1721,7 +1721,7 @@ vector = [
 voice = [
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version < '3.14'" },
     { name = "onnxruntime", version = "1.26.0", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version >= '3.14'" },
-    { name = "torch" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "transformers" },
 ]
 voice-train = [
@@ -1729,7 +1729,7 @@ voice-train = [
     { name = "datasets" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version < '3.14'" },
     { name = "onnxruntime", version = "1.26.0", source = { registry = "https://pypi.org/simple/" }, marker = "python_full_version >= '3.14'" },
-    { name = "torch" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "transformers" },
 ]
 
@@ -1805,8 +1805,8 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'evals'", specifier = ">=1.3.0" },
     { name = "sentence-transformers", marker = "sys_platform == 'darwin' and extra == 'pytorch-mps'", specifier = ">=2.2.0" },
     { name = "sentence-transformers", marker = "extra == 'dev'", specifier = ">=2.2.0,<6.0" },
-    { name = "sentence-transformers", marker = "extra == 'evals'", specifier = ">=2.2.0,<6.0" },
-    { name = "sentence-transformers", marker = "extra == 'memory'", specifier = ">=2.2.0,<6.0" },
+    { name = "sentence-transformers", marker = "(platform_machine != 'x86_64' and extra == 'evals') or (sys_platform != 'darwin' and extra == 'evals')", specifier = ">=2.2.0,<6.0" },
+    { name = "sentence-transformers", marker = "(platform_machine != 'x86_64' and extra == 'memory') or (sys_platform != 'darwin' and extra == 'memory')", specifier = ">=2.2.0,<6.0" },
     { name = "sentencepiece", marker = "extra == 'image'", specifier = ">=0.1.99" },
     { name = "sqlite-vec", marker = "extra == 'dev'", specifier = ">=0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'memory'", specifier = ">=0.1.6" },
@@ -1815,8 +1815,8 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.5.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'pytorch-mps'", specifier = ">=2.12.1" },
-    { name = "torch", marker = "extra == 'ml'", specifier = ">=2.12.1" },
-    { name = "torch", marker = "extra == 'voice'", specifier = ">=2.12.1" },
+    { name = "torch", marker = "(platform_machine != 'x86_64' and extra == 'ml') or (sys_platform != 'darwin' and extra == 'ml')", specifier = ">=2.12.1" },
+    { name = "torch", marker = "(platform_machine != 'x86_64' and extra == 'voice') or (sys_platform != 'darwin' and extra == 'voice')", specifier = ">=2.12.1" },
     { name = "trafilatura", marker = "extra == 'html'", specifier = ">=1.6.0" },
     { name = "transformers", marker = "extra == 'ml'", specifier = ">=4.30.0,<6.0" },
     { name = "transformers", marker = "extra == 'proxy'", specifier = ">=4.30.0,<6.0" },
