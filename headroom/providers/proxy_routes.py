@@ -31,6 +31,9 @@ from headroom.providers.proxy_targets import (
     api_target as _api_target,
 )
 from headroom.providers.proxy_targets import (
+    cloudcode_host_base as _cloudcode_host_base,
+)
+from headroom.providers.proxy_targets import (
     select_passthrough_base_url as _select_passthrough_base_url,
 )
 from headroom.providers.proxy_targets import (
@@ -55,18 +58,12 @@ from headroom.providers.vertex import (
     vertex_anthropic_target,
     vertex_publisher_provider_name,
 )
-from headroom.proxy.agy_terminator import DEFAULT_ALLOWLIST
 from headroom.proxy.passthrough import (
     custom_base_passthrough_telemetry as _custom_base_passthrough_telemetry,
 )
 from headroom.proxy.request_scope import normalize_request_path
 
 logger = logging.getLogger("headroom.proxy.routes")
-
-
-def _cloudcode_host_base(host: str) -> str | None:
-    """Passthrough base for an allowlisted Cloud Code host, else None."""
-    return f"https://{host}" if host in DEFAULT_ALLOWLIST else None
 
 
 def _register_provider_passthrough_route(

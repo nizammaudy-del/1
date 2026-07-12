@@ -316,19 +316,37 @@ def test_proxy_route_helpers_prefer_legacy_targets_and_gemini_passthrough() -> N
 
 
 def test_cloudcode_host_base_allowlists_exact_hosts_only() -> None:
-    proxy_routes = importlib.import_module("headroom.providers.proxy_routes")
+    proxy_targets = importlib.import_module("headroom.providers.proxy_targets")
 
     # Every allowlisted host maps to its own https URL (guards against an
     # all-None regression where the helper rejects legitimate hosts too).
-    assert proxy_routes.DEFAULT_ALLOWLIST, "allowlist must be non-empty"
-    for host in proxy_routes.DEFAULT_ALLOWLIST:
-        assert proxy_routes._cloudcode_host_base(host) == f"https://{host}"
+    assert proxy_targets.DEFAULT_ALLOWLIST, "allowlist must be non-empty"
+    for host in proxy_targets.DEFAULT_ALLOWLIST:
+        assert proxy_targets.cloudcode_host_base(host) == f"https://{host}"
 
     # SSRF guard: a suffix-collision host that the old endswith() check accepted
     # is now rejected, as are empty / unrelated hosts.
-    assert proxy_routes._cloudcode_host_base("evilcloudcode-pa.googleapis.com") is None
-    assert proxy_routes._cloudcode_host_base("cloudcode-pa.googleapis.com.evil.test") is None
-    assert proxy_routes._cloudcode_host_base("") is None
+    assert proxy_targets.cloudcode_host_base("evilcloudcode-pa.googleapis.com") is None
+    assert proxy_targets.cloudcode_host_base("cloudcode-pa.googleapis.com.evil.test") is None
+    assert proxy_targets.cloudcode_host_base("") is None
+
+    # The catch-all base selection honours the allowlist forward, so an
+    # allowlisted Host on an unrecognised path routes back to that host
+    # instead of falling through to the provider-heuristic default.
+    class _Runtime:
+        @staticmethod
+        def model_metadata_provider(_headers: dict[str, str]) -> str:
+            return "anthropic"
+
+    class _Proxy:
+        provider_runtime = _Runtime()
+        ANTHROPIC_API_URL = "https://legacy.anthropic.test"
+
+    allowlisted = next(iter(proxy_targets.DEFAULT_ALLOWLIST))
+    assert (
+        proxy_targets.select_passthrough_base_url(_Proxy(), {"host": allowlisted})
+        == f"https://{allowlisted}"
+    )
 
 
 def test_select_passthrough_rejects_forged_cloudcode_host() -> None:
