@@ -63,8 +63,8 @@ def test_get_server_returns_spec_when_present(tmp_path: Path) -> None:
     config = {
         "mcp": {
             "headroom": {
-                "type": "remote",
-                "url": "http://127.0.0.1:8787/mcp",
+                "type": "local",
+                "command": ["headroom", "mcp", "serve"],
                 "enabled": True,
             }
         }
@@ -74,6 +74,8 @@ def test_get_server_returns_spec_when_present(tmp_path: Path) -> None:
     spec = registrar.get_server("headroom")
     assert spec is not None
     assert spec.name == "headroom"
+    assert spec.command == "headroom"
+    assert spec.args == ("mcp", "serve")
 
 
 def test_register_server_creates_config_when_missing(tmp_path: Path) -> None:
@@ -86,6 +88,54 @@ def test_register_server_creates_config_when_missing(tmp_path: Path) -> None:
     assert result.status == RegisterStatus.REGISTERED
     config_path = tmp_path / "opencode.json"
     assert config_path.exists()
+    data = json.loads(config_path.read_text())
+    assert data["mcp"]["headroom"] == {
+        "type": "local",
+        "command": ["headroom", "mcp", "serve"],
+        "enabled": True,
+    }
+
+
+@pytest.mark.parametrize("contents", ["not json", "{", '{"theme": }', "[]"])
+def test_register_server_preserves_malformed_config(tmp_path: Path, contents: str) -> None:
+    """Registering must NOT clobber an existing but unparseable opencode.json.
+
+    The file holds theme/model/provider and other MCP servers; before the fix a
+    malformed file was read as {} and rewritten with only {"mcp": ...}."""
+    from headroom.mcp_registry.base import ServerSpec
+
+    config_path = tmp_path / "opencode.json"
+    config_path.write_text(contents, encoding="utf-8")
+    registrar = _registrar(tmp_path)
+
+    spec = ServerSpec(name="headroom", command="headroom", args=("mcp", "serve"))
+    result = registrar.register_server(spec)
+
+    assert result.status == RegisterStatus.FAILED
+    assert "not valid JSON" in result.detail
+    assert config_path.read_text(encoding="utf-8") == contents
+
+
+def test_register_server_preserves_other_keys(tmp_path: Path) -> None:
+    """The happy path merges: theme/model and an existing MCP server survive."""
+    from headroom.mcp_registry.base import ServerSpec
+
+    config_path = tmp_path / "opencode.json"
+    _write_json(
+        config_path,
+        {"theme": "dark", "model": "anthropic/claude", "mcp": {"other": {"type": "local"}}},
+    )
+    registrar = _registrar(tmp_path)
+
+    spec = ServerSpec(name="headroom", command="headroom", args=("mcp", "serve"))
+    result = registrar.register_server(spec)
+
+    assert result.status == RegisterStatus.REGISTERED
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert data["theme"] == "dark"
+    assert data["model"] == "anthropic/claude"
+    assert data["mcp"]["other"] == {"type": "local"}
+    assert "headroom" in data["mcp"]
 
 
 def test_register_server_idempotent(tmp_path: Path) -> None:
@@ -259,7 +309,7 @@ def test_register_server_with_env_vars(tmp_path: Path) -> None:
     registrar.register_server(spec)
 
     data = json.loads((tmp_path / "opencode.json").read_text())
-    assert data["mcp"]["headroom"]["env"] == {"HEADROOM_PROXY_URL": "http://127.0.0.1:9090"}
+    assert data["mcp"]["headroom"]["environment"] == {"HEADROOM_PROXY_URL": "http://127.0.0.1:9090"}
 
 
 def test_register_then_re_register_with_different_env_returns_mismatch(tmp_path: Path) -> None:
@@ -280,17 +330,22 @@ def test_register_then_re_register_with_different_env_returns_mismatch(tmp_path:
 
 
 def test_register_server_on_malformed_config_file(tmp_path: Path) -> None:
-    """register_server overwrites a malformed config file, preserving nothing."""
+    """register_server refuses to overwrite a malformed config, preserving it.
+
+    Updated for the clobber guard: opencode.json holds theme/model/provider and
+    other MCP servers, so a present-but-unparseable file is left untouched and
+    registration fails rather than silently wiping the user's config.
+    """
     registrar = _registrar(tmp_path)
     (tmp_path / "opencode.json").write_text("not valid json at all")
     from headroom.mcp_registry.base import ServerSpec
 
     spec = ServerSpec(name="headroom", command="headroom", args=("mcp", "serve"))
     result = registrar.register_server(spec)
-    assert result.status == RegisterStatus.REGISTERED
+    assert result.status == RegisterStatus.FAILED
 
-    data = json.loads((tmp_path / "opencode.json").read_text())
-    assert "headroom" in data["mcp"]
+    # The malformed file is left byte-for-byte untouched rather than clobbered.
+    assert (tmp_path / "opencode.json").read_text() == "not valid json at all"
 
 
 def test_entry_to_spec_command_as_string() -> None:
@@ -304,6 +359,30 @@ def test_entry_to_spec_command_as_string() -> None:
     assert spec.name == "test"
     assert spec.command == "some-command"
     assert spec.args == ()
+
+
+def test_entry_to_spec_reads_opencode_environment() -> None:
+    """_entry_to_spec reads OpenCode's environment map."""
+    entry = {
+        "type": "local",
+        "command": ["headroom", "mcp", "serve"],
+        "enabled": True,
+        "environment": {"HEADROOM_PROXY_URL": "http://127.0.0.1:9090"},
+    }
+    spec = _entry_to_spec("headroom", entry)
+    assert spec.env == {"HEADROOM_PROXY_URL": "http://127.0.0.1:9090"}
+
+
+def test_entry_to_spec_reads_legacy_env() -> None:
+    """_entry_to_spec keeps compatibility with previously written env maps."""
+    entry = {
+        "type": "local",
+        "command": ["headroom", "mcp", "serve"],
+        "enabled": True,
+        "env": {"HEADROOM_PROXY_URL": "http://127.0.0.1:9090"},
+    }
+    spec = _entry_to_spec("headroom", entry)
+    assert spec.env == {"HEADROOM_PROXY_URL": "http://127.0.0.1:9090"}
 
 
 def test_entry_to_spec_no_command() -> None:
@@ -329,9 +408,9 @@ def test_spec_to_entry_roundtrip() -> None:
         env={"KEY": "VAL"},
     )
     entry = _spec_to_entry(original)
-    assert entry["type"] == "remote"
+    assert entry["type"] == "local"
     assert entry["command"] == ["python", "-m", "server"]
-    assert entry["env"] == {"KEY": "VAL"}
+    assert entry["environment"] == {"KEY": "VAL"}
 
     restored = _entry_to_spec("test", entry)
     assert restored.name == original.name
