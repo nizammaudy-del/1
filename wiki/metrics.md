@@ -414,6 +414,35 @@ headroom proxy --log-file headroom.jsonl
 headroom proxy --log-messages
 ```
 
+## Web Dashboard
+
+```bash
+headroom dashboard   # opens the live savings dashboard (proxy must be running)
+```
+
+The dashboard is a single-page view served by the proxy itself (`/dashboard`), split into tabs and panes:
+
+- **Overview** — hero metrics (tokens saved, overhead, budget progress), a first-run onboarding panel when there's no traffic yet, and a "How savings are calculated" methodology modal covering estimated vs. measured savings.
+- **Token Usage, Providers & Performance** — per-model and per-provider breakdowns with sortable table headers.
+- **Provider Windows & Cache** — cache hit rates and provider context-window usage.
+- **Recent Requests** — a live feed of transformations with show-more pagination.
+- **Per-Project** — savings broken down by project.
+- **Waste & Trends** — historical waste patterns over time.
+- **Active Agents** — currently running agents, polled from `/stats/active_agents`.
+- **Diagnostics** — deployment health, `headroom learn` run history, and memory sync status in one place.
+- **MCP tab** — MCP tool usage, CCR (Compress-Cache-Retrieve) feedback stats, and embedded MCP dashboards (Serena) with a link-out fallback for tools that don't support embedding.
+
+A floating help widget (bottom-right) explains whatever pane is currently focused, including a color legend for the status indicators. The header's health indicator carries a hover popover with the same checks `headroom doctor` runs, and a restart banner appears automatically if the proxy's uptime drops between polls (a crash or restart happened) instead of silently going stale.
+
+The **Settings** panel (gear icon in the header) persists to `dashboard_config.json` in the [config directory](filesystem-contract.md) and covers:
+
+- Polling & Display (refresh intervals, what's visible)
+- Profiles & Budget (savings profile, budget limit and period, target compression ratio)
+- Token Pricing Overrides (per-model `$/1M` input and output pricing)
+- Layout & Visibility (which panes are shown)
+
+Settings saved here take effect on the next `headroom proxy` launch: an explicit CLI flag or environment variable always wins, but when one isn't set, the proxy reads the stored value instead of falling back to a built-in default.
+
 ## Grafana Dashboard
 
 Example Grafana dashboard configuration for Prometheus metrics:
