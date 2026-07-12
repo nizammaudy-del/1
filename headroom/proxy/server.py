@@ -38,7 +38,7 @@ from collections.abc import Callable
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
     from ..backends.base import Backend
@@ -158,7 +158,6 @@ from headroom.proxy.project_context import (
 from headroom.proxy.prometheus_metrics import PrometheusMetrics  # noqa: F401
 from headroom.proxy.rate_limiter import TokenBucketRateLimiter  # noqa: F401
 from headroom.proxy.request_logger import RequestLogger  # noqa: F401
-from headroom.proxy.savings_tracker import LITELLM_AVAILABLE
 from headroom.proxy.semantic_cache import SemanticCache  # noqa: F401
 from headroom.proxy.ssl_context import build_httpx_verify
 from headroom.proxy.tool_schema_savings_policy import tool_schema_saved_from_tags
