@@ -36,7 +36,6 @@ from headroom.proxy.server import (
     logger,
 )
 from headroom.subscription.base import get_quota_registry
-from headroom.telemetry.beacon import is_telemetry_enabled
 
 
 def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRouter:
@@ -52,6 +51,14 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
     async def dashboard():
         """Serve the Headroom dashboard UI."""
         return get_dashboard_html()
+
+    @router.get("/favicon.ico")
+    async def favicon() -> Response:
+        # Registered before register_provider_routes' catch-all passthrough
+        # route so browsers' automatic favicon requests for /dashboard are
+        # answered locally instead of being tunneled to the wrapped upstream
+        # provider (GH #1787).
+        return Response(status_code=204)
 
     DASHBOARD_STATS_CACHE_TTL_SECONDS = 5.0
     _stats_snapshot_lock = asyncio.Lock()
@@ -90,6 +97,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                 "total_latency_ms": log.get("total_latency_ms"),
                 "transforms_applied": log.get("transforms_applied", []),
                 "waste_signals": log.get("waste_signals"),
+                "tool_schema_saved_tokens": _server._tool_schema_saved_from_tags(log.get("tags")),
             }
             for log in recent_request_logs
             if log.get("input_tokens_original") is not None
@@ -199,6 +207,9 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         )
         rtk_tokens_avoided = cli_tokens_avoided if cli_filtering_tool == "rtk" else 0
         lean_ctx_tokens_avoided = cli_tokens_avoided if cli_filtering_tool == "lean-ctx" else 0
+        cli_filtering_available = bool(
+            cli_filtering_stats and cli_filtering_stats.get("installed", False)
+        )
 
         # Calculate total tokens before Headroom-side reduction. Proxy
         # compression and the configured context tool both remove tokens before
@@ -269,6 +280,19 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         display_session = persistent_savings.get("display_session", {})
         recent_request_logs = proxy.logger.get_recent(10_000) if proxy.logger else []
         recent_request_payload = _build_recent_request_payload()
+
+        # Tool-schema deferral savings: tool-definition tokens kept out of the
+        # model's context by deferring heavy schemas until they're needed
+        # (native tool-search injection + any registered turn-hook tools
+        # rewrite). Attributed to Headroom only — see _tool_schema_saved_from_tags.
+        # Aggregated over the recent request-log window.
+        tool_schema_tokens = 0
+        tool_schema_requests = 0
+        for _ts_log in recent_request_logs:
+            _ts_saved = _server._tool_schema_saved_from_tags(_ts_log.get("tags"))
+            if _ts_saved > 0:
+                tool_schema_tokens += _ts_saved
+                tool_schema_requests += 1
         agent_usage = _build_agent_usage_summary(
             recent_request_logs,
             requests_by_provider=dict(m.requests_by_provider),
@@ -313,6 +337,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                     "cli_filtering": {
                         "tool": cli_filtering_tool,
                         "label": cli_filtering_label,
+                        "available": cli_filtering_available,
                         "tokens": cli_tokens_avoided,
                         "tokens_saved": cli_tokens_avoided,
                         "session": cli_filtering_session,
@@ -366,6 +391,20 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                             "steered verbosity / routed effort down. Counterfactual — "
                             "shown as an estimate (vs a learned baseline) or measured "
                             "(A/B holdout), always with a confidence band."
+                        ),
+                    },
+                    "tool_search": {
+                        "tokens": tool_schema_tokens,
+                        "tokens_saved": tool_schema_tokens,
+                        "requests": tool_schema_requests,
+                        "window": len(recent_request_logs),
+                        "description": (
+                            "Tool-definition tokens kept out of the model's context "
+                            "by deferring heavy tool schemas until they're searched "
+                            "for. Counted only when Headroom performed the deferral — "
+                            "not when the client (e.g. Claude Code / Codex) already "
+                            "had tool search enabled. Aggregated over the recent "
+                            "request window."
                         ),
                     },
                 },
@@ -552,7 +591,9 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                 "ccr_retrievals": compression_stats.get("total_retrievals", 0),
             },
             "compression_cache": compression_cache_stats,
-            "anon_telemetry_shipping": is_telemetry_enabled(),
+            # Always False: the anonymous telemetry beacon was removed, so no
+            # telemetry is ever shipped externally (local collection only).
+            "anon_telemetry_shipping": False,
             "telemetry": {
                 "enabled": telemetry_stats.get("enabled", False),
                 "total_compressions": telemetry_stats.get("total_compressions", 0),
@@ -711,7 +752,17 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         series: Literal["history", "hourly", "daily", "weekly", "monthly"] = "history",
         history_mode: Literal["compact", "full", "none"] = "compact",
     ):
-        """Get durable proxy compression history plus display-session state."""
+        """Get durable proxy compression history plus display-session state.
+
+        The JSON payload also carries a ``cli_filtering`` key with live RTK
+        stats. This is a curated subset (``tool``, ``label``, ``available``,
+        ``lifetime``, ``session``) tailored to the Historical tab, not the
+        full ``_get_context_tool_stats()`` payload that ``/stats`` exposes.
+        It is ``None`` only when the stats read hard-fails; when the tool is
+        merely absent, ``cli_filtering`` stays populated with
+        ``available: False`` and zeroed counters so the tab can distinguish
+        "not installed" from "installed, no data yet."
+        """
         if format == "csv":
             filename = f"headroom-stats-history-{series}.csv"
             return Response(
@@ -720,7 +771,31 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
 
-        return proxy.metrics.savings_tracker.history_response(history_mode=history_mode)
+        history = proxy.metrics.savings_tracker.history_response(history_mode=history_mode)
+
+        # Augment with live RTK/cli-filtering lifetime stats so the Historical
+        # tab can display them.  These live in the context-tool's own stats file
+        # and survive proxy restarts — exactly what the Historical tab needs.
+        # Best-effort: if the RTK stats file can't be read (missing, parse error,
+        # IO), fall back to None so the Historical tab stays available instead of
+        # 500ing. The tab hides the card when cli_filtering is None.
+        try:
+            cli_stats = await asyncio.to_thread(_server._get_context_tool_stats)
+        except Exception:
+            logger.debug("stats-history: RTK stats unavailable", exc_info=True)
+            cli_stats = None
+        if cli_stats:
+            history["cli_filtering"] = {
+                "tool": str(cli_stats.get("tool", "rtk")),
+                "label": str(cli_stats.get("label", "RTK")),
+                "available": bool(cli_stats.get("installed", False)),
+                "lifetime": cli_stats.get("lifetime", {}),
+                "session": cli_stats.get("session", {}),
+            }
+        else:
+            history["cli_filtering"] = None
+
+        return history
 
     @router.get("/mcp/dashboards", dependencies=[Depends(_require_loopback)])
     async def mcp_dashboards():

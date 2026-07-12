@@ -89,6 +89,71 @@ class TestArmAssignment:
         b = {"model": "m", "messages": [{"role": "user", "content": "task B"}]}
         assert conversation_key_from_body(a) != conversation_key_from_body(b)
 
+    def test_conversation_key_uses_responses_stable_metadata(self):
+        a = {
+            "model": "gpt-5",
+            "client_metadata": {"session_id": "session-1"},
+            "input": "task A",
+        }
+        b = {
+            "model": "gpt-5",
+            "client_metadata": {"session_id": "session-2"},
+            "input": "task A",
+        }
+        assert conversation_key_from_body(a) != conversation_key_from_body(b)
+
+    def test_conversation_key_does_not_use_responses_delta_text(self):
+        user_turn = {
+            "model": "gpt-5",
+            "instructions": "same session instructions",
+            "input": "task A",
+        }
+        tool_turn = {
+            "model": "gpt-5",
+            "instructions": "same session instructions",
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok",
+                }
+            ],
+        }
+        assert conversation_key_from_body(user_turn) == conversation_key_from_body(tool_turn)
+
+    def test_conversation_key_unwraps_ws_response_create(self):
+        http_body = {"model": "gpt-5", "input": "build a cache"}
+        ws_body = {
+            "type": "response.create",
+            "response": {"model": "gpt-5", "input": "build a cache"},
+        }
+        assert conversation_key_from_body(http_body) == conversation_key_from_body(ws_body)
+
+    def test_conversation_key_uses_responses_conversation_id(self):
+        a = {
+            "model": "gpt-5",
+            "conversation": "conv_1",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "task A"}],
+                }
+            ],
+        }
+        b = {
+            "model": "gpt-5",
+            "conversation": "conv_2",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "task B"}],
+                }
+            ],
+        }
+        assert conversation_key_from_body(a) != conversation_key_from_body(b)
+
 
 # ---------------------------------------------------------------------------
 # baseline model
@@ -128,6 +193,29 @@ class TestBaselineModel:
         m2 = BaselineModel.from_dict(m.to_dict())
         assert m2.lookup("k|a|s|tools") == m.lookup("k|a|s|tools")
         assert m2.total_samples == 3
+
+    def test_merge_is_equivalent_to_observing_both_streams(self):
+        # Merging two baselines must equal observing every value against one
+        # model — same totals per stratum and same global fallback.
+        a = BaselineModel()
+        for v in (100, 200):
+            a.observe("opus|new_user_ask|s|tools", v)
+        b = BaselineModel()
+        b.observe("opus|new_user_ask|s|tools", 300)
+        b.observe("sonnet|unknown|m|notools", 50)
+
+        a.merge(b)
+
+        mean, _, n = a.lookup("opus|new_user_ask|s|tools")
+        assert n == 3
+        assert mean == 200.0  # (100 + 200 + 300) / 3
+        assert a.total_samples == 4  # 3 + 1 across both strata
+
+        reference = BaselineModel()
+        for v in (100, 200, 300):
+            reference.observe("opus|new_user_ask|s|tools", v)
+        reference.observe("sonnet|unknown|m|notools", 50)
+        assert a.to_dict() == reference.to_dict()
 
 
 # ---------------------------------------------------------------------------

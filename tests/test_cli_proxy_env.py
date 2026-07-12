@@ -254,6 +254,26 @@ class TestCLIProxyEnvVars:
         assert result.exit_code == 0, result.output
         assert captured_config["config"].min_tokens_to_crush == 120
 
+    def test_headroom_min_tokens_zero_is_preserved(self, runner):
+        """HEADROOM_MIN_TOKENS=0 is a legitimate value ("crush everything") and
+        must not be discarded by an `or 500` fallback (regression)."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(
+                main,
+                ["proxy"],
+                env={"HEADROOM_MIN_TOKENS": "0", "HEADROOM_MAX_ITEMS": "0"},
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].min_tokens_to_crush == 0
+        assert captured_config["config"].max_items_after_crush == 0
+
     def test_headroom_budget_from_env(self, runner):
         """HEADROOM_BUDGET env var should be passed to ProxyConfig."""
         captured_config = {}
@@ -318,8 +338,10 @@ class TestCLIProxyEnvVars:
         assert result.exit_code == 0, result.output
         assert captured_config["config"].code_aware_enabled is True
 
-    def test_code_aware_enabled_defaults_false(self, runner):
-        """Without HEADROOM_CODE_AWARE_ENABLED, code-aware stays disabled in the wrapper."""
+    def test_code_aware_enabled_defaults_true(self, runner):
+        """Without HEADROOM_CODE_AWARE_ENABLED, code-aware defaults ON (coding
+        posture; consistent with the argparse server path). It degrades to a no-op
+        when tree-sitter isn't installed, so defaulting it on is safe."""
         captured_config = {}
 
         def mock_run_server(config, **kwargs):
@@ -338,7 +360,7 @@ class TestCLIProxyEnvVars:
             )
 
         assert result.exit_code == 0, result.output
-        assert captured_config["config"].code_aware_enabled is False
+        assert captured_config["config"].code_aware_enabled is True
 
     def test_code_aware_enabled_from_cli_flag(self, runner):
         """--code-aware should enable code-aware compression in the wrapper."""
@@ -843,25 +865,25 @@ class TestCLICompressionOnlyFlags:
         assert cfg.ccr_inject_marker is True
         assert cfg.ccr_proactive_expansion is True
 
-    def test_no_ccr_inject_tool_flag(self, runner):
-        """--no-ccr-inject-tool disables retrieve-tool injection only."""
+    def test_no_ccr_flag(self, runner):
+        """--no-ccr disables BOTH the retrieve-tool injection and the markers."""
         captured_config = {}
 
         def mock_run_server(config, **kwargs):
             captured_config["config"] = config
 
         with patch("headroom.proxy.server.run_server", mock_run_server):
-            result = runner.invoke(main, ["proxy", "--no-ccr-inject-tool"], catch_exceptions=False)
+            result = runner.invoke(main, ["proxy", "--no-ccr"], catch_exceptions=False)
 
         assert result.exit_code == 0, result.output
         cfg = captured_config["config"]
         assert cfg.ccr_inject_tool is False
-        # Untouched flags remain on.
-        assert cfg.ccr_inject_marker is True
+        assert cfg.ccr_inject_marker is False
+        # Unrelated CCR knob stays on.
         assert cfg.ccr_proactive_expansion is True
 
     def test_compression_only_all_flags(self, runner):
-        """All three flags together yield a compression-only config."""
+        """--no-ccr + --no-ccr-proactive-expansion yields a compression-only config."""
         captured_config = {}
 
         def mock_run_server(config, **kwargs):
@@ -872,8 +894,7 @@ class TestCLICompressionOnlyFlags:
                 main,
                 [
                     "proxy",
-                    "--no-ccr-inject-tool",
-                    "--no-ccr-marker",
+                    "--no-ccr",
                     "--no-ccr-proactive-expansion",
                 ],
                 catch_exceptions=False,
@@ -885,8 +906,8 @@ class TestCLICompressionOnlyFlags:
         assert cfg.ccr_inject_marker is False
         assert cfg.ccr_proactive_expansion is False
 
-    def test_no_ccr_marker_from_env(self, runner):
-        """HEADROOM_NO_CCR_MARKER env var disables marker injection."""
+    def test_no_ccr_from_env(self, runner):
+        """HEADROOM_NO_CCR env var disables both markers and tool injection."""
         captured_config = {}
 
         def mock_run_server(config, **kwargs):
@@ -896,16 +917,18 @@ class TestCLICompressionOnlyFlags:
             result = runner.invoke(
                 main,
                 ["proxy"],
-                env={"HEADROOM_NO_CCR_MARKER": "1"},
+                env={"HEADROOM_NO_CCR": "1"},
                 catch_exceptions=False,
             )
 
         assert result.exit_code == 0, result.output
-        assert captured_config["config"].ccr_inject_marker is False
+        cfg = captured_config["config"]
+        assert cfg.ccr_inject_marker is False
+        assert cfg.ccr_inject_tool is False
 
 
 class TestNoCcrMarkerCompressors:
-    """Verify --no-ccr-marker actually suppresses <<ccr:...>> markers
+    """Verify --no-ccr actually suppresses <<ccr:...>> markers
     from every compressor, not just SmartCrusher (#1022)."""
 
     def test_content_router_propagates_ccr_inject_marker_false_to_compressors(self):
@@ -1227,3 +1250,95 @@ class TestCLIProxyExcludeToolsEnvVar:
 
         assert result.exit_code == 0, result.output
         assert captured_config["config"].tool_profiles is None
+
+
+class TestCLIProxyRpmTpm:
+    """--rpm/--tpm flags and HEADROOM_RPM/HEADROOM_TPM env vars must reach ProxyConfig."""
+
+    def test_rpm_default(self, runner):
+        """Without --rpm, rate_limit_requests_per_minute defaults to 60."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(main, ["proxy"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].rate_limit_requests_per_minute == 60
+
+    def test_rpm_flag(self, runner):
+        """--rpm 30 should set rate_limit_requests_per_minute to 30."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(main, ["proxy", "--rpm", "30"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].rate_limit_requests_per_minute == 30
+
+    def test_rpm_env_var(self, runner):
+        """HEADROOM_RPM=20 should set rate_limit_requests_per_minute to 20."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(
+                main,
+                ["proxy"],
+                env={"HEADROOM_RPM": "20"},
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].rate_limit_requests_per_minute == 20
+
+    def test_tpm_default(self, runner):
+        """Without --tpm, rate_limit_tokens_per_minute defaults to 100000."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(main, ["proxy"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].rate_limit_tokens_per_minute == 100000
+
+    def test_tpm_flag(self, runner):
+        """--tpm 50000 should set rate_limit_tokens_per_minute to 50000."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(main, ["proxy", "--tpm", "50000"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].rate_limit_tokens_per_minute == 50000
+
+    def test_tpm_env_var(self, runner):
+        """HEADROOM_TPM=80000 should set rate_limit_tokens_per_minute to 80000."""
+        captured_config = {}
+
+        def mock_run_server(config, **kwargs):
+            captured_config["config"] = config
+
+        with patch("headroom.proxy.server.run_server", mock_run_server):
+            result = runner.invoke(
+                main,
+                ["proxy"],
+                env={"HEADROOM_TPM": "80000"},
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert captured_config["config"].rate_limit_tokens_per_minute == 80000

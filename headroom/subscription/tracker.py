@@ -124,6 +124,15 @@ _ON_DEMAND_POLL_TIMEOUT_S = 2.0
 _FIVE_HOUR_WINDOW = timedelta(hours=5)
 _SEVEN_DAY_WINDOW = timedelta(days=7)
 
+# A genuine 5-hour-window rollover advances ``five_hour.resets_at`` by ~5 hours.
+# The usage API, however, reports ``resets_at`` with second-level jitter — it has
+# been observed flapping between e.g. ``01:59:59Z`` and ``02:00:00Z`` on
+# consecutive polls within the *same* window. A bare ``!=`` comparison therefore
+# misfires on essentially every poll, zeroing the contribution counters every
+# poll interval instead of once per window. Only treat a *forward* jump larger
+# than this threshold as a real rollover (jitter is sub-second; a rollover is hours).
+_ROLLOVER_MIN_ADVANCE = timedelta(minutes=1)
+
 # Surge pricing threshold: if actual utilization is >N% higher than expected,
 # flag it as a potential surge pricing event.
 _SURGE_THRESHOLD_PCT = 15.0
@@ -347,8 +356,9 @@ class SubscriptionTracker(QuotaTracker):
 
         Returns ``0`` (never negative) when:
         - ``HEADROOM_RTK_WIRING=disabled`` — operator opt-out.
-        - ``_get_rtk_stats()`` returns ``None`` — RTK not selected / not
-          installed; explicit zero is the right answer.
+        - ``_get_rtk_stats()`` returns ``None`` — RTK not selected, or the
+          stat read failed this poll ("no data"); explicit zero contribution
+          is the right answer and the high-water mark is preserved.
         - ``_get_rtk_stats()`` raises — transient error, logged loudly.
         - The session counter regressed (RTK reset / new project) — that
           path also re-baselines ``_last_rtk_tokens_saved`` to the new
@@ -420,7 +430,8 @@ class SubscriptionTracker(QuotaTracker):
         # the pre-Headroom RTK history. Falls back to the top-level
         # ``tokens_saved`` (which is also session-scoped in the canonical
         # payload; see ``_get_context_tool_stats``) and finally to 0 for
-        # synthetic-zero payloads.
+        # not-installed zero payloads (failed reads arrive as ``None`` and
+        # returned above).
         session_payload = stats.get("session")
         if isinstance(session_payload, dict) and "tokens_saved" in session_payload:
             current_total_raw = session_payload.get("tokens_saved", 0)
@@ -770,7 +781,7 @@ class SubscriptionTracker(QuotaTracker):
         if (
             prev_resets_at is not None
             and curr_resets_at is not None
-            and curr_resets_at != prev_resets_at
+            and curr_resets_at - prev_resets_at > _ROLLOVER_MIN_ADVANCE
         ):
             logger.info("5h window rolled over; resetting headroom contribution counters")
             self._state.contribution = HeadroomContribution()
