@@ -95,6 +95,8 @@ def _load_locked() -> dict[str, Any]:
 def load() -> dict[str, Any]:
     """Return the raw stored config ({"pricing": ..., "settings": ...})."""
     with _lock:
+        # json round-trip deep-copies so callers can't mutate the cached dict;
+        # cast() only tells mypy what we already know the JSON shape is.
         return cast("dict[str, Any]", json.loads(json.dumps(_load_locked())))
 
 
