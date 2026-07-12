@@ -3,6 +3,38 @@
 import pytest
 
 
+class TestAnthropicModelSanitization:
+    def test_sanitize_model_id_removes_ansi_escape_sequences(self):
+        from headroom.providers.anthropic import sanitize_anthropic_model_id
+
+        assert sanitize_anthropic_model_id("claude-opus-4-8\x1b[1m") == "claude-opus-4-8"
+
+    def test_sanitize_model_id_removes_displayed_style_suffix(self):
+        from headroom.providers.anthropic import sanitize_anthropic_model_id
+
+        assert sanitize_anthropic_model_id("claude-opus-4-8[1m]") == "claude-opus-4-8"
+        assert sanitize_anthropic_model_id("glm-5.2[1m]") == "glm-5.2"
+
+    def test_sanitize_model_metadata_cleans_nested_model_ids(self):
+        from headroom.providers.anthropic import sanitize_anthropic_model_metadata
+
+        payload = {
+            "data": [
+                {"id": "claude-opus-4-8\x1b[1m", "display_name": "Claude Opus 4.8"},
+                {"id": "claude-sonnet-4-5[1m]"},
+            ],
+            "model": "claude-opus-4-8[1m]",
+        }
+
+        assert sanitize_anthropic_model_metadata(payload) == {
+            "data": [
+                {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8"},
+                {"id": "claude-sonnet-4-5"},
+            ],
+            "model": "claude-opus-4-8",
+        }
+
+
 class TestAnthropicTokenCounting:
     @pytest.fixture
     def anthropic_provider(self):
@@ -43,11 +75,25 @@ class TestAnthropicModelLimits:
         limit = anthropic_provider.get_context_limit("claude-3-opus-20240229")
         assert limit == 200000
 
+    def test_get_context_limit_strips_ansi_model_suffix(self, anthropic_provider):
+        assert anthropic_provider.get_context_limit("claude-opus-4-7[1m]") == 1000000
+
+    def test_get_context_limit_claude_5_family(self, anthropic_provider):
+        assert anthropic_provider.get_context_limit("claude-fable-5") == 1000000
+        assert anthropic_provider.get_context_limit("claude-opus-4-8") == 1000000
+        assert anthropic_provider.get_context_limit("claude-sonnet-5") == 1000000
+
     def test_supports_model_known(self, anthropic_provider):
         assert anthropic_provider.supports_model("claude-3-5-sonnet-20241022")
 
     def test_supports_model_prefix(self, anthropic_provider):
         assert anthropic_provider.supports_model("claude-3-5-sonnet-latest")
+
+    def test_token_counter_cache_uses_sanitized_model_id(self, anthropic_provider):
+        plain = anthropic_provider.get_token_counter("claude-opus-4-7")
+        styled = anthropic_provider.get_token_counter("claude-opus-4-7\x1b[1m")
+
+        assert styled is plain
 
 
 class TestAnthropicCostEstimation:
@@ -65,3 +111,18 @@ class TestAnthropicCostEstimation:
         )
         # $3.00 per 1M input
         assert cost == pytest.approx(3.00, rel=0.1)
+
+    def test_pricing_lookup_strips_ansi_model_suffix(self, anthropic_provider):
+        assert anthropic_provider._get_pricing("claude-opus-4-7[1m]") == (
+            anthropic_provider._get_pricing("claude-opus-4-7")
+        )
+
+    def test_pricing_claude_5_family(self, anthropic_provider):
+        fable = anthropic_provider._get_pricing("claude-fable-5")
+        assert fable == {"input": 10.00, "output": 50.00, "cached_input": 1.00}
+
+        opus = anthropic_provider._get_pricing("claude-opus-4-8")
+        assert opus == {"input": 5.00, "output": 25.00, "cached_input": 0.50}
+
+        sonnet = anthropic_provider._get_pricing("claude-sonnet-5")
+        assert sonnet == {"input": 3.00, "output": 15.00, "cached_input": 0.30}

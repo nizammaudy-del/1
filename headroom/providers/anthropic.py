@@ -19,6 +19,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import warnings
 from typing import Any, cast
 
@@ -51,21 +52,51 @@ logger = logging.getLogger(__name__)
 # Warning flags
 _FALLBACK_WARNING_SHOWN = False
 _UNKNOWN_MODEL_WARNINGS: set[str] = set()
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_DANGLING_ANSI_STYLE_SUFFIX_RE = re.compile(r"(?:\[[0-9;]*m\])+$")
+
+
+def sanitize_anthropic_model_id(model: str) -> str:
+    """Return an Anthropic model id without terminal styling artifacts."""
+    cleaned = _ANSI_ESCAPE_RE.sub("", str(model)).strip()
+    return _DANGLING_ANSI_STYLE_SUFFIX_RE.sub("", cleaned)
+
+
+def sanitize_anthropic_model_metadata(value: Any) -> Any:
+    """Strip model-id styling artifacts from Anthropic model metadata payloads."""
+    if isinstance(value, list):
+        return [sanitize_anthropic_model_metadata(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    cleaned: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in {"id", "model"} and isinstance(item, str):
+            cleaned[key] = sanitize_anthropic_model_id(item)
+        else:
+            cleaned[key] = sanitize_anthropic_model_metadata(item)
+    return cleaned
 
 
 # Anthropic model context limits
 # All Claude 3+ models have 200K context
 ANTHROPIC_CONTEXT_LIMITS: dict[str, int] = {
-    # Claude 4.7 (Opus 4.7) - 1M context. Claude Code sends the model
-    # name with a `[1m]` suffix to select the 1M tier; both forms are
-    # registered explicitly because the lookup chain does not strip the
-    # tier suffix and LiteLLM does not key on it either.
+    # Claude Fable 5 - 1M context
+    "claude-fable-5": 1000000,
+    # Claude Opus 4.8 - 1M context
+    "claude-opus-4-8": 1000000,
+    # Claude 4.7 (Opus 4.7) - 1M context
     "claude-opus-4-7": 1000000,
-    "claude-opus-4-7[1m]": 1000000,
     # Claude 4.6 (Opus 4.6) - 1M context
     "claude-opus-4-6": 1000000,
     # Claude 4.5 (Opus 4.5)
     "claude-opus-4-5-20251101": 200000,
+    # Claude Sonnet 5 - 1M context
+    "claude-sonnet-5": 1000000,
+    # Claude Sonnet 4.6 - 1M context window
+    "claude-sonnet-4-6": 1000000,
+    # Claude Sonnet 4.5
+    "claude-sonnet-4-5": 200000,
     # Claude 4 (Sonnet 4, Haiku 4)
     "claude-sonnet-4-20250514": 200000,
     "claude-haiku-4-5-20251001": 200000,
@@ -87,19 +118,25 @@ ANTHROPIC_CONTEXT_LIMITS: dict[str, int] = {
 
 # Fallback pricing - LiteLLM is preferred source
 # NOTE: These are ESTIMATES. Always verify against actual Anthropic billing.
-# Last updated: 2025-01-14
+# Last updated: 2026-07-04
 ANTHROPIC_PRICING: dict[str, dict[str, float]] = {
-    # Claude 4.7 (Opus tier pricing) — registered for both the bare
-    # name and the `[1m]` tier-suffixed form Claude Code sends.
-    "claude-opus-4-7": {"input": 15.00, "output": 75.00, "cached_input": 1.50},
-    "claude-opus-4-7[1m]": {"input": 15.00, "output": 75.00, "cached_input": 1.50},
-    # Claude 4.6 (Opus tier pricing)
-    "claude-opus-4-6": {"input": 15.00, "output": 75.00, "cached_input": 1.50},
-    # Claude 4.5 (Opus tier pricing)
-    "claude-opus-4-5-20251101": {"input": 15.00, "output": 75.00, "cached_input": 1.50},
+    # Claude Fable 5 (anthropic.com/pricing): $10 in / $50 out, cache read $1.
+    "claude-fable-5": {"input": 10.00, "output": 50.00, "cached_input": 1.00},
+    # Claude Opus 4.8 — current Opus tier: $5 in / $25 out, cache read $0.50.
+    "claude-opus-4-8": {"input": 5.00, "output": 25.00, "cached_input": 0.50},
+    # Claude 4.7 (current Opus tier)
+    "claude-opus-4-7": {"input": 5.00, "output": 25.00, "cached_input": 0.50},
+    # Claude 4.6 (current Opus tier)
+    "claude-opus-4-6": {"input": 5.00, "output": 25.00, "cached_input": 0.50},
+    # Claude 4.5 (current Opus tier — same rates as 4.6–4.8)
+    "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00, "cached_input": 0.50},
+    # Claude Sonnet 5 / 4.6 / 4.5 (current Sonnet tier): $3 in / $15 out, cache read $0.30
+    "claude-sonnet-5": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
+    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
+    "claude-sonnet-4-5": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
     # Claude 4 (Sonnet/Haiku tier pricing)
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
-    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00, "cached_input": 0.08},
+    "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00, "cached_input": 0.10},
     # Claude 3.5
     "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
     "claude-3-5-sonnet-latest": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
@@ -115,7 +152,7 @@ ANTHROPIC_PRICING: dict[str, dict[str, float]] = {
 # Default limits for pattern-based inference
 # Used when a model isn't in the explicit list but matches a known pattern
 _PATTERN_DEFAULTS = {
-    "opus": {"context": 200000, "pricing": {"input": 15.00, "output": 75.00, "cached_input": 1.50}},
+    "opus": {"context": 200000, "pricing": {"input": 5.00, "output": 25.00, "cached_input": 0.50}},
     "sonnet": {
         "context": 200000,
         "pricing": {"input": 3.00, "output": 15.00, "cached_input": 0.30},
@@ -128,6 +165,36 @@ _UNKNOWN_CLAUDE_DEFAULT = {
     "context": 200000,  # Safe assumption for Claude 3+
     "pricing": {"input": 3.00, "output": 15.00, "cached_input": 0.30},  # Sonnet-tier pricing
 }
+
+
+# DeepSeek fallback pricing for --anthropic-api-url deepseek routing
+_DEEPSEEK_FALLBACK_PRICING: dict[str, dict[str, float]] = {
+    "deepseek-v4-flash": {"input": 0.14, "output": 0.28, "cached_input": 0.0028},
+    "deepseek-v4-pro": {"input": 0.435, "output": 0.87, "cached_input": 0.003625},
+}
+
+
+def _get_deepseek_pricing(model: str) -> dict[str, float] | None:
+    """Get fallback pricing for a DeepSeek model.
+
+    Used when the Anthropic provider encounters a deepseek-* model name
+    (via --anthropic-api-url pointing at DeepSeek's Anthropic-compatible
+    endpoint) and LiteLLM is unavailable.
+
+    Args:
+        model: The model name to look up.
+
+    Returns:
+        Pricing dict with input/output/cached_input keys, or None.
+    """
+    # Direct match
+    if model in _DEEPSEEK_FALLBACK_PRICING:
+        return cast(dict[str, float], _DEEPSEEK_FALLBACK_PRICING[model])
+    # Partial match
+    for known_model, prices in _DEEPSEEK_FALLBACK_PRICING.items():
+        if model in known_model or known_model in model:
+            return cast(dict[str, float], prices)
+    return None
 
 
 def _load_custom_model_config() -> dict[str, Any]:
@@ -148,7 +215,7 @@ def _load_custom_model_config() -> dict[str, Any]:
         try:
             # Check if it's a file path
             if os.path.isfile(env_config):
-                with open(env_config) as f:
+                with open(env_config, encoding="utf-8") as f:
                     loaded = json.load(f)
             else:
                 # Try to parse as JSON string
@@ -174,7 +241,7 @@ def _load_custom_model_config() -> dict[str, Any]:
             config_file = legacy_models
     if config_file.exists():
         try:
-            with open(config_file) as f:
+            with open(config_file, encoding="utf-8") as f:
                 loaded = json.load(f)
 
             # Only load anthropic-specific config
@@ -253,11 +320,18 @@ class AnthropicTokenCounter(TokenCounter):
             )
             _FALLBACK_WARNING_SHOWN = True
 
-        # Load tiktoken as fallback
+        # Load tiktoken as fallback — bounded, so a stalled vocab download can't
+        # hang token counting inside a request (tiktoken's downloader has no
+        # network timeout); on timeout we estimate by characters instead (GH #956).
         try:
-            import tiktoken
+            from headroom.tokenizers.tiktoken_counter import (
+                TiktokenLoadError,
+                load_encoding,
+            )
 
-            self._encoding = tiktoken.get_encoding("cl100k_base")
+            self._encoding = load_encoding("cl100k_base")
+        except TiktokenLoadError:
+            self._encoding = None  # count_text() falls back to a character estimate
         except ImportError:
             if not self._use_api:
                 warnings.warn(
@@ -494,6 +568,7 @@ class AnthropicProvider(Provider):
         If a client was provided to the provider, uses the Token Count API.
         Otherwise falls back to tiktoken approximation.
         """
+        model = sanitize_anthropic_model_id(model)
         if model not in self._token_counters:
             self._token_counters[model] = AnthropicTokenCounter(
                 model=model,
@@ -516,6 +591,7 @@ class AnthropicProvider(Provider):
 
         Never raises an exception - uses sensible defaults for unknown models.
         """
+        model = sanitize_anthropic_model_id(model)
         # Check explicit and loaded limits
         if model in self._context_limits:
             return self._context_limits[model]
@@ -577,6 +653,7 @@ class AnthropicProvider(Provider):
 
     def supports_model(self, model: str) -> bool:
         """Check if this provider supports the given model."""
+        model = sanitize_anthropic_model_id(model)
         if model in self._context_limits:
             return True
         # Check prefix matches - support all Claude models
@@ -593,6 +670,7 @@ class AnthropicProvider(Provider):
 
         Tries LiteLLM first for up-to-date pricing, falls back to manual pricing.
         """
+        model = sanitize_anthropic_model_id(model)
         # Try LiteLLM first for cost estimation
         litellm, litellm_get_model_info = _get_litellm_clients()
         if litellm is not None:
@@ -646,6 +724,7 @@ class AnthropicProvider(Provider):
 
     def _get_pricing(self, model: str) -> dict[str, float] | None:
         """Get pricing for a model with fallback logic."""
+        model = sanitize_anthropic_model_id(model)
         # Direct match
         if model in self._pricing:
             return self._pricing[model]
@@ -663,5 +742,9 @@ class AnthropicProvider(Provider):
         # Default for unknown Claude models
         if model.startswith("claude"):
             return cast(dict[str, float], _UNKNOWN_CLAUDE_DEFAULT["pricing"])
+
+        # DeepSeek model fallback (via --anthropic-api-url)
+        if model.startswith("deepseek"):
+            return _get_deepseek_pricing(model)
 
         return None

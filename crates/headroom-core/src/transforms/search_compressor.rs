@@ -70,6 +70,36 @@ use md5::{Digest, Md5};
 
 use crate::ccr::CcrStore;
 use crate::signals::{ImportanceContext, LineImportanceDetector};
+
+/// True for CJK ideographs, kana, and Hangul. Code-point ranges kept
+/// byte-identical with the Python `_is_cjk_char` for search-compressor parity.
+fn is_cjk_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF
+    )
+}
+
+/// CJK character bigrams from the CJK runs of a (lowercased) query, so a
+/// spaceless CJK query can match content. Mirrors the Python `_cjk_bigrams`.
+fn cjk_bigrams(text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut run: Vec<char> = Vec::new();
+    for c in text.chars() {
+        if is_cjk_char(c) {
+            run.push(c);
+        } else {
+            for w in run.windows(2) {
+                out.insert(w.iter().collect::<String>());
+            }
+            run.clear();
+        }
+    }
+    for w in run.windows(2) {
+        out.insert(w.iter().collect::<String>());
+    }
+    out
+}
 use crate::transforms::adaptive_sizer::compute_optimal_k;
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -140,6 +170,14 @@ pub struct SearchCompressorConfig {
     /// to a config field here (Python had it inline) so a future
     /// pipeline can tune per-content-type.
     pub min_compression_ratio_for_ccr: f64,
+    /// Group output by file (`rg --heading` style): emit each file path
+    /// once as a header line, then `line:content` rows beneath it, with
+    /// a blank line between file groups. Eliminates per-match path
+    /// repetition — the dominant remaining token waste on large result
+    /// sets (a 70-char path repeated 15× is ~250 wasted tokens).
+    /// Default `false` (classic `file:line:content`) for parity; the
+    /// proxy enables it in token mode.
+    pub group_by_file: bool,
 }
 
 impl Default for SearchCompressorConfig {
@@ -155,6 +193,7 @@ impl Default for SearchCompressorConfig {
             enable_ccr: true,
             min_matches_for_ccr: 10,
             min_compression_ratio_for_ccr: 0.8,
+            group_by_file: false,
         }
     }
 }
@@ -354,10 +393,15 @@ impl SearchCompressor {
 
     pub fn score_matches(&self, files: &mut BTreeMap<String, FileMatches>, context: &str) {
         let context_lower = context.to_ascii_lowercase();
-        let context_words: Vec<&str> = context_lower
+        // Dedup like Python's `set`; count length in CHARS (not bytes) to match
+        // Python codepoints; and add CJK char bigrams so a spaceless CJK query
+        // (no whitespace words to split on) can still match content.
+        let mut context_words: BTreeSet<String> = context_lower
             .split_whitespace()
-            .filter(|w| w.len() > 2)
+            .filter(|w| w.chars().count() > 2)
+            .map(|w| w.to_string())
             .collect();
+        context_words.extend(cjk_bigrams(&context_lower));
 
         for fm in files.values_mut() {
             for m in &mut fm.matches {
@@ -365,7 +409,7 @@ impl SearchCompressor {
                 let content_lower = m.content.to_ascii_lowercase();
 
                 for w in &context_words {
-                    if content_lower.contains(w) {
+                    if content_lower.contains(w.as_str()) {
                         score += 0.3;
                     }
                 }
@@ -527,15 +571,31 @@ impl SearchCompressor {
     ) -> (String, BTreeMap<String, String>) {
         let mut lines: Vec<String> = Vec::new();
         let mut summaries: BTreeMap<String, String> = BTreeMap::new();
+        let grouped = self.config.group_by_file;
 
         for (file, fm) in selected {
-            for m in &fm.matches {
-                lines.push(format!("{}:{}:{}", m.file, m.line_number, m.content));
+            if grouped {
+                // `rg --heading` style: path once, then line:content rows.
+                if !lines.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push(file.clone());
+                for m in &fm.matches {
+                    lines.push(format!("{}:{}", m.line_number, m.content));
+                }
+            } else {
+                for m in &fm.matches {
+                    lines.push(format!("{}:{}:{}", m.file, m.line_number, m.content));
+                }
             }
             if let Some(orig_fm) = original.get(file) {
                 if orig_fm.matches.len() > fm.matches.len() {
                     let omitted = orig_fm.matches.len() - fm.matches.len();
-                    let summary = format!("[... and {} more matches in {}]", omitted, file);
+                    let summary = if grouped {
+                        format!("[... and {} more matches]", omitted)
+                    } else {
+                        format!("[... and {} more matches in {}]", omitted, file)
+                    };
                     lines.push(summary.clone());
                     summaries.insert(file.clone(), summary);
                 }
@@ -655,6 +715,14 @@ mod tests {
             parse_line("src/main.py:42:def main():"),
             Some(("src/main.py".into(), 42, "def main():".into()))
         );
+    }
+
+    #[test]
+    fn cjk_bigrams_from_runs() {
+        let b = cjk_bigrams("认证令牌");
+        assert!(b.contains("认证") && b.contains("证令") && b.contains("令牌") && b.len() == 3);
+        assert!(cjk_bigrams("hello").is_empty());
+        assert!(cjk_bigrams("a认b证").is_empty()); // isolated CJK chars -> no pair
     }
 
     #[test]
