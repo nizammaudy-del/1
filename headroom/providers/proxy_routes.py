@@ -1032,7 +1032,7 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
             "gemini",
         )
 
-    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD"])
     async def passthrough(request: Request, path: str):
         custom_base = request.headers.get("x-headroom-base-url")
         if custom_base:
