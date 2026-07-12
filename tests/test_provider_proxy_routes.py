@@ -163,19 +163,87 @@ def test_provider_passthrough_routes_forward_expected_targets(monkeypatch) -> No
             "model": "claude-3-5-sonnet@20240620",
             "force_stream": False,
         }
+        assert client.post(
+            "/projects/p/locations/us-central1/publishers/anthropic/models/claude-3-5-sonnet@20240620:rawPredict"
+        ).json() == {
+            "handler": "handle_anthropic_messages",
+            "path": "/projects/p/locations/us-central1/publishers/anthropic/models/claude-3-5-sonnet@20240620:rawPredict",
+            "upstream_base_url": "https://vertex.test/v1",
+            "provider": "vertex:anthropic",
+            "model": "claude-3-5-sonnet@20240620",
+            "force_stream": False,
+        }
+        assert client.post("/anthropic/v1/messages?beta=true").json() == {
+            "handler": "handle_anthropic_messages",
+            "path": "/v1/messages",
+            "upstream_base_url": "https://api.anthropic.test",
+            "provider": "anthropic",
+            "model": None,
+            "force_stream": False,
+        }
+        non_anthropic_raw = client.post(
+            "/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:rawPredict"
+        ).json()
+        assert non_anthropic_raw.get("handler") != "handle_anthropic_messages"
+        non_anthropic_stream = client.post(
+            "/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:streamRawPredict"
+        ).json()
+        assert non_anthropic_stream.get("handler") != "handle_anthropic_messages"
         assert client.post("/v1beta/cachedContents").json()["sub_path"] == "cachedContents"
         assert client.get("/v1beta/cachedContents").json()["sub_path"] == "cachedContents"
         assert client.get("/v1beta/cachedContents/cache-1").json()["sub_path"] == "cachedContents"
         assert client.delete("/v1beta/cachedContents/cache-1").json()["sub_path"] == (
             "cachedContents"
         )
-        assert (
-            client.get(
-                "/unhandled/path",
-                headers={"x-headroom-base-url": "https://custom.example/base/"},
-            ).json()["base_url"]
-            == "https://custom.example/base"
-        )
+        custom_passthrough = client.get(
+            "/unhandled/path",
+            headers={"x-headroom-base-url": "https://custom.example/base/"},
+        ).json()
+        assert custom_passthrough["base_url"] == "https://custom.example/base"
+        assert custom_passthrough["sub_path"] == ""
+        assert custom_passthrough["provider"] == ""
+
+        opencode_zen_passthrough = client.post(
+            "/zen/v1/chat/completions",
+            headers={"x-headroom-base-url": "https://opencode.ai/"},
+            json={"model": "zen"},
+        ).json()
+        assert opencode_zen_passthrough["base_url"] == "https://opencode.ai"
+        assert opencode_zen_passthrough["sub_path"] == "chat/completions"
+        assert opencode_zen_passthrough["provider"] == "zen"
+
+        unrelated_custom_passthrough = client.post(
+            "/mcp",
+            headers={"x-headroom-base-url": "https://opencode.ai/"},
+            json={},
+        ).json()
+        assert unrelated_custom_passthrough["sub_path"] == ""
+        assert unrelated_custom_passthrough["provider"] == ""
+        for unrelated_path in (
+            "/mcp/v1/chat/completions",
+            "/npm/v1/chat/completions",
+            "/context7/v1/chat/completions",
+        ):
+            unrelated_custom_passthrough = client.post(
+                unrelated_path,
+                headers={"x-headroom-base-url": "https://opencode.ai/"},
+                json={},
+            ).json()
+            assert unrelated_custom_passthrough["sub_path"] == ""
+            assert unrelated_custom_passthrough["provider"] == ""
+        get_custom_passthrough = client.get(
+            "/zen/v1/chat/completions",
+            headers={"x-headroom-base-url": "https://opencode.ai/"},
+        ).json()
+        assert get_custom_passthrough["sub_path"] == ""
+        assert get_custom_passthrough["provider"] == ""
+        other_host_custom_passthrough = client.post(
+            "/zen/v1/chat/completions",
+            headers={"x-headroom-base-url": "https://custom.example/"},
+            json={"model": "zen"},
+        ).json()
+        assert other_host_custom_passthrough["sub_path"] == ""
+        assert other_host_custom_passthrough["provider"] == ""
         assert client.get("/another/path", headers={"x-goog-api-key": "test"}).json()[
             "base_url"
         ] == ("https://api.gemini.test")
@@ -201,7 +269,7 @@ def test_provider_passthrough_routes_forward_expected_targets(monkeypatch) -> No
     assert len(calls) >= 16
     assert len(gemini_calls) >= 1
     assert len(gemini_count_calls) >= 1
-    assert len(anthropic_calls) >= 1
+    assert len(anthropic_calls) >= 2
 
 
 def test_proxy_route_helpers_prefer_legacy_targets_and_gemini_passthrough() -> None:
@@ -276,6 +344,11 @@ def test_provider_specific_routes_delegate_to_expected_proxy_handlers(monkeypatc
 
     with TestClient(_app()) as client:
         assert client.post("/v1/messages").json()["handler"] == "handle_anthropic_messages"
+        assert client.post("/anthropic/v1/messages").json() == {
+            "handler": "handle_anthropic_messages",
+            "path": "/v1/messages",
+            "args": ["https://api.anthropic.test"],
+        }
         assert (
             client.post("/v1/messages/batches").json()["handler"] == "handle_anthropic_batch_create"
         )
@@ -339,6 +412,21 @@ def test_provider_specific_routes_delegate_to_expected_proxy_handlers(monkeypatc
             "claude-3-5-sonnet@20240620",
             True,
         ]
+        assert client.post(
+            "/projects/p/locations/us-central1/publishers/anthropic/models/claude-3-5-sonnet@20240620:rawPredict"
+        ).json()["args"] == [
+            "https://vertex.test/v1",
+            "vertex:anthropic",
+            "claude-3-5-sonnet@20240620",
+        ]
+        assert client.post(
+            "/projects/p/locations/us-central1/publishers/anthropic/models/claude-3-5-sonnet@20240620:streamRawPredict"
+        ).json()["args"] == [
+            "https://vertex.test/v1",
+            "vertex:anthropic",
+            "claude-3-5-sonnet@20240620",
+            True,
+        ]
         assert client.post("/v1internal:streamGenerateContent").json()["handler"] == (
             "handle_google_cloudcode_stream"
         )
@@ -356,7 +444,7 @@ def test_provider_specific_routes_delegate_to_expected_proxy_handlers(monkeypatc
             "handle_google_batch_passthrough"
         )
 
-    assert len(delegated) >= 24
+    assert len(delegated) >= 26
 
 
 def test_openai_response_websocket_aliases_delegate_to_openai_ws_handler(monkeypatch) -> None:
@@ -556,6 +644,7 @@ def test_openai_image_codex_response_strips_stale_compression_headers(monkeypatc
                     "content-encoding": "gzip",
                     "content-length": stale_content_length,
                     "content-type": "application/json",
+                    "server": "upstream-edge",
                     "x-upstream": "kept",
                 },
             )
@@ -583,6 +672,7 @@ def test_openai_image_codex_response_strips_stale_compression_headers(monkeypatc
     assert response.status_code == 200
     assert response.content == upstream_body
     assert response.headers["x-upstream"] == "kept"
+    assert response.headers.get("server") is None
     assert response.headers.get("content-encoding") is None
     assert response.headers.get("content-length") == str(len(upstream_body))
 

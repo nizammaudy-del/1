@@ -115,6 +115,7 @@ def test_frozen_prefix_skips_marker_emission_when_tool_injection_is_deferred(mon
         proxy.config.optimize = True
         proxy.config.image_optimize = False
         proxy.config.ccr_inject_tool = True
+        proxy.config.mode = "cache"
         _disable_pipeline_extensions(proxy)
 
         fake_tracker = _FakePrefixTracker(frozen_count=1)
@@ -333,6 +334,83 @@ def test_token_mode_reclamp_keeps_reversible_ccr_path_when_effective_prefix_drop
         assert any(tool.get("name") == "headroom_retrieve" for tool in forwarded["tools"])
 
 
+def test_token_mode_compresses_frozen_prefix_turns_when_tool_is_not_already_present(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    marker_message = {
+        "role": "user",
+        "content": "[100 items compressed to 10. Retrieve more: hash=abc123def456abc123def456]",
+    }
+    _force_compression(monkeypatch)
+
+    with _make_proxy_client() as client:
+        proxy = client.app.state.proxy
+        proxy.config.optimize = True
+        proxy.config.image_optimize = False
+        proxy.config.ccr_inject_tool = True
+        proxy.config.mode = "token"
+        _disable_pipeline_extensions(proxy)
+
+        fake_tracker = _FakePrefixTracker(frozen_count=1)
+        proxy.session_tracker_store.compute_session_id = lambda request, model, messages: (
+            "stable-session"
+        )
+        proxy.session_tracker_store.get_or_create = lambda session_id, provider: fake_tracker
+        proxy._get_compression_cache = lambda session_id: _FakeCompressionCache(frozen_count=1)
+
+        def _fake_apply(**kwargs):
+            captured.setdefault("compression_calls", []).append(kwargs["messages"])
+            captured["frozen_message_count"] = kwargs["frozen_message_count"]
+            return SimpleNamespace(
+                messages=[marker_message],
+                transforms_applied=["fake:ccr"],
+                timing={},
+                tokens_before=40,
+                tokens_after=10,
+                waste_signals=None,
+            )
+
+        proxy.anthropic_pipeline.apply = _fake_apply
+
+        async def _fake_retry(method, url, headers, body, stream=False, **kwargs):  # noqa: ANN001
+            captured["body"] = body
+            return httpx.Response(
+                200,
+                json={
+                    "id": "msg_ccr_token_frozen",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "ok"}],
+                    "usage": {
+                        "input_tokens": 20,
+                        "output_tokens": 3,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                },
+            )
+
+        proxy._retry_request = _fake_retry
+
+        response = client.post(
+            "/v1/messages",
+            headers={"x-api-key": "test-key", "anthropic-version": "2023-06-01"},
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": _RAW_TRANSCRIPT}],
+            },
+        )
+
+        assert response.status_code == 200
+        assert captured.get("frozen_message_count") == 1
+        assert len(captured.get("compression_calls", [])) == 1
+        forwarded = captured["body"]
+        assert forwarded["messages"] == [marker_message]
+        assert any(tool.get("name") == "headroom_retrieve" for tool in forwarded["tools"])
+
+
 def test_existing_retrieve_tool_keeps_reversible_ccr_path_when_prefix_is_frozen(
     monkeypatch,
 ) -> None:
@@ -412,7 +490,7 @@ def test_existing_retrieve_tool_keeps_reversible_ccr_path_when_prefix_is_frozen(
         assert [tool["name"] for tool in forwarded["tools"]] == ["headroom_retrieve"]
 
 
-def test_cache_mode_skip_forwards_original_prefix_when_tool_injection_is_deferred(
+def test_cache_mode_skip_replays_cached_compressed_prefix_when_tool_injection_is_deferred(
     monkeypatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -498,11 +576,15 @@ def test_cache_mode_skip_forwards_original_prefix_when_tool_injection_is_deferre
         assert response.status_code == 200
         assert captured.get("compression_calls", []) == []
         forwarded = captured["body"]
-        assert forwarded["messages"] == original_messages
+        # Tool injection is deferred (no CCR tool this turn), but the frozen
+        # prefix was cached COMPRESSED last turn. Replay it byte-identical so the
+        # prompt cache still hits instead of busting on original bytes (#1850);
+        # the mutable tail stays original. Tool absent AND cache intact.
+        assert forwarded["messages"] == previous_forwarded_messages + original_messages[1:]
         assert "tools" not in forwarded
 
 
-def test_cache_mode_exact_prefix_replay_forwards_original_messages_when_tool_injection_is_deferred(
+def test_cache_mode_exact_prefix_replay_forwards_cached_compressed_prefix_when_tool_injection_is_deferred(
     monkeypatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -585,7 +667,10 @@ def test_cache_mode_exact_prefix_replay_forwards_original_messages_when_tool_inj
         assert response.status_code == 200
         assert captured.get("compression_calls", []) == []
         forwarded = captured["body"]
-        assert forwarded["messages"] == original_messages
+        # Deferred injection (no CCR tool), single frozen message cached
+        # COMPRESSED last turn: replay it so the cache holds instead of busting
+        # on original bytes (#1850). Tool absent AND cache intact.
+        assert forwarded["messages"] == previous_forwarded_messages
         assert "tools" not in forwarded
 
 
@@ -957,8 +1042,16 @@ def test_cache_mode_existing_retrieve_tool_compresses_only_the_unfrozen_delta(
 
         def _fake_apply(**kwargs):
             captured.setdefault("compression_calls", []).append(kwargs["messages"])
+            captured["frozen_message_count"] = kwargs.get("frozen_message_count")
+            # fix-6 contract: the compressor is handed the frozen forwarded
+            # prefix + the delta and only compresses indices >=
+            # frozen_message_count (so the delta's tool_name resolves from the
+            # prefix). Mirror it: pass the frozen prefix through, compress the tail.
+            fz = kwargs.get("frozen_message_count") or 0
+            msgs = kwargs["messages"]
             return SimpleNamespace(
-                messages=[
+                messages=list(msgs[:fz])
+                + [
                     {
                         "role": "user",
                         "content": (
@@ -1009,7 +1102,14 @@ def test_cache_mode_existing_retrieve_tool_compresses_only_the_unfrozen_delta(
 
         assert response.status_code == 200
         assert len(captured.get("compression_calls", [])) == 1
-        assert captured["compression_calls"][0] == [original_messages[1]]
+        # fix-6 contract: the compressor receives the frozen forwarded prefix
+        # (the previously-forwarded compressed message) + the raw delta, with
+        # frozen_message_count = prefix length so ONLY the delta is compressed.
+        assert captured["compression_calls"][0] == [
+            previous_forwarded_messages[0],
+            original_messages[1],
+        ]
+        assert captured["frozen_message_count"] == 1
         forwarded = captured["body"]
         assert forwarded["messages"] == [
             previous_forwarded_messages[0],
