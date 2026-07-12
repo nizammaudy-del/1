@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- **proxy:** the savings store now fsyncs its parent directory after the
+  atomic rename, so the most recent `proxy_savings.json` write survives a
+  power-loss or crash. `_save_locked` fsynced the temp file's contents but
+  never the directory entry the rename created, leaving the rename itself
+  non-durable on POSIX. Best-effort — a no-op on Windows and virtual
+  filesystems where directory fsync is unsupported.
+
 ### Changed
 
 * **telemetry:** anonymous usage telemetry is now **opt-in** (off by default) instead of opt-out. Nothing is collected or sent unless you set `HEADROOM_TELEMETRY=on` or pass `--telemetry` to `headroom proxy` / `headroom install apply`. `is_telemetry_enabled()` is fail-closed — only explicit on-values (`on`/`true`/`1`/`yes`/`enable`/`enabled`) enable it; unset, empty, or unrecognized values stay disabled. The existing `--no-telemetry` flag and `HEADROOM_TELEMETRY=off` remain accepted for back-compat, and install manifests now write the `HEADROOM_TELEMETRY` value explicitly so generated deployments are unambiguous.
@@ -15,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+* **proxy/transforms:** add graph-scoped narrowing layer to compress wide whole-repo discovery commands (grep, glob, ls) based on the agent's BFS import-graph neighborhood, achieving up to 99.9% token savings within the proxy. Also reaches the same discovery commands when a harness without dedicated Grep/Glob/LS tools (e.g. opencode) shells them out via `bash`/`shell` instead (`grep -r`, `find`, `ls -R`, …), gated on the parsed shell command rather than the tool name so narrowing isn't limited to harnesses with structured discovery tools ([#1925](https://github.com/headroomlabs-ai/headroom/pull/1925)).
+* **graph_context:** extend `headroom.graph_context`'s import-graph resolution from 4 language families (Python, JS/TS, Rust, C/C++) to 14 — adding Go, Java, C#, Ruby, PHP, Kotlin, Scala, Dart, Lua, and Zig via `tree_sitter_language_pack` (the optional `[code]` extra `headroom.transforms.code_compressor` already depends on) instead of a hand-written regex per language. Each import resolves through one of two verified-safe strategies: an explicit relative path (Ruby `require_relative`, PHP `require`/`include`, Dart/Zig relative imports) resolves like JS/TS already does; a dotted qualified name (Java/Kotlin/Scala imports, C# `using`, Lua `require("a.b")`) resolves only when it maps to a UNIQUE file (or, for C#'s namespace-not-class `using`/Go's directory-scoped imports, a unique directory) by path suffix across the whole project — an ambiguous or external name yields no edge rather than a wrong one. Files in these languages still become graph nodes without the `[code]` extra installed, just with zero edges (fail-open, same as every other extractor in the module). Swift and Elixir are not attempted (module-based imports with no reliable file-level resolution); infra/config formats (Terraform, Dockerfile, CMake) are out of scope entirely (not source-code import graphs).
 * **proxy:** add provider-only HTTP proxy routing via `--http-proxy` and `HEADROOM_HTTP_PROXY`. Upstream LLM provider calls can now use an HTTP proxy without setting process-wide `HTTP_PROXY`/`HTTPS_PROXY` variables that are inherited by tool executions; proxied provider clients use HTTP/1.1 so HTTPS provider APIs can tunnel through CONNECT.
 * **proxy:** add output shaping for OpenAI Responses traffic on `/v1/responses` HTTP requests and Codex WebSocket `response.create` frames, with stable output-savings holdout keys and counted WS token strata for the experiment.
 * **observability:** the `headroom.compression.pipeline` span now also carries the OpenTelemetry GenAI semantic-convention attribute `gen_ai.request.model` alongside the existing `headroom.*` attributes, so Headroom's traces group and filter by the standard `gen_ai.*` schema in any OTel-native backend (Grafana, Datadog, etc.). Purely additive; no existing attribute changed. `gen_ai.operation.name`, `gen_ai.provider.name`, and `gen_ai.usage.*` are deliberately deferred (they need per-caller operation threading, reliable upstream-provider resolution, and response-path usage respectively).

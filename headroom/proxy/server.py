@@ -716,6 +716,12 @@ class HeadroomProxy(
             ccr_inject_marker=config.ccr_inject_marker,
             force_kompress_all=config.force_kompress_all,
             lossless=config.lossless,
+            # BFS depth for graph-scoped Grep/Glob narrowing. Deeper repos
+            # with wide import fan-out may want a shallower default (fewer,
+            # more tightly-scoped files); monorepos with deep call chains
+            # may want it deeper. Default (2) matches ContentRouterConfig's
+            # own dataclass default.
+            graph_narrow_max_depth=_get_env_int("HEADROOM_GRAPH_NARROW_MAX_DEPTH", 2, min_value=0),
         )
         # No-CCR lossless mode: compress tool outputs with format-native
         # lossless compaction and marker-free SmartCrusher, and suppress every

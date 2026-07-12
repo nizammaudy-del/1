@@ -50,6 +50,7 @@ from enum import Enum
 from typing import Any
 
 from ..config import (
+    _READ_TOOL_NAMES,
     DEFAULT_EXCLUDE_TOOLS,
     ReadLifecycleConfig,
     RelevanceScorerConfig,
@@ -74,6 +75,50 @@ split_into_sections = _mixed_content.split_into_sections
 
 
 _detect_backend_warned = False
+
+# Matches a plausible source path (e.g. ``src/pkg/mod.py``) inside tool
+# args/output, used by ``ContentRouter._detect_graph_entrypoint``. Extension
+# alternation must be kept in sync with `headroom.graph_context.
+# SOURCE_EXTENSIONS` — duplicated (not imported) so this module-level regex
+# doesn't force an eager import of graph_context into every content_router
+# user; graph_context itself is still only ever lazily imported inside the
+# `_graph_narrow*` methods.
+#
+# NOTE: alternation order matters here -- `re` tries alternatives
+# left-to-right and takes the first that matches, not the longest, so any
+# extension that is a strict prefix of another (`c` of `cs`/`cpp`/`cc`/`cxx`,
+# `h` of `hpp`/`hh`/`hxx`) MUST be listed after the longer one it prefixes,
+# or the longer extension gets silently truncated (`Program.cs` -> matched
+# as `Program.c`, then fails the `is_file()` check downstream and the
+# entrypoint is silently never detected).
+_SOURCE_PATH_RE = re.compile(
+    r"[\w./\\-]+\.(?:py|jsx?|mjs|cjs|tsx?|rs|cpp|cc|cxx|cs|c|hpp|hh|hxx|h"
+    r"|go|java|rb|php|kts?|scala|dart|lua|zig)"
+)
+
+
+def _first_source_path(text: str) -> str | None:
+    """First source-file-looking path substring in ``text``, or None."""
+    match = _SOURCE_PATH_RE.search(text)
+    return match.group(0) if match else None
+
+
+def _line_mentions_path(line: str, rel_path: str) -> bool:
+    """True if ``line`` references ``rel_path`` as a whole path segment.
+
+    A plain substring check (``rel_path in line``) false-positives whenever
+    one related file's name is a suffix of an unrelated file's name in the
+    SAME directory — e.g. a related root-level ``util.py`` would substring-
+    match inside an unrelated ``network_util.py``, wrongly keeping that
+    line. Requires the match to start at the beginning of the line or right
+    after a path separator, and end at a path separator/delimiter or the
+    end of the line, so ``util.py`` only matches an actual ``util.py``
+    path component, never a filename that merely ends with those
+    characters. Caller is expected to have already normalized ``line`` to
+    forward slashes.
+    """
+    pattern = r"(?:^|[/\\])" + re.escape(rel_path) + r"(?:[:/\\\s]|$)"
+    return re.search(pattern, line) is not None
 _detect_panic_warned = False
 _detect_native_unhealthy = False  # circuit breaker: native detect hung once (#575)
 
@@ -1151,6 +1196,30 @@ class ContentRouterConfig:
         {"grep", "egrep", "fgrep", "rg", "ripgrep", "ag", "ack"}
     )
 
+    # Graph-scoped narrowing (Headroom's native, Graphify-style proxy — see
+    # `headroom.graph_context`): whole-repo Glob/Grep/LS discovery dumps are
+    # narrowed to lines whose file sits within `graph_narrow_max_depth` import
+    # hops of a detected entrypoint, instead of being lossy-compressed or
+    # passed through in full. See ``_graph_narrow``.
+    #
+    # Harnesses without dedicated discovery tools (e.g. opencode) shell the
+    # same wide dumps out through `bash_tool_names` instead (`find`, `ls -R`,
+    # `grep -r`, …). `graph_narrow_bash_commands` is the matching whitelist
+    # for THAT path — checked against the parsed program name (see
+    # `_bash_command_is_search`) whenever a bash-family tool call's own name
+    # isn't already in `graph_narrow_tool_names`.
+    enable_graph_narrow: bool = True
+    graph_narrow_tool_names: frozenset[str] = frozenset(
+        {"glob", "grep", "rg", "ripgrep", "ls", "list_directory", "list_dir", "search_files"}
+    )
+    graph_narrow_bash_commands: frozenset[str] = frozenset(
+        {"grep", "egrep", "fgrep", "rg", "ripgrep", "ag", "ack", "find", "ls"}
+    )
+    graph_narrow_max_depth: int = 2
+    # Below this many lines a discovery result isn't "wide" enough to bother
+    # narrowing — the token savings wouldn't be worth the graph lookup.
+    graph_narrow_min_lines: int = 40
+
     # Read lifecycle management (stale/superseded detection)
     read_lifecycle: ReadLifecycleConfig = field(default_factory=ReadLifecycleConfig)
 
@@ -1282,6 +1351,11 @@ class ContentRouter(Transform):
         self._tool_call_args: dict[str, str] = {}
         # tool_call_id → raw shell command (bash-search fold), same population.
         self._tool_call_commands: dict[str, str] = {}
+        # Path of the most recent Read tool call seen by `_build_tool_name_map`
+        # (chronological — later messages overwrite it). This is the "file the
+        # agent is currently focused on" signal `_graph_narrow` BFS-walks from
+        # when a later Glob/Grep call doesn't name a file itself.
+        self._last_read_path: str | None = None
 
         # Phase 0 (#1171): cap the input size handed to kompress (ModernBERT
         # ONNX). Its inference scales O(tokens) and runs synchronously on the
@@ -2981,6 +3055,8 @@ class ContentRouter(Transform):
                         args = _tool_call_args_text(fn.get("arguments"))
                         if args:
                             args_map[tc_id] = args
+                            if name in _READ_TOOL_NAMES:
+                                self._last_read_path = _first_source_path(args) or self._last_read_path
                         command = _tool_call_command_text(fn.get("arguments"))
                         if command:
                             commands_map[tc_id] = command
@@ -2997,6 +3073,8 @@ class ContentRouter(Transform):
                             args = _tool_call_args_text(block.get("input"))
                             if args:
                                 args_map[tc_id] = args
+                                if name in _READ_TOOL_NAMES:
+                                    self._last_read_path = _first_source_path(args) or self._last_read_path
                             command = _tool_call_command_text(block.get("input"))
                             if command:
                                 commands_map[tc_id] = command
@@ -3496,8 +3574,25 @@ class ContentRouter(Transform):
                 tool_call_id = message.get("tool_call_id", "")
                 if tool_call_id in excluded_tool_ids:
                     if messages_from_end <= read_protection_window:
-                        # Protected from lossy compression — but grep/log/json
-                        # output can still be losslessly compacted.
+                        # Protected from lossy compression — but a wide Grep/Glob
+                        # dump can still be graph-narrowed CCR-recoverably (see
+                        # `_graph_narrow_lossless`), and search/log/json output
+                        # can still be losslessly compacted.
+                        _excluded_tool_name = tool_name_map.get(tool_call_id, "")
+                        graph_folded = self._graph_narrow_lossless(
+                            _excluded_tool_name, tool_call_id, content
+                        )
+                        if graph_folded is not None:
+                            folded, kind = graph_folded
+                            result_slots[i] = {**message, "content": folded}
+                            transforms_applied.append(f"router:excluded:{kind}")
+                            route_counts["excluded_tool_lossless"] = (
+                                route_counts.get("excluded_tool_lossless", 0) + 1
+                            )
+                            route_counts["graph_narrow_lossless_tokens_saved"] = route_counts.get(
+                                "graph_narrow_lossless_tokens_saved", 0
+                            ) + max(0, (len(content) - len(folded)) // 4)
+                            continue
                         compacted = self._lossless_compact_excluded(content)
                         if compacted is not None:
                             folded, kind = compacted
@@ -3530,6 +3625,27 @@ class ContentRouter(Transform):
                         route_counts.get("bash_lossless_search", 0) + 1
                     )
                     continue
+
+                # Graph-narrow pre-filter (composes, does not pre-empt): drop
+                # lines outside the import-graph neighborhood of a detected
+                # entrypoint, then FALL THROUGH into the normal pipeline
+                # (relevance_split / SearchCompressor) instead of short-
+                # circuiting it. Structural proximity (same import graph) is
+                # not the same signal as query relevance, and the existing
+                # pipeline already ranks + hard-caps search-shaped output —
+                # skipping it would let an unbounded graph neighborhood ship
+                # more text than the router's own limits allow. Reassigning
+                # `message` (not just `content`) so any later "pass through
+                # as-is" branch below still carries the narrowed bytes.
+                graph_narrowed = self._graph_narrow(tool_name, tool_call_id, content)
+                if graph_narrowed is not None:
+                    route_counts["graph_narrow"] = route_counts.get("graph_narrow", 0) + 1
+                    route_counts["graph_narrow_tokens_saved"] = route_counts.get(
+                        "graph_narrow_tokens_saved", 0
+                    ) + max(0, (len(content) - len(graph_narrowed)) // 4)
+                    content = graph_narrowed
+                    message = {**message, "content": content}
+                    transforms_applied.append("router:graph_narrow")
 
             # Read protection (ROLE / SHAPE-AGNOSTIC). An observation produced by
             # a file read command (cat/sed/head/…) is passed VERBATIM so the agent
@@ -3925,6 +4041,109 @@ class ContentRouter(Transform):
             timing=compressor_timing,
         )
 
+    def _is_graph_narrow_candidate(self, tool_name: str, tool_call_id: str) -> bool:
+        """True when this call's output is a wide discovery dump graph-narrow should see.
+
+        Two ways in: the harness's own dedicated tool name (Grep/Glob/LS, per
+        `graph_narrow_tool_names`), or a bash-family tool call whose parsed
+        program is a discovery command (`grep -r`, `find`, `ls -R`, …, per
+        `graph_narrow_bash_commands`) — the path harnesses like opencode use
+        when they shell out instead of calling a structured discovery tool.
+        """
+        name = tool_name.lower()
+        if name in self.config.graph_narrow_tool_names:
+            return True
+        if name not in self.config.bash_tool_names:
+            return False
+        command = self._tool_call_commands.get(tool_call_id, "")
+        return bool(command) and _bash_command_is_search(command, self.config.graph_narrow_bash_commands)
+
+    def _graph_narrow_lossless(
+        self, tool_name: str, tool_call_id: str, content: Any
+    ) -> tuple[str, str] | None:
+        """CCR-recoverable graph-narrow for a still-PROTECTED (recent) Grep/Glob result.
+
+        `_graph_narrow` (below) only ever reaches Grep/Glob output once it has
+        aged past the adaptive read-protection window, because dropping a
+        line outright is a real information loss and excluded tools are
+        protected specifically so the agent never silently loses bytes it
+        might need to act on *right now*. This variant is safe to use on
+        FRESH excluded-tool output because nothing is discarded: the full
+        original is written to the CompressionStore, and lines outside the
+        import-graph neighborhood are collapsed behind a `Retrieve more:
+        hash=` marker instead of being dropped. If the agent's next move
+        needs one of those lines, it (or a follow-up turn) can retrieve the
+        exact original bytes — same recoverability guarantee as the
+        Kompress/SmartCrusher CCR path, not the same guarantee as
+        `_lossless_compact_excluded`'s true byte-for-byte reversibility
+        (which requires no explicit retrieval step). Returns ``(folded,
+        "graph_narrow")`` or ``None`` (falls through to
+        `_lossless_compact_excluded`, then to verbatim protection).
+        """
+        if not self.config.enable_graph_narrow:
+            return None
+        if not isinstance(content, str) or not self._is_graph_narrow_candidate(tool_name, tool_call_id):
+            return None
+        lines = content.splitlines()
+        if len(lines) < self.config.graph_narrow_min_lines:
+            return None
+
+        try:
+            from pathlib import Path
+
+            from .. import graph_context as _gc
+            from ..cache.compression_store import get_compression_store
+        except Exception:  # noqa: BLE001
+            return None
+
+        root = Path.cwd().resolve()
+        entrypoint = self._detect_graph_entrypoint(tool_call_id, root)
+        if entrypoint is None:
+            return None
+
+        try:
+            # Push-based: instant in-memory read once a background watcher is
+            # live for this root (see `graph_context.get_live_graph`). Falls
+            # back to the hash-checked pull model on its own when `watchdog`
+            # is unavailable — no per-call TTL bookkeeping needed here anymore.
+            graph = _gc.get_live_graph(root)
+        except Exception:  # noqa: BLE001
+            return None
+
+        try:
+            related = set(
+                _gc.bfs_related_files(graph, entrypoint, max_depth=self.config.graph_narrow_max_depth)
+            )
+        except KeyError:
+            return None
+
+        kept = [line for line in lines if any(_line_mentions_path(line.replace("\\", "/"), f) for f in related)]
+        if len(kept) < 2 or len(kept) >= len(lines):
+            return None  # nothing to gain, or the filter matched everything
+        kept_text = "\n".join(kept)
+
+        try:
+            store = get_compression_store()
+            cache_key = store.store(
+                content,
+                kept_text,
+                original_tokens=len(content) // 4,
+                compressed_tokens=len(kept_text) // 4,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                compression_strategy="graph_narrow",
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+        omitted = len(lines) - len(kept)
+        folded = (
+            f"{kept_text}\n[{omitted} line(s) outside the import-graph neighborhood of "
+            f"{entrypoint} (depth={self.config.graph_narrow_max_depth}) collapsed."
+            f" Retrieve more: hash={cache_key}]"
+        )
+        return folded, "graph_narrow"
+
     def _lossless_compact_excluded(self, content: Any) -> tuple[str, str] | None:
         """Information-preserving compaction for a protected (excluded) tool output.
 
@@ -4008,6 +4227,99 @@ class ContentRouter(Transform):
         except Exception:  # noqa: BLE001
             return None
         return folded if len(folded) < len(content) else None
+
+    def _detect_graph_entrypoint(self, tool_call_id: str, root: Any) -> str | None:
+        """Find a project-relative ``.py`` file to BFS the import graph from.
+
+        Tries the most recently Read file in this conversation
+        (``self._last_read_path``) first — the file the agent is actually
+        focused on right now — then falls back to the triggering tool call's
+        own args. ``self._last_read_path`` is checked FIRST (not the call's
+        own args) because ``_tool_call_args_text`` mashes every string field
+        of the call into one blob with no way to tell "the path being
+        searched" apart from "free text inside a search pattern" — a Grep
+        for e.g. ``"TODO see helper.py for context"`` would otherwise hijack
+        the entrypoint to ``helper.py`` even though the agent's actual focus
+        (the last file it Read) is a completely different, correct file.
+        Deliberately does NOT scan the wide result content itself: with
+        dozens of candidate paths in a Grep/Glob dump, the first one is
+        arbitrary and usually wrong (e.g. picks an unrelated file that
+        merely sorts first), so a miss here falls through as a no-op rather
+        than risk narrowing around the wrong file.
+        """
+        for text in (self._last_read_path or "", self._tool_call_args.get(tool_call_id, "")):
+            if not text:
+                continue
+            candidate = _first_source_path(text)
+            if candidate is None:
+                continue
+            candidate = candidate.replace("\\", "/").lstrip("./")
+            if (root / candidate).is_file():
+                return candidate
+        return None
+
+    def _graph_narrow(self, tool_name: str, tool_call_id: str, content: Any) -> str | None:
+        """Narrow a whole-repo Glob/Grep/LS (or bash `find`/`ls -R`/`grep -r`) dump
+        to its import-graph neighborhood.
+
+        Headroom's native, Graphify-style proxy behavior (``headroom.
+        graph_context``): rather than shipping every matched line/path to the
+        LLM, keep only the lines whose file sits within ``graph_narrow_
+        max_depth`` import hops of a detected entrypoint. Unlike lossy
+        compression, this never rewrites a kept line — it only drops lines
+        for files outside the graph neighborhood, so anything kept is
+        byte-identical to the original.
+
+        Returns the narrowed text, or ``None`` to fall through unchanged
+        (no entrypoint found, result isn't wide enough, or narrowing
+        wouldn't actually shrink anything).
+        """
+        if not self.config.enable_graph_narrow:
+            return None
+        if not isinstance(content, str) or not self._is_graph_narrow_candidate(tool_name, tool_call_id):
+            return None
+        lines = content.splitlines()
+        if len(lines) < self.config.graph_narrow_min_lines:
+            return None
+
+        try:
+            from pathlib import Path
+
+            from .. import graph_context as _gc
+        except Exception:  # noqa: BLE001
+            return None
+
+        root = Path.cwd().resolve()
+        entrypoint = self._detect_graph_entrypoint(tool_call_id, root)
+        if entrypoint is None:
+            return None
+
+        try:
+            # Push-based: instant in-memory read once a background watcher is
+            # live for this root (see `graph_context.get_live_graph`). Falls
+            # back to the hash-checked pull model on its own when `watchdog`
+            # is unavailable — no per-call TTL bookkeeping needed here anymore.
+            graph = _gc.get_live_graph(root)
+        except Exception:  # noqa: BLE001
+            return None
+
+        try:
+            related = set(
+                _gc.bfs_related_files(graph, entrypoint, max_depth=self.config.graph_narrow_max_depth)
+            )
+        except KeyError:
+            return None
+
+        kept = [line for line in lines if any(_line_mentions_path(line.replace("\\", "/"), f) for f in related)]
+        if len(kept) < 2 or len(kept) >= len(lines):
+            return None  # nothing to gain, or the filter matched everything
+
+        omitted = len(lines) - len(kept)
+        kept.append(
+            f"[... {omitted} line(s) outside the import-graph neighborhood of "
+            f"{entrypoint} (depth={self.config.graph_narrow_max_depth}) omitted by Headroom]"
+        )
+        return "\n".join(kept)
 
     def _get_tool_bias(self, tool_name: str) -> float:
         """Look up compression bias for a tool name.
@@ -4303,8 +4615,29 @@ class ContentRouter(Transform):
                     continue
                 if tool_use_id in excluded_tool_ids:
                     if messages_from_end <= read_protection_window:
-                        # Protected from lossy compression — but grep/log/json
-                        # output can still be losslessly compacted.
+                        # Protected from lossy compression — but a wide Grep/Glob
+                        # dump can still be graph-narrowed CCR-recoverably (see
+                        # `_graph_narrow_lossless`), and search/log/json output
+                        # can still be losslessly compacted.
+                        _excluded_tool_name = (tool_name_map or {}).get(tool_use_id, "")
+                        graph_folded = self._graph_narrow_lossless(
+                            _excluded_tool_name, tool_use_id, block.get("content")
+                        )
+                        if graph_folded is not None:
+                            folded, kind = graph_folded
+                            new_blocks.append({**block, "content": folded})
+                            transforms_applied.append(f"router:excluded:{kind}")
+                            if route_counts is not None:
+                                route_counts["excluded_tool_lossless"] = (
+                                    route_counts.get("excluded_tool_lossless", 0) + 1
+                                )
+                                _orig_content = block.get("content")
+                                _orig_len = len(_orig_content) if isinstance(_orig_content, str) else 0
+                                route_counts["graph_narrow_lossless_tokens_saved"] = route_counts.get(
+                                    "graph_narrow_lossless_tokens_saved", 0
+                                ) + max(0, (_orig_len - len(folded)) // 4)
+                            any_compressed = True
+                            continue
                         compacted = self._lossless_compact_excluded(block.get("content"))
                         if compacted is not None:
                             folded, kind = compacted
@@ -4382,6 +4715,31 @@ class ContentRouter(Transform):
                         )
                     any_compressed = True
                     continue
+
+                # Graph-narrow pre-filter (twin of the string-form path;
+                # composes, does not pre-empt): drop lines outside the
+                # import-graph neighborhood, then FALL THROUGH so
+                # relevance_split / SearchCompressor still rank and hard-cap
+                # whatever remains. Reassigning `block` (not just `tool_text`)
+                # so the "keep block unchanged" fallback at the end of this
+                # loop — and every branch below that re-appends `block` as
+                # pass-through — carries the narrowed bytes forward.
+                graph_narrowed = self._graph_narrow(tool_name, tool_use_id, tool_text)
+                if graph_narrowed is not None:
+                    if route_counts is not None:
+                        route_counts["graph_narrow"] = route_counts.get("graph_narrow", 0) + 1
+                        route_counts["graph_narrow_tokens_saved"] = route_counts.get(
+                            "graph_narrow_tokens_saved", 0
+                        ) + max(0, (len(tool_text) - len(graph_narrowed)) // 4)
+                    tool_text = graph_narrowed
+                    block = {
+                        **block,
+                        "content": (
+                            [{"type": "text", "text": tool_text}] if _tr_list_form else tool_text
+                        ),
+                    }
+                    transforms_applied.append("router:graph_narrow")
+                    any_compressed = True
 
                 # Protection: failed tool calls / error outputs stay verbatim
                 # (issue #847). `is_error` is Anthropic's explicit failure

@@ -54,6 +54,7 @@ def _register_commands() -> None:
         copilot_auth,  # noqa: F401
         doctor,  # noqa: F401
         evals,  # noqa: F401
+        graph_context,  # noqa: F401
         init,  # noqa: F401
         install,  # noqa: F401
         learn,  # noqa: F401

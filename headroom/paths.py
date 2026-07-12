@@ -82,6 +82,7 @@ _LEAN_CTX_UNIX = "lean-ctx"
 _LEAN_CTX_WIN = "lean-ctx.exe"
 _DEPLOY_DIR = "deploy"
 _PLUGINS_DIR = "plugins"
+_GRAPH_CONTEXT_DIR = "graph_context"
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +349,17 @@ def beacon_lock_path(port: int) -> Path:
     return workspace_dir() / f".beacon_lock_{int(port)}"
 
 
+def graph_context_cache_dir() -> Path:
+    """Return the directory holding cached project import-graphs.
+
+    One JSON file per analyzed project root lives here (see
+    :mod:`headroom.graph_context`), keyed by a hash of the root's absolute
+    path so multiple projects don't collide.
+    """
+
+    return workspace_dir() / _GRAPH_CONTEXT_DIR
+
+
 # ---------------------------------------------------------------------------
 # Per-resource helpers -- config bucket
 # ---------------------------------------------------------------------------
@@ -419,6 +431,7 @@ __all__ = [
     "lean_ctx_path",
     "deploy_root",
     "beacon_lock_path",
+    "graph_context_cache_dir",
     "models_config_path",
     "plugin_config_dir",
     "plugin_workspace_dir",

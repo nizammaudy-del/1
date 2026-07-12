@@ -1533,3 +1533,42 @@ class TestCompressBlockContent:
         assert any("router:tool_result" in t for t in transforms_applied), (
             f"Expected router:tool_result:* in transforms, got: {transforms_applied}"
         )
+
+
+# =============================================================================
+# _first_source_path / _SOURCE_PATH_RE: extension-alternation ordering.
+#
+# Regression guard: `re`'s `A|B` alternation takes the FIRST alternative that
+# matches at a position, not the longest. Any extension that is a strict
+# prefix of another one in the same alternation (`c` of `cs`/`cpp`/`cc`/`cxx`,
+# `h` of `hpp`/`hh`/`hxx`) silently truncates the match unless the longer
+# extension is listed first -- found while adding C# support (`Program.cs`
+# was matching as `Program.c`, which then failed the downstream `is_file()`
+# check and silently broke entrypoint detection for every C# file).
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Program.cs", "Program.cs"),
+        ("src/foo.cpp", "src/foo.cpp"),
+        ("src/foo.cc", "src/foo.cc"),
+        ("src/foo.cxx", "src/foo.cxx"),
+        ("src/foo.c", "src/foo.c"),
+        ("src/foo.hpp", "src/foo.hpp"),
+        ("src/foo.hh", "src/foo.hh"),
+        ("src/foo.hxx", "src/foo.hxx"),
+        ("src/foo.h", "src/foo.h"),
+        ("Main.java", "Main.java"),
+        ("main.go", "main.go"),
+        ("main.kts", "main.kts"),
+        ("main.kt", "main.kt"),
+    ],
+)
+def test_first_source_path_does_not_truncate_prefix_colliding_extensions(
+    text: str, expected: str
+) -> None:
+    from headroom.transforms.content_router import _first_source_path
+
+    assert _first_source_path(text) == expected
