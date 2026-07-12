@@ -8,7 +8,7 @@
             </button>
             <div x-show="!panes.windows">
         <!-- Empty state: this pane's cards are all data-gated, so show guidance when none are present -->
-        <template x-if="!(stats.subscription_window && stats.subscription_window.latest) && !stats.codex_rate_limits && !stats.copilot_quota && !((stats.prefix_cache?.totals?.requests || 0) > 0)">
+        <template x-if="!(stats.subscription_window && stats.subscription_window.latest) && !(stats.codex_rate_limits && stats.codex_rate_limits.primary) && !(stats.copilot_quota && stats.copilot_quota.latest) && !((stats.prefix_cache?.totals?.requests || 0) > 0)">
             <div class="bg-surface rounded-lg p-6 border border-border mb-6 text-center"
                  data-help-title="Provider Windows & Cache"
                  data-help="Subscription/quota windows (Anthropic 5h/7d, Codex rate limits, Copilot quota) and prefix-cache efficiency appear here once that provider's traffic flows through the proxy.">
