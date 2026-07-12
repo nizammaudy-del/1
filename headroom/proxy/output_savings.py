@@ -38,104 +38,32 @@ Pure module: no I/O except explicit ``load``/``save``.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-# Coarse input-token buckets. Coarse on purpose: too many strata make
-# per-stratum baselines sparse and noisy. Boundaries in tokens.
-_INPUT_BUCKETS = (2_000, 8_000, 32_000, 128_000)
-
-
-def input_bucket(input_tokens: int) -> str:
-    """Map an input-token count to a coarse bucket label."""
-    if input_tokens < _INPUT_BUCKETS[0]:
-        return "xs"
-    if input_tokens < _INPUT_BUCKETS[1]:
-        return "s"
-    if input_tokens < _INPUT_BUCKETS[2]:
-        return "m"
-    if input_tokens < _INPUT_BUCKETS[3]:
-        return "l"
-    return "xl"
-
-
-def model_family(model: str) -> str:
-    """Collapse a model id to a coarse family for stratification.
-
-    Token-spend behaviour clusters by family far more than by point release,
-    so we bucket (e.g.) every ``claude-opus-*`` together.
-    """
-    m = model.lower()
-    for fam in ("opus", "sonnet", "haiku", "fable", "mythos", "gpt", "gemini"):
-        if fam in m:
-            return fam
-    return "other"
-
-
-def stratum_key(
-    *,
-    turn_kind: str,
-    input_tokens: int,
-    model: str,
-    has_tools: bool,
-) -> str:
-    """Build a stratum key from request features observable BEFORE the response.
-
-    Order is most→least specific so :meth:`BaselineModel.lookup` can back off
-    by trimming trailing fields.
-    """
-    return "|".join(
-        (
-            model_family(model),
-            turn_kind,
-            input_bucket(input_tokens),
-            "tools" if has_tools else "notools",
-        )
-    )
-
-
-def conversation_key_from_body(body: dict[str, Any]) -> str:
-    """Derive a conversation-stable key for holdout assignment.
-
-    Stable across every turn of one conversation (so the whole conversation
-    lands in one arm) and cheap: a hash of the model plus the first user
-    message's text. The first user turn is immutable for a conversation's
-    lifetime, which is exactly the stability we need.
-    """
-    model = str(body.get("model", ""))
-    seed = model
-    for msg in body.get("messages", []):
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            content = msg.get("content")
-            if isinstance(content, str):
-                seed += "\x00" + content[:512]
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        seed += "\x00" + str(block.get("text", ""))[:512]
-                        break
-            break
-    return hashlib.sha256(seed.encode("utf-8", "ignore")).hexdigest()
-
-
-def assign_arm(conversation_key: str, holdout_fraction: float) -> str:
-    """Deterministically assign a conversation to ``treatment`` or ``control``.
-
-    ``holdout_fraction`` in [0, 1] is the share routed to ``control`` (left
-    unshaped for measurement). Hashing the conversation key keeps assignment
-    stable across the conversation's turns and uniform across conversations.
-    """
-    if holdout_fraction <= 0.0:
-        return "treatment"
-    if holdout_fraction >= 1.0:
-        return "control"
-    digest = hashlib.sha256(("arm:" + conversation_key).encode()).hexdigest()
-    # Map the first 8 hex digits to [0, 1).
-    frac = int(digest[:8], 16) / 0xFFFFFFFF
-    return "control" if frac < holdout_fraction else "treatment"
+from .output_savings_policy import (
+    assign_arm as assign_arm,
+)
+from .output_savings_policy import (
+    conversation_key_from_body as conversation_key_from_body,
+)
+from .output_savings_policy import (
+    input_bucket as input_bucket,
+)
+from .output_savings_policy import (
+    model_family as model_family,
+)
+from .output_savings_policy import (
+    parse_stratum_label,
+)
+from .output_savings_policy import (
+    stratum_key as stratum_key,
+)
+from .output_savings_policy import (
+    stratum_label as stratum_label,
+)
 
 
 @dataclass
@@ -419,24 +347,6 @@ class SavingsLedger:
 # every response path (streaming, non-streaming, backend) feeds the ledger with
 # no changes to RequestOutcome or its construction sites.
 # --------------------------------------------------------------------------
-
-_STRATUM_LABEL = "output_shaper:stratum:"
-_CONTROL_LABEL = "output_shaper:control:"
-
-
-def stratum_label(arm: str, key: str) -> str:
-    """Encode (arm, stratum) as a transforms_applied label."""
-    prefix = _STRATUM_LABEL if arm == "treatment" else _CONTROL_LABEL
-    return prefix + key
-
-
-def parse_stratum_label(label: str) -> tuple[str, str] | None:
-    """Decode a label into ``(arm, stratum)``, or None if not one of ours."""
-    if label.startswith(_STRATUM_LABEL):
-        return "treatment", label[len(_STRATUM_LABEL) :]
-    if label.startswith(_CONTROL_LABEL):
-        return "control", label[len(_CONTROL_LABEL) :]
-    return None
 
 
 class SavingsRecorder:

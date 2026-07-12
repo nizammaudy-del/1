@@ -106,7 +106,7 @@ def _run_claude_wrap(monkeypatch, tmp_path, env: dict[str, str]):
 
     def fake_ensure_proxy(port, no_proxy, **kwargs):
         captured["ensure_kwargs"] = kwargs
-        return None
+        return None, port
 
     runner = CliRunner()
     with patch("headroom.cli.wrap.shutil.which", return_value="/usr/bin/claude"):

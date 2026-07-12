@@ -11,7 +11,11 @@ from urllib.parse import quote
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import Response
 
-from headroom.proxy.handlers.openai import _resolve_codex_routing_headers
+from headroom.proxy.handlers.openai import (
+    _custom_base_passthrough_telemetry,
+    _resolve_codex_routing_headers,
+    _sanitize_forwarded_response_headers,
+)
 
 logger = logging.getLogger("headroom.proxy.routes")
 
@@ -391,7 +395,13 @@ async def _handle_chatgpt_model_metadata(
     if request.url.query:
         url = f"{url}?{request.url.query}"
 
-    body = await request.body()
+    from starlette.requests import ClientDisconnect
+
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.debug("Client disconnected during body read for passthrough")
+        return Response(status_code=204)
     try:
         assert proxy.http_client is not None
         resp = await proxy.http_client.request(
@@ -431,7 +441,13 @@ async def _handle_chatgpt_codex_images(
     if request.url.query:
         url = f"{url}?{request.url.query}"
 
-    body = await request.body()
+    from starlette.requests import ClientDisconnect
+
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.debug("Client disconnected during body read for passthrough")
+        return Response(status_code=204)
     try:
         client = getattr(proxy, "http_client_h1", None) or getattr(proxy, "http_client", None)
         if client is None:
@@ -444,9 +460,7 @@ async def _handle_chatgpt_codex_images(
             content=body,
             timeout=120.0,
         )
-        response_headers = dict(resp.headers)
-        response_headers.pop("content-encoding", None)
-        response_headers.pop("content-length", None)
+        response_headers = _sanitize_forwarded_response_headers(resp.headers)
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -471,6 +485,13 @@ async def _handle_chatgpt_codex_images(
 def register_provider_routes(app: FastAPI, proxy: Any) -> None:
     """Register provider-specific proxy endpoints."""
 
+    def normalize_request_path(request: Request, path: str) -> None:
+        request.scope["path"] = path
+        if "raw_path" in request.scope:
+            request.scope["raw_path"] = quote(path).encode("ascii")
+        if hasattr(request, "_url"):
+            delattr(request, "_url")
+
     async def vertex_publisher_passthrough(request: Request, publisher: str, action: str):
         return await proxy.handle_passthrough(
             request,
@@ -481,7 +502,21 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.post("/v1/messages")
     async def anthropic_messages(request: Request):
+        # Honor the per-request upstream override so clients that speak the
+        # Anthropic Messages wire format but authenticate against a
+        # non-Anthropic gateway route correctly, consistent with the
+        # OpenAI-compatible and generic passthrough routes.
+        custom_base = request.headers.get("x-headroom-base-url", "").strip()
+        if custom_base:
+            return await proxy.handle_anthropic_messages(
+                request, upstream_base_url=custom_base.rstrip("/")
+            )
         return await proxy.handle_anthropic_messages(request)
+
+    @app.post("/anthropic/v1/messages")
+    async def foundry_anthropic_messages(request: Request):
+        normalize_request_path(request, "/v1/messages")
+        return await proxy.handle_anthropic_messages(request, _api_target(proxy, "anthropic"))
 
     # AWS Bedrock InvokeModel passthrough. Registered when an upstream is
     # configured — either `--bedrock-api-url` / BEDROCK_TARGET_API_URL (forward
@@ -489,9 +524,7 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
     # (re-sign direct to AWS). Without either, `/model/{id}/invoke` keeps
     # falling through to the catch-all (verbatim, signature-intact) so existing
     # behavior is unchanged. The `{model_id:path}` converter captures
-    # inference-profile ids that contain dots, colons and slashes (e.g.
-    # `us.anthropic.claude-sonnet-4-5-20250929-v1:0`). See
-    # headroom/proxy/handlers/bedrock.py for the SigV4 handling.
+    # inference-profile ids that contain dots, colons and slashes.
     if getattr(proxy.config, "bedrock_api_url", None) or getattr(
         proxy.config, "bedrock_sign", False
     ):
@@ -575,7 +608,13 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
         if request.url.query:
             url = f"{url}?{request.url.query}"
 
-        body = await request.body()
+        from starlette.requests import ClientDisconnect
+
+        try:
+            body = await request.body()
+        except ClientDisconnect:
+            logger.debug("Client disconnected during body read for codex responses passthrough")
+            return Response(status_code=204)
         try:
             assert proxy.http_client is not None
             resp = await proxy.http_client.request(
@@ -737,22 +776,25 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
         return await vertex_publisher_passthrough(request, publisher, "rawPredict")
 
     @app.post(
-        "/projects/{project}/locations/{location}/publishers/anthropic/models/{model}:rawPredict"
+        "/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:rawPredict"
     )
     async def vertex_raw_predict_no_version(
         request: Request,
         project: str,
         location: str,
+        publisher: str,
         model: str,
     ):
-        del project
-        target = _vertex_target_for_location(proxy, location).rstrip("/") + "/v1"
-        return await proxy.handle_anthropic_messages(
-            request,
-            target,
-            "vertex:anthropic",
-            model,
-        )
+        if publisher == "anthropic":
+            del project
+            target = _vertex_target_for_location(proxy, location).rstrip("/") + "/v1"
+            return await proxy.handle_anthropic_messages(
+                request,
+                target,
+                "vertex:anthropic",
+                model,
+            )
+        return await vertex_publisher_passthrough(request, publisher, "rawPredict")
 
     @app.post(
         "/{api_version}/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:streamRawPredict"
@@ -777,23 +819,26 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
         return await vertex_publisher_passthrough(request, publisher, "streamRawPredict")
 
     @app.post(
-        "/projects/{project}/locations/{location}/publishers/anthropic/models/{model}:streamRawPredict"
+        "/projects/{project}/locations/{location}/publishers/{publisher}/models/{model}:streamRawPredict"
     )
     async def vertex_stream_raw_predict_no_version(
         request: Request,
         project: str,
         location: str,
+        publisher: str,
         model: str,
     ):
-        del project
-        target = _vertex_target_for_location(proxy, location).rstrip("/") + "/v1"
-        return await proxy.handle_anthropic_messages(
-            request,
-            target,
-            "vertex:anthropic",
-            model,
-            True,
-        )
+        if publisher == "anthropic":
+            del project
+            target = _vertex_target_for_location(proxy, location).rstrip("/") + "/v1"
+            return await proxy.handle_anthropic_messages(
+                request,
+                target,
+                "vertex:anthropic",
+                model,
+                True,
+            )
+        return await vertex_publisher_passthrough(request, publisher, "streamRawPredict")
 
     @app.get("/v1/models")
     async def list_models(request: Request):
@@ -993,7 +1038,18 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
     async def passthrough(request: Request, path: str):
         custom_base = request.headers.get("x-headroom-base-url")
         if custom_base:
-            return await proxy.handle_passthrough(request, custom_base.rstrip("/"))
+            base_url = custom_base.rstrip("/")
+            endpoint_name, provider_name = _custom_base_passthrough_telemetry(
+                request.method,
+                path,
+                base_url,
+            )
+            return await proxy.handle_passthrough(
+                request,
+                base_url,
+                endpoint_name,
+                provider_name,
+            )
 
         # Intercept Code Assist authentication and onboarding routes
         clean_path = path.lstrip("/")

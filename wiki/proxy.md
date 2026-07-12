@@ -74,8 +74,7 @@ When configured, Headroom emits OTLP traces for the shared compression pipeline 
 | `--no-rate-limit` | `false` | Disable rate limiting |
 | `--log-file` | None | Path to JSONL log file |
 | `--budget` | None | Daily budget limit in USD |
-| `--code-aware` | true | Enable AST-based code compression (env: HEADROOM_CODE_AWARE_ENABLED) |
-| `--no-code-aware` | false | Disable code-aware compression |
+| `--code-aware` / `--no-code-aware` | disabled | Enable or disable AST-based code compression. Requires `headroom-ai[code]` (env: HEADROOM_CODE_AWARE_ENABLED=1 to enable) |
 | `--anthropic-api-url` | `https://api.anthropic.com` | Custom Anthropic API URL endpoint |
 | `--openai-api-url` | `https://api.openai.com` | Custom OpenAI API URL endpoint |
 
@@ -108,8 +107,7 @@ Key CCR-related proxy flags:
 
 | Option | Description |
 |--------|-------------|
-| `--no-ccr-inject-tool` | Do not inject the `headroom_retrieve` tool into the LLM's available tools |
-| `--no-ccr-marker` | Do not add retrieval markers to compressed output |
+| `--no-ccr` | Disable CCR entirely — no retrieval markers in compressed output and no injected `headroom_retrieve` tool (lossy, no recovery path) |
 | `--no-ccr-proactive-expansion` | Disable proactive context expansion before the LLM asks |
 
 ### ML Compression — RETIRED `--llmlingua` flag

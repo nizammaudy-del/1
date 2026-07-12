@@ -34,6 +34,7 @@ def runner() -> CliRunner:
 
 def _clear_claude_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
+        "ANTHROPIC_BASE_URL",
         "ANTHROPIC_VERTEX_BASE_URL",
         "ANTHROPIC_FOUNDRY_BASE_URL",
         "ANTHROPIC_FOUNDRY_RESOURCE",
@@ -68,9 +69,10 @@ def _invoke_wrap_claude(
     monkeypatch.setattr(wrap_mod, "_restore_claude_wrap_base_url", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wrap_mod, "_print_telemetry_notice", lambda: None)
 
-    def fake_ensure_proxy(*args: object, **kwargs: object) -> None:
+    def fake_ensure_proxy(*args: object, **kwargs: object) -> tuple[None, int]:
         captured["ensure_args"] = args
         captured["ensure_kwargs"] = kwargs
+        return None, args[0] if args else 8787
 
     def fake_run(cmd: list[str], *, env: dict[str, str]) -> _Completed:
         captured["child_cmd"] = cmd
@@ -95,6 +97,16 @@ def _invoke_wrap_claude(
 
     assert result.exit_code == 0, result.output
     return captured, result.output
+
+
+def test_wrap_claude_plain_mode_warns_about_remote_control_gate(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured, output = _invoke_wrap_claude(runner, monkeypatch, env={})
+
+    assert captured["child_cmd"] == ["/usr/bin/claude"]
+    assert "Remote Control" in output
+    assert "wrapped Claude session's ANTHROPIC_BASE_URL" in output
 
 
 def test_wrap_claude_vertex_passes_custom_base_url_to_proxy_before_child_redirect(
@@ -320,13 +332,14 @@ def test_ensure_proxy_restarts_idle_proxy_for_vertex_api_url_mismatch(
         lambda *args, **kwargs: calls.append(("start", args, kwargs)),
     )
 
-    result = wrap_mod._ensure_proxy(
+    proc, actual_port = wrap_mod._ensure_proxy(
         8787,
         False,
         vertex_api_url="https://new-gateway.example.com/vertex/v1",
     )
 
-    assert result is None
+    assert proc is None
+    assert actual_port == 8787
     assert calls[0] == ("kill", 12345, 8787)
     assert calls[1][0] == "start"
     assert calls[1][2]["vertex_api_url"] == "https://new-gateway.example.com/vertex/v1"
@@ -364,9 +377,10 @@ def test_ensure_proxy_restarts_idle_proxy_to_clear_vertex_api_url(
         lambda *args, **kwargs: calls.append(("start", args, kwargs)),
     )
 
-    result = wrap_mod._ensure_proxy(8787, False, clear_vertex_api_url=True)
+    proc, actual_port = wrap_mod._ensure_proxy(8787, False, clear_vertex_api_url=True)
 
-    assert result is None
+    assert proc is None
+    assert actual_port == 8787
     assert calls[0] == ("kill", 12345, 8787)
     assert calls[1][0] == "start"
     assert calls[1][2]["vertex_api_url"] is None
