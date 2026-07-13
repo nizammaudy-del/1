@@ -6,6 +6,7 @@ pub mod ccr;
 pub mod compression_policy;
 mod onnx_cpu;
 pub mod relevance;
+pub mod rollout;
 pub mod signals;
 pub mod tokenizer;
 pub mod transforms;
