@@ -4,11 +4,9 @@ const nodeRequire = createRequire(import.meta.url);
 const http = nodeRequire("node:http") as typeof import("node:http");
 const https = nodeRequire("node:https") as typeof import("node:https");
 const http2 = nodeRequire("node:http2") as typeof import("node:http2");
-const childProcess = nodeRequire("node:child_process") as typeof import("node:child_process");
 
 const BASE_URL_HEADER = "x-headroom-base-url";
 const ORIGINAL_PATH_HEADER = "x-headroom-original-path";
-const PROXY_ENV = "HEADROOM_OPENCODE_TRANSPORT_PROXY_URL";
 const STATE_KEY = Symbol.for("headroom.opencode.transport");
 
 type FetchArgs = Parameters<typeof fetch>;
@@ -17,10 +15,6 @@ type HttpGet = typeof http.get;
 type HttpsRequest = typeof https.request;
 type HttpsGet = typeof https.get;
 type Http2Connect = typeof http2.connect;
-type ChildSpawn = typeof childProcess.spawn;
-type ChildExec = typeof childProcess.exec;
-type ChildExecFile = typeof childProcess.execFile;
-type ChildFork = typeof childProcess.fork;
 
 interface InstallOptions {
   proxyUrl: string;
@@ -37,10 +31,6 @@ interface TransportState {
   originalHttpsRequest: HttpsRequest;
   originalHttpsGet: HttpsGet;
   originalHttp2Connect: Http2Connect;
-  originalChildSpawn: ChildSpawn;
-  originalChildExec: ChildExec;
-  originalChildExecFile: ChildExecFile;
-  originalChildFork: ChildFork;
 }
 
 interface GlobalWithHeadroomTransport {
@@ -59,98 +49,6 @@ function getState(): TransportState | undefined {
 
 function setState(state: TransportState | undefined): void {
   (globalThis as GlobalWithHeadroomTransport)[STATE_KEY] = state;
-}
-
-function shimImportSpecifier(): string {
-  return new URL("../hook-shim/handler.js", import.meta.url).href;
-}
-
-function withNodeImportOption(existing: string | undefined, shim: string): string {
-  const parts = existing?.trim() ? existing.trim().split(/\s+/) : [];
-  const alreadyPresent = parts.some((part, index) => {
-    return part === `--import=${shim}` || (part === "--import" && parts[index + 1] === shim);
-  });
-  if (!alreadyPresent) {
-    parts.push(`--import=${shim}`);
-  }
-  return parts.join(" ");
-}
-
-function withShimEnv(env: NodeJS.ProcessEnv | Record<string, unknown> | undefined, proxyUrl: string): NodeJS.ProcessEnv {
-  const nextEnv = { ...(env ?? process.env) } as NodeJS.ProcessEnv;
-  nextEnv[PROXY_ENV] = proxyUrl;
-  nextEnv.NODE_OPTIONS = withNodeImportOption(nextEnv.NODE_OPTIONS, shimImportSpecifier());
-  return nextEnv;
-}
-
-function installProcessEnv(proxyUrl: string): void {
-  process.env[PROXY_ENV] = proxyUrl;
-  process.env.NODE_OPTIONS = withNodeImportOption(process.env.NODE_OPTIONS, shimImportSpecifier());
-}
-
-function isOptions(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && !(value instanceof URL);
-}
-
-function injectOptionsEnv(args: unknown[], optionIndex: number, proxyUrl: string): unknown[] {
-  const nextArgs = [...args];
-  const callback = typeof nextArgs.at(-1) === "function" ? nextArgs.pop() : undefined;
-  const existing = isOptions(nextArgs[optionIndex]) ? { ...(nextArgs[optionIndex] as Record<string, unknown>) } : {};
-  existing.env = withShimEnv(existing.env as NodeJS.ProcessEnv | undefined, proxyUrl);
-
-  if (isOptions(nextArgs[optionIndex])) {
-    nextArgs[optionIndex] = existing;
-  } else {
-    nextArgs.splice(optionIndex, 0, existing);
-  }
-
-  if (callback) {
-    nextArgs.push(callback);
-  }
-  return nextArgs;
-}
-
-function wrapSpawn(originalSpawn: ChildSpawn): ChildSpawn {
-  return function headroomSpawn(this: unknown, ...args: unknown[]) {
-    const state = getState();
-    if (!state) {
-      return Reflect.apply(originalSpawn, this, args);
-    }
-    const optionIndex = Array.isArray(args[1]) ? 2 : 1;
-    return Reflect.apply(originalSpawn, this, injectOptionsEnv(args, optionIndex, state.proxyUrl));
-  } as ChildSpawn;
-}
-
-function wrapExec(originalExec: ChildExec): ChildExec {
-  return function headroomExec(this: unknown, ...args: unknown[]) {
-    const state = getState();
-    if (!state) {
-      return Reflect.apply(originalExec, this, args);
-    }
-    return Reflect.apply(originalExec, this, injectOptionsEnv(args, 1, state.proxyUrl));
-  } as ChildExec;
-}
-
-function wrapExecFile(originalExecFile: ChildExecFile): ChildExecFile {
-  return function headroomExecFile(this: unknown, ...args: unknown[]) {
-    const state = getState();
-    if (!state) {
-      return Reflect.apply(originalExecFile, this, args);
-    }
-    const optionIndex = Array.isArray(args[1]) ? 2 : 1;
-    return Reflect.apply(originalExecFile, this, injectOptionsEnv(args, optionIndex, state.proxyUrl));
-  } as ChildExecFile;
-}
-
-function wrapFork(originalFork: ChildFork): ChildFork {
-  return function headroomFork(this: unknown, ...args: unknown[]) {
-    const state = getState();
-    if (!state) {
-      return Reflect.apply(originalFork, this, args);
-    }
-    const optionIndex = Array.isArray(args[1]) ? 2 : 1;
-    return Reflect.apply(originalFork, this, injectOptionsEnv(args, optionIndex, state.proxyUrl));
-  } as ChildFork;
 }
 
 function normalizeProxyUrl(proxyUrl: string): URL {
@@ -407,7 +305,6 @@ export function installHeadroomTransport(options: InstallOptions): () => void {
     existing.refs += 1;
     existing.proxyUrl = options.proxyUrl;
     existing.debug = Boolean(options.debug);
-    installProcessEnv(options.proxyUrl);
     return () => uninstallHeadroomTransport();
   }
 
@@ -421,14 +318,9 @@ export function installHeadroomTransport(options: InstallOptions): () => void {
     originalHttpsRequest: https.request,
     originalHttpsGet: https.get,
     originalHttp2Connect: http2.connect,
-    originalChildSpawn: childProcess.spawn,
-    originalChildExec: childProcess.exec,
-    originalChildExecFile: childProcess.execFile,
-    originalChildFork: childProcess.fork,
   };
 
   setState(state);
-  installProcessEnv(options.proxyUrl);
   globalThis.fetch = async (...args: FetchArgs) => {
     const current = getState();
     if (!current) {
@@ -444,10 +336,6 @@ export function installHeadroomTransport(options: InstallOptions): () => void {
   http.get = wrapGet(http.request) as HttpGet;
   https.get = wrapGet(https.request) as HttpsGet;
   http2.connect = wrapHttp2Connect(state.originalHttp2Connect);
-  childProcess.spawn = wrapSpawn(state.originalChildSpawn);
-  childProcess.exec = wrapExec(state.originalChildExec);
-  childProcess.execFile = wrapExecFile(state.originalChildExecFile);
-  childProcess.fork = wrapFork(state.originalChildFork);
   syncBuiltinESMExports();
 
   return () => uninstallHeadroomTransport();
@@ -470,10 +358,6 @@ export function uninstallHeadroomTransport(): void {
   https.request = state.originalHttpsRequest;
   https.get = state.originalHttpsGet;
   http2.connect = state.originalHttp2Connect;
-  childProcess.spawn = state.originalChildSpawn;
-  childProcess.exec = state.originalChildExec;
-  childProcess.execFile = state.originalChildExecFile;
-  childProcess.fork = state.originalChildFork;
   syncBuiltinESMExports();
   setState(undefined);
 }

@@ -125,8 +125,10 @@ from headroom.providers.opencode.config import (
     _PROVIDER_MARKER_START,
     inject_opencode_provider_config,
     opencode_config_paths,
+    remove_headroom_opencode_plugin_files,
     snapshot_opencode_config_if_unwrapped,
     strip_opencode_headroom_blocks,
+    strip_opencode_runtime_plugin_config,
 )
 from headroom.proxy.project_context import with_project_prefix as _with_project_prefix
 
@@ -3393,6 +3395,27 @@ def _marker_pid_reused(marker: Path, pid: int) -> bool:
     return _identity_mismatch(rec.get("start_src"), rec.get("start_time"), pid)
 
 
+def _marker_pid(marker: Path) -> int | None:
+    """Resolve the live client PID recorded by ``marker``.
+
+    Legacy wrap markers use the PID as the filename stem. Newer non-wrapper
+    clients such as the OpenCode plugin use a prefixed filename and store the
+    PID in the JSON payload instead.
+    """
+    try:
+        return int(marker.stem)
+    except ValueError:
+        pass
+
+    try:
+        rec = json.loads(marker.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+
+    pid = rec.get("pid")
+    return pid if isinstance(pid, int) and pid > 0 else None
+
+
 def _live_proxy_clients(port: int, *, exclude_self: bool = True) -> list[int]:
     """Live wrap-client PIDs for ``port``, pruning stale markers as we go."""
     from headroom import paths as _paths
@@ -3403,9 +3426,8 @@ def _live_proxy_clients(port: int, *, exclude_self: bool = True) -> list[int]:
     me = os.getpid()
     live: list[int] = []
     for marker in d.glob("*.json"):
-        try:
-            pid = int(marker.stem)
-        except ValueError:
+        pid = _marker_pid(marker)
+        if pid is None:
             continue
         # Stale if the PID is gone, or recycled by an unrelated process.
         if not _pid_alive(pid) or _marker_pid_reused(marker, pid):
@@ -6010,6 +6032,13 @@ def opencode(
         inject_opencode_provider_config(port)
         return
 
+    try:
+        strip_opencode_runtime_plugin_config(_opencode_config_file)
+    except OSError as exc:
+        raise click.ClickException(
+            f"could not clean stale Headroom OpenCode plugin config at {_opencode_config_file}: {exc}"
+        ) from exc
+
     opencode_bin = shutil.which("opencode")
     if not opencode_bin:
         click.echo("Error: 'opencode' not found in PATH.")
@@ -6150,6 +6179,17 @@ def unwrap_opencode(port: int, no_stop_proxy: bool) -> None:
                 config_file.unlink()
                 click.echo(f"  Removed {config_file} (contained only Headroom-written config).")
                 status = "removed"
+        elif strip_opencode_runtime_plugin_config(config_file):
+            if config_file.exists():
+                click.echo(
+                    f"  Removed persisted Headroom OpenCode plugin from {config_file}; other content preserved."
+                )
+                status = "cleaned"
+            else:
+                click.echo(
+                    f"  Removed {config_file} (contained only persisted Headroom plugin config)."
+                )
+                status = "removed"
         else:
             click.echo(f"  Nothing to undo: {config_file} has no Headroom wrap markers.")
             status = "noop"
@@ -6170,6 +6210,9 @@ def unwrap_opencode(port: int, no_stop_proxy: bool) -> None:
             click.echo("  Removed Headroom-installed Serena MCP server from OpenCode.")
         elif serena_status == "failed":
             click.echo("  Serena MCP server matched Headroom ledger but could not be removed.")
+
+    if remove_headroom_opencode_plugin_files():
+        click.echo("  Removed Headroom plugin files from OpenCode's local plugin directory.")
 
     click.echo()
     click.echo("✓ OpenCode is no longer routed through the Headroom proxy.")
