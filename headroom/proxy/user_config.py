@@ -261,7 +261,11 @@ def update(body: dict[str, Any]) -> dict[str, Any]:
             tmp.write_text(json.dumps(current, indent=2), encoding="utf-8")
             tmp.replace(path)
         except OSError as exc:
-            raise ValueError(f"failed to persist config: {exc}") from exc
+            # Message stays generic: /config's 400 response echoes this ValueError
+            # straight to the caller, and a raw OSError includes the config
+            # file's local filesystem path.
+            logger.warning("Failed to persist dashboard config: %s", exc)
+            raise ValueError("failed to persist config") from exc
         _cache = current
     return current
 

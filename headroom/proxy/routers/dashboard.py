@@ -746,7 +746,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
             _stats_snapshot["expires_at"] = 0.0
         return JSONResponse(status_code=200, content={"status": "reset"})
 
-    @router.get("/stats-history")
+    @router.get("/stats-history", response_model=None)
     async def stats_history(
         format: Literal["json", "csv"] = "json",
         series: Literal["history", "hourly", "daily", "weekly", "monthly"] = "history",
