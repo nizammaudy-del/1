@@ -78,6 +78,37 @@
         html:not(.dark) .text-cyan-200\/80 { color: #0e7490; }
         html:not(.dark) .text-cyan-300\/75 { color: #0891b2; }
         html:not(.dark) .text-violet-300\/75 { color: #7c3aed; }
+        html:not(.dark) .text-violet-300\/90 { color: #7c3aed; }
+        /* Light mode: amber/cyan gaps missed in the original sweep */
+        html:not(.dark) .text-amber-400 { color: #b45309; }
+        html:not(.dark) .text-amber-400\/70 { color: #b45309; }
+        html:not(.dark) .text-cyan-300 { color: #155e75; }
+        html:not(.dark) .text-cyan-300\/50 { color: #155e75; }
+        html:not(.dark) .text-cyan-300\/70 { color: #155e75; }
+        html:not(.dark) .text-cyan-400 { color: #0e7490; }
+        html:not(.dark) .text-cyan-500\/60 { color: #0e7490; }
+        /* Light mode: red text tuned for dark backgrounds, too pale to read on light ones */
+        html:not(.dark) .text-red-50 { color: #7f1d1d; }
+        html:not(.dark) .text-red-200 { color: #7f1d1d; }
+        html:not(.dark) .text-red-300 { color: #991b1b; }
+        html:not(.dark) .text-red-300\/75 { color: #991b1b; }
+        html:not(.dark) .text-red-300\/90 { color: #991b1b; }
+        html:not(.dark) .text-red-400 { color: #b91c1c; }
+        /* Light mode: emerald/green text tuned for dark backgrounds */
+        html:not(.dark) .text-emerald-50 { color: #064e3b; }
+        html:not(.dark) .text-emerald-300 { color: #065f46; }
+        html:not(.dark) .text-emerald-300\/75 { color: #065f46; }
+        html:not(.dark) .text-emerald-300\/90 { color: #065f46; }
+        html:not(.dark) .text-emerald-400 { color: #047857; }
+        html:not(.dark) .text-emerald-400\/70 { color: #047857; }
+        html:not(.dark) .text-green-300 { color: #166534; }
+        /* Light mode: remaining accent color families tuned for dark backgrounds */
+        html:not(.dark) .text-blue-400 { color: #1d4ed8; }
+        html:not(.dark) .text-orange-400 { color: #c2410c; }
+        html:not(.dark) .text-pink-400 { color: #be185d; }
+        html:not(.dark) .text-purple-400 { color: #9333ea; }
+        html:not(.dark) .text-rose-400 { color: #be123c; }
+        html:not(.dark) .text-teal-400 { color: #0f766e; }
         /* Light mode: fix hardcoded dark card backgrounds */
         .bg-card-alt { background: var(--card-alt-bg); }
         .hover-bg-surface:hover { background: var(--color-surface); }
