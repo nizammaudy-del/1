@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+
+* **integrations/agno:** fix `AttributeError: 'ChoiceDeltaToolCall' object has no attribute 'get'` during streaming ([#1312](https://github.com/headroomlabs-ai/headroom/issues/1312)). The OpenAI SDK emits `ChoiceDeltaToolCall` Pydantic objects (not dicts) in streaming deltas; `_convert_messages_to_openai` stored them raw, causing headroom's parser and tokenizer to crash on dict method calls. Fix: added `_normalize_tool_call()` static method that coerces any tool_call object to a plain dict (via `model_dump()`, `vars()`, or attribute fallback), applied in `_convert_messages_to_openai` before the message is passed to the compression pipeline.
+
 - The dashboard's per-request metadata (the `recent_requests` / `request_logs`
   tail and the `config` block with upstream URLs) is gated to loopback callers
   via `_request_is_loopback`. When Headroom runs in a bridge-network container
