@@ -88,6 +88,62 @@ function dashboardRequestsMixin() {
                     return (messages || []).map(m => this.extractContentText(m && m.content)).filter(Boolean).join('\n');
                 },
 
+                // Word-level LCS diff (detail panel only -- the compact card list
+                // stays plain text). Tokenizes on whitespace boundaries, keeping
+                // the separators as their own tokens so reconstruction preserves
+                // original formatting. Capped: compression can remove most of a
+                // large prompt, and a full LCS table is O(n*m), so skip the diff
+                // above ~4000 combined tokens rather than lock up the tab.
+                computeWordDiff(before, after) {
+                    const tokenize = s => (s || '').split(/(\s+)/).filter(t => t.length > 0);
+                    const a = tokenize(before);
+                    const b = tokenize(after);
+                    if (a.length + b.length > 4000) return null;
+
+                    const n = a.length, m = b.length;
+                    const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+                    for (let i = n - 1; i >= 0; i--) {
+                        for (let j = m - 1; j >= 0; j--) {
+                            lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+                        }
+                    }
+
+                    const segments = [];
+                    let i = 0, j = 0;
+                    while (i < n && j < m) {
+                        if (a[i] === b[j]) {
+                            segments.push({ type: 'equal', text: a[i] });
+                            i++; j++;
+                        } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+                            segments.push({ type: 'delete', text: a[i] });
+                            i++;
+                        } else {
+                            segments.push({ type: 'insert', text: b[j] });
+                            j++;
+                        }
+                    }
+                    while (i < n) { segments.push({ type: 'delete', text: a[i] }); i++; }
+                    while (j < m) { segments.push({ type: 'insert', text: b[j] }); j++; }
+
+                    // Merge adjacent same-type segments so the DOM isn't one node per word.
+                    const merged = [];
+                    for (const seg of segments) {
+                        const last = merged[merged.length - 1];
+                        if (last && last.type === seg.type) last.text += seg.text;
+                        else merged.push({ ...seg });
+                    }
+                    return merged;
+                },
+
+                renderDiffHtml(segments) {
+                    return segments.map(seg => {
+                        const text = this.escapeHtml(seg.text);
+                        if (seg.type === 'delete') return `<del class="diff-removed">${text}</del>`;
+                        if (seg.type === 'insert') return `<ins class="diff-added">${text}</ins>`;
+                        return text;
+                    }).join('');
+                },
+
                 renderTransformations() {
                     const container = document.getElementById('feed-virtual-list');
                     if (!container) return;
@@ -248,6 +304,12 @@ function dashboardRequestsMixin() {
                     const msgs = this.extractMessagesText(t.request_messages);
                     const compressed = this.extractMessagesText(t.compressed_messages);
                     const hasMessages = msgs.length > 0 || compressed.length > 0;
+                    const isUnchanged = hasMessages && msgs === compressed;
+                    // Diff is detail-panel-only (the compact card list stays plain
+                    // text). null when the pair is unchanged (nothing to diff) or
+                    // too large for the O(n*m) LCS table -- renderDiffHtml falls
+                    // back to plain text in that case.
+                    const diffSegments = (!isUnchanged && hasMessages) ? this.computeWordDiff(msgs, compressed) : null;
                     this.feedDetailTransform = {
                         model: t.model || 'unknown',
                         time: t.timestamp ? new Date(t.timestamp).toLocaleString() : '--',
@@ -256,11 +318,15 @@ function dashboardRequestsMixin() {
                         transformsApplied: t.transforms_applied || [],
                         before: msgs || '(no content captured)',
                         after: compressed || '(no content captured)',
+                        afterDiffHtml: diffSegments ? this.renderDiffHtml(diffSegments) : null,
                         // Same "unchanged" detection as the compact card: only when
                         // both sides are non-empty and byte-identical, not the
                         // separate "nothing captured yet" empty state.
-                        isUnchanged: hasMessages && msgs === compressed,
-                        beforeCollapsed: false,
+                        isUnchanged,
+                        // "Original message" starts collapsed, "Compressed" starts
+                        // open showing the diff -- the changes are the point of
+                        // the detail view, the untouched original is reference.
+                        beforeCollapsed: true,
                         afterCollapsed: false,
                     };
                 },

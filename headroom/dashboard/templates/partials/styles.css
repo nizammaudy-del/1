@@ -40,6 +40,10 @@
         .diff-before { background: var(--diff-before-body); }
         .diff-after-header { background: var(--diff-after-header); }
         .diff-after { background: var(--diff-after-body); }
+        .diff-removed { color: #f87171; text-decoration: line-through; opacity: 0.7; }
+        .diff-added { color: #4ade80; text-decoration: none; font-weight: 600; }
+        html:not(.dark) .diff-removed { color: #b91c1c; }
+        html:not(.dark) .diff-added { color: #15803d; }
         .ttl-bucket-gradient-card { background: var(--ttl-card-bg); }
 
         /* Light mode: invert the gray text scale (dark bg grays → light bg grays) */

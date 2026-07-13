@@ -181,7 +181,7 @@
                             <div class="diff-before-header px-3 py-1.5 border-b border-red-900/30 shrink-0 flex items-center justify-between cursor-pointer select-none"
                                  @click="feedDetailTransform.beforeCollapsed = !feedDetailTransform.beforeCollapsed"
                                  data-help-title="{{help.dashboard.before.title}}" data-help="{{help.dashboard.before.body}}">
-                                <span class="text-xs text-red-400 uppercase tracking-wide font-semibold">Before</span>
+                                <span class="text-xs text-red-400 uppercase tracking-wide font-semibold">Original message</span>
                                 <svg class="pane-chevron w-3.5 h-3.5 text-red-400" :class="feedDetailTransform.beforeCollapsed ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                             </div>
                             <pre x-show="!feedDetailTransform.beforeCollapsed" class="diff-before p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.before"></pre>
@@ -190,10 +190,15 @@
                             <div class="diff-after-header px-3 py-1.5 border-b border-emerald-900/30 shrink-0 flex items-center justify-between cursor-pointer select-none"
                                  @click="feedDetailTransform.afterCollapsed = !feedDetailTransform.afterCollapsed"
                                  data-help-title="{{help.dashboard.after.title}}" data-help="{{help.dashboard.after.body}}">
-                                <span class="text-xs text-emerald-400 uppercase tracking-wide font-semibold">After</span>
+                                <span class="text-xs text-emerald-400 uppercase tracking-wide font-semibold">Compressed</span>
                                 <svg class="pane-chevron w-3.5 h-3.5 text-emerald-400" :class="feedDetailTransform.afterCollapsed ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                             </div>
-                            <pre x-show="!feedDetailTransform.afterCollapsed" class="diff-after p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.after"></pre>
+                            <template x-if="!feedDetailTransform.afterCollapsed && feedDetailTransform.afterDiffHtml">
+                                <pre class="diff-after p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-html="feedDetailTransform.afterDiffHtml"></pre>
+                            </template>
+                            <template x-if="!feedDetailTransform.afterCollapsed && !feedDetailTransform.afterDiffHtml">
+                                <pre class="diff-after p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.after"></pre>
+                            </template>
                         </div>
                     </div>
                 </div>
