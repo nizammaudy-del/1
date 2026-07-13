@@ -170,7 +170,10 @@ function dashboardRequestsMixin() {
                         const text = this.escapeHtml(seg.text);
                         if (seg.type === 'delete') return `<del class="diff-removed">${text}</del>`;
                         if (seg.type === 'insert') return `<ins class="diff-added">${text}</ins>`;
-                        return text;
+                        // Unchanged spans are typically shared system-prompt/tool-schema
+                        // boilerplate -- dim them so the actual diff (the part someone
+                        // opened this panel to see) is what draws the eye.
+                        return `<span class="diff-unchanged">${text}</span>`;
                     }).join('');
                 },
 
@@ -230,12 +233,15 @@ function dashboardRequestsMixin() {
                     // Tags row is capped hard: 1 inline tag + a "+N more" chip, in a
                     // fixed-height overflow-hidden container, so it is structurally
                     // incapable of overflowing into the next card regardless of tag
-                    // count or text length. The full list is always reachable via the
-                    // "+N more" chip's hover popover (data-help) and the detail panel.
+                    // count or text length. The full list is reachable via a real
+                    // anchored popover on the "+N more" chip (see .tags-more-chip
+                    // delegation in core.js) instead of the corner help widget --
+                    // this is a list of specific values to inspect, not a hover
+                    // explainer, so it gets its own small floating panel.
                     const tagsRow = transformsApplied.length > 0 ? `
                                 <div class="flex items-center gap-1 mt-1.5 overflow-hidden max-h-[18px]">
                                     <span class="text-[9px] px-1.5 py-0.5 bg-border rounded font-mono text-gray-500 truncate max-w-[55%]">${this.escapeHtml(transformsApplied[0])}</span>
-                                    ${transformsApplied.length > 1 ? `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono text-gray-500 border border-border/60 shrink-0 cursor-help" data-help-title="{{help.requests.transforms_applied_2.title}}" data-help="${this.escapeHtml(transformsApplied.join(', '))}">+${transformsApplied.length - 1} more</span>` : ''}
+                                    ${transformsApplied.length > 1 ? `<span class="tags-more-chip text-[9px] px-1.5 py-0.5 rounded font-mono text-gray-500 border border-border/60 shrink-0 cursor-pointer" data-tags="${this.escapeHtml(JSON.stringify(transformsApplied.slice(1)))}">+${transformsApplied.length - 1} more</span>` : ''}
                                 </div>
                             ` : '';
 

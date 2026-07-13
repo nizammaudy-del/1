@@ -42,6 +42,7 @@
         .diff-after { background: var(--diff-after-body); }
         .diff-removed { color: #f87171; text-decoration: line-through; opacity: 0.7; }
         .diff-added { color: #4ade80; text-decoration: none; font-weight: 600; }
+        .diff-unchanged { opacity: 0.55; }
         html:not(.dark) .diff-removed { color: #b91c1c; }
         html:not(.dark) .diff-added { color: #15803d; }
         .ttl-bucket-gradient-card { background: var(--ttl-card-bg); }

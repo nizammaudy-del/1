@@ -28,6 +28,46 @@ function dashboardCore() {
                     this._toastTimer = setTimeout(() => { this.toast = null; }, durationMs);
                 },
 
+                // --- Tags popover: anchored to a "+N more" chip, not the corner
+                // help widget (that's for hover explainers, this is a specific
+                // list of values). Built and positioned in plain JS/DOM rather
+                // than an Alpine template since the Live Feed cards it anchors
+                // to are raw innerHTML (virtual scroll), so there's no live
+                // Alpine binding to attach a popover to.
+                _tagsPopoverEl: null,
+                showTagsPopover(anchorEl, tags) {
+                    if (!Array.isArray(tags) || tags.length === 0) return;
+                    if (!this._tagsPopoverEl) {
+                        const el = document.createElement('div');
+                        el.id = 'tags-popover';
+                        el.className = 'fixed z-[80] rounded-md border border-border bg-surface shadow-xl px-3 py-2 text-[11px] font-mono text-gray-300 space-y-1';
+                        el.style.maxWidth = '320px';
+                        document.body.appendChild(el);
+                        this._tagsPopoverEl = el;
+                    }
+                    const el = this._tagsPopoverEl;
+                    el.innerHTML = tags.map(t => `<div class="truncate">${this.escapeHtml(t)}</div>`).join('');
+                    el.style.display = 'block';
+
+                    const rect = anchorEl.getBoundingClientRect();
+                    // Default: below-right of the chip, clamped so it never runs
+                    // off the right edge of the viewport.
+                    const popRect = el.getBoundingClientRect();
+                    let left = rect.left;
+                    if (left + popRect.width > window.innerWidth - 8) {
+                        left = Math.max(8, window.innerWidth - popRect.width - 8);
+                    }
+                    let top = rect.bottom + 4;
+                    if (top + popRect.height > window.innerHeight - 8) {
+                        top = Math.max(8, rect.top - popRect.height - 4);
+                    }
+                    el.style.left = left + 'px';
+                    el.style.top = top + 'px';
+                },
+                hideTagsPopover() {
+                    if (this._tagsPopoverEl) this._tagsPopoverEl.style.display = 'none';
+                },
+
                 // Collapsible panes: true == collapsed.
                 async init() {
                     // Single source of truth for all hover-help copy: the same
@@ -86,6 +126,30 @@ function dashboardCore() {
                         if (el.contains(e.relatedTarget)) return;
                         this.helpTitle = '';
                         this.helpBody = '';
+                    });
+
+                    // "+N more" transform tags: a real anchored popover, not the
+                    // corner help widget -- it's a specific list to inspect, not
+                    // an explainer. Registered before the card-click delegation
+                    // below and uses stopImmediatePropagation so clicking the
+                    // chip doesn't also bubble into opening the full detail panel.
+                    document.addEventListener('mouseover', (e) => {
+                        const chip = e.target.closest && e.target.closest('.tags-more-chip');
+                        if (!chip) return;
+                        let tags = [];
+                        try { tags = JSON.parse(chip.getAttribute('data-tags') || '[]'); } catch (err) { /* ignore */ }
+                        this.showTagsPopover(chip, tags);
+                    });
+                    document.addEventListener('mouseout', (e) => {
+                        const chip = e.target.closest && e.target.closest('.tags-more-chip');
+                        if (!chip) return;
+                        if (chip.contains(e.relatedTarget)) return;
+                        this.hideTagsPopover();
+                    });
+                    document.addEventListener('click', (e) => {
+                        if (e.target.closest && e.target.closest('.tags-more-chip')) {
+                            e.stopImmediatePropagation();
+                        }
                     });
 
                     // Live Feed cards are rendered as raw HTML strings (virtual
