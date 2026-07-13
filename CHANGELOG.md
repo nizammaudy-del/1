@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+
+* **cli/dashboard:** `headroom dashboard` command was absent in 0.27.0 — restored ([#1306](https://github.com/headroomlabs-ai/headroom/issues/1306)). The command opens the proxy savings dashboard (`http://127.0.0.1:<port>/dashboard`) in your browser. Use `--no-open` to print the URL without opening a browser. Added 4 regression tests to prevent the command from silently disappearing again.
+
 - The dashboard's per-request metadata (the `recent_requests` / `request_logs`
   tail and the `config` block with upstream URLs) is gated to loopback callers
   via `_request_is_loopback`. When Headroom runs in a bridge-network container
