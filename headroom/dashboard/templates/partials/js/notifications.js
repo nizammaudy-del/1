@@ -2,7 +2,11 @@ function dashboardNotificationsMixin() {
     return {
                 warnings: [],
                 notifiedBuckets: {},
-                warningBannerDismissed: false,
+                // Per-warning dismissal (notifications bell popover): a dismissed
+                // key stays hidden until its threshold bucket crosses upward again
+                // (see `crossed` handling below), same re-arm semantics the old
+                // single inline banner had.
+                dismissedWarningKeys: {},
                 notifyEnabled: false,
 
                 // Embedded MCP dashboards (lazy-loaded per row, keyed by dashboard name)
@@ -20,14 +24,22 @@ function dashboardNotificationsMixin() {
                     this.notifyEnabled = perm === 'granted';
                     try { localStorage.setItem('headroom-notify-enabled', this.notifyEnabled ? '1' : '0'); } catch (e) {}
                 },
-                dismissWarningBanner() {
-                    this.warningBannerDismissed = true;
+                dismissWarning(key) {
+                    this.dismissedWarningKeys[key] = true;
+                },
+                dismissAllWarnings() {
+                    for (const w of this.warnings) this.dismissedWarningKeys[w.key] = true;
                 },
                 trackWarning(items, crossed, key, pct, textFn) {
                     const bucket = this.bucketFor(pct || 0);
-                    if (bucket >= 80) items.push({ key, text: textFn() });
+                    if (bucket >= 80 && !this.dismissedWarningKeys[key]) items.push({ key, text: textFn() });
                     const prevBucket = this.notifiedBuckets[key] || 0;
-                    if (bucket > prevBucket) crossed.push({ key, text: textFn() });
+                    if (bucket > prevBucket) {
+                        crossed.push({ key, text: textFn() });
+                        // Re-arm: a fresh threshold crossing un-dismisses the warning,
+                        // same as the old single banner re-showing on any new crossing.
+                        delete this.dismissedWarningKeys[key];
+                    }
                     this.notifiedBuckets[key] = bucket;
                 },
                 refreshWarnings() {
@@ -78,9 +90,7 @@ function dashboardNotificationsMixin() {
                     }
 
                     this.warnings = items;
-                    if (items.length === 0) this.warningBannerDismissed = false;
                     if (crossed.length > 0) {
-                        this.warningBannerDismissed = false;
                         if (this.notifyEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
                             for (const c of crossed) {
                                 new Notification('Headroom limit warning', { body: c.text });

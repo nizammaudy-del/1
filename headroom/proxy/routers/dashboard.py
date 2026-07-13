@@ -1163,6 +1163,26 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
         runs = await run_in_threadpool(read_learn_history, limit)
         return JSONResponse(content={"runs": runs})
 
+    @router.post("/learn/run", dependencies=[Depends(_require_loopback)])
+    async def learn_run() -> JSONResponse:
+        """Fire-and-forget ``headroom learn --apply`` from the Diagnostics pane.
+
+        Spawned detached so this endpoint returns immediately -- a full learn
+        pass can take a while, and there's nothing worth streaming back here.
+        Progress is visible later via the existing /learn/history endpoint.
+        """
+        import subprocess
+        import sys
+
+        subprocess.Popen(  # noqa: S603
+            [sys.executable, "-m", "headroom.cli", "learn", "--apply"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return JSONResponse(content={"status": "started"})
+
     @router.get("/debug/memory/sync", dependencies=[Depends(_require_loopback)])
     async def debug_memory_sync() -> JSONResponse:
         """Per-agent memory sync counters from persisted sync state."""

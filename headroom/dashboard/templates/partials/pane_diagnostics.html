@@ -31,8 +31,17 @@
                     </div>
 
                     <!-- Learn history -->
-                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="{{help.diagnostics.learn_history.title}}" data-help="{{help.diagnostics.learn_history.body}}">
-                        <div class="text-sm font-medium text-gray-300 mb-1">Learn history</div>
+                    <div class="bg-surface rounded-lg border border-border p-4">
+                        <div class="flex items-center justify-between mb-1 gap-2">
+                            <div data-help-title="{{help.diagnostics.learn_history.title}}" data-help="{{help.diagnostics.learn_history.body}}">
+                                <div class="text-sm font-medium text-gray-300">Learn history</div>
+                            </div>
+                            <button type="button" @click="triggerLearnRun()" :disabled="learnRunPending"
+                                    class="shrink-0 text-xs px-2 py-1 rounded-md border border-border bg-card-alt text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    data-help-title="{{help.diagnostics.run_learn.title}}" data-help="{{help.diagnostics.run_learn.body}}">
+                                <span x-text="learnRunPending ? 'Starting…' : 'Run learn --apply'"></span>
+                            </button>
+                        </div>
                         <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/learn/history</span></div>
                         <template x-if="diagnosticsLearnHistory.length > 0">
                             <div class="space-y-2 max-h-64 overflow-y-auto">

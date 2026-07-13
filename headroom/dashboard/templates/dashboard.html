@@ -59,23 +59,7 @@
                 </button>
             </div>
         </div>
-        <!-- Near-limit warnings banner: edge-triggered, dismissible, shown across all tabs -->
-        <div x-show="warnings.length > 0 && !warningBannerDismissed" x-cloak
-             class="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-3"
-             data-help-title="{{help.dashboard.near_limit_warnings.title}}"
-             data-help="{{help.dashboard.near_limit_warnings.body}}">
-            <div class="flex items-start justify-between gap-3">
-                <ul class="space-y-1 text-xs text-red-300">
-                    <template x-for="w in warnings" :key="w.key">
-                        <li x-text="w.text"></li>
-                    </template>
-                </ul>
-                <button type="button" @click="dismissWarningBanner()"
-                        class="shrink-0 text-red-400 hover:text-red-200" aria-label="Dismiss">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
-            </div>
-        </div>
+        <!-- Near-limit warnings moved to the notifications bell in the header (see header.html) -->
         <template x-if="viewMode === 'session'">
             <div>
     <!-- INCLUDE: pane_overview.html -->
@@ -183,20 +167,30 @@
                             </template>
                         </div>
                     </template>
-                    <div class="space-y-4">
+                    <template x-if="feedDetailTransform.isUnchanged">
+                        <div class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+                             data-help-title="{{help.dashboard.no_changes.title}}" data-help="{{help.dashboard.no_changes.body}}">
+                            <div class="text-sm font-semibold text-amber-300">Before/After - No changes detected, the input and the output are the same and uncompressed</div>
+                        </div>
+                    </template>
+                    <div class="space-y-4" x-show="!feedDetailTransform.isUnchanged">
                         <div class="rounded border border-red-900/30 overflow-hidden flex flex-col">
-                            <div class="diff-before-header px-3 py-1.5 border-b border-red-900/30 shrink-0"
+                            <div class="diff-before-header px-3 py-1.5 border-b border-red-900/30 shrink-0 flex items-center justify-between cursor-pointer select-none"
+                                 @click="feedDetailTransform.beforeCollapsed = !feedDetailTransform.beforeCollapsed"
                                  data-help-title="{{help.dashboard.before.title}}" data-help="{{help.dashboard.before.body}}">
                                 <span class="text-xs text-red-400 uppercase tracking-wide font-semibold">Before</span>
+                                <svg class="pane-chevron w-3.5 h-3.5 text-red-400" :class="feedDetailTransform.beforeCollapsed ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                             </div>
-                            <pre class="diff-before p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.before"></pre>
+                            <pre x-show="!feedDetailTransform.beforeCollapsed" class="diff-before p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.before"></pre>
                         </div>
                         <div class="rounded border border-emerald-900/30 overflow-hidden flex flex-col">
-                            <div class="diff-after-header px-3 py-1.5 border-b border-emerald-900/30 shrink-0"
+                            <div class="diff-after-header px-3 py-1.5 border-b border-emerald-900/30 shrink-0 flex items-center justify-between cursor-pointer select-none"
+                                 @click="feedDetailTransform.afterCollapsed = !feedDetailTransform.afterCollapsed"
                                  data-help-title="{{help.dashboard.after.title}}" data-help="{{help.dashboard.after.body}}">
                                 <span class="text-xs text-emerald-400 uppercase tracking-wide font-semibold">After</span>
+                                <svg class="pane-chevron w-3.5 h-3.5 text-emerald-400" :class="feedDetailTransform.afterCollapsed ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                             </div>
-                            <pre class="diff-after p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.after"></pre>
+                            <pre x-show="!feedDetailTransform.afterCollapsed" class="diff-after p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.after"></pre>
                         </div>
                     </div>
                 </div>

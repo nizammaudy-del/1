@@ -25,8 +25,10 @@
                 </div>
             </div>
         </template>
-        <!-- Hero Metrics: Savings $ -> Input Compression -> Output Reduction -> Overhead -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <!-- Hero Metrics: Savings $ -> Token Savings -> Throughput. (Output Tokens
+             Saved moved to Savings Breakdown below; Overhead moved to the header,
+             next to the other compact status badges.) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             <!-- Savings ($) - proxy compression only, priced at model list rate -->
             <div class="bg-surface rounded-lg p-4 border border-border">
                 <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 flex items-center justify-between" data-help-title="{{help.overview.proxy_saved.title}}" data-help="{{help.overview.proxy_saved.body}}">
@@ -86,62 +88,6 @@
                         </defs>
                         <path class="sparkline-area" :d="getSparklineArea(savingsHistory)"></path>
                         <path class="sparkline" :d="getSparkline(savingsHistory)"></path>
-                    </svg>
-                </div>
-            </div>
-
-            <!-- Output Tokens Saved (counterfactual) -->
-            <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.overview.output_tokens_saved.title}}" data-help="{{help.overview.output_tokens_saved.body}}">Output Tokens Saved <span class="text-gray-600">&#9432;</span></div>
-                <template x-if="stats.tokens?.output_reduction?.available">
-                    <div>
-                        <div class="flex items-baseline gap-2">
-                            <span class="text-3xl font-light tabular-nums text-accent" x-text="formatNumber(stats.tokens?.output_saved || 0)"></span>
-                            <span class="text-sm text-accent" x-text="(stats.tokens?.output_reduction_percent || 0).toFixed(1) + '%'"></span>
-                        </div>
-                        <div class="mt-1 text-xs text-gray-500 leading-relaxed">
-                            <!-- "measured" = A/B holdout (unbiased); "estimated" = vs learned baseline -->
-                            <span class="uppercase tracking-wide"
-                                  :class="stats.tokens?.output_reduction?.method === 'measured' ? 'text-emerald-400' : 'text-gray-400'"
-                                  x-text="stats.tokens?.output_reduction?.method || ''"
-                                  :data-help-title="stats.tokens?.output_reduction?.method === 'measured' ? helpText.overview.output_reduction_measured.title : helpText.overview.output_reduction_estimated.title"
-                                  :data-help="stats.tokens?.output_reduction?.method === 'measured' ? helpText.overview.output_reduction_measured.body : helpText.overview.output_reduction_estimated.body"></span>
-                            <span x-text="'· 95% CI ' + (stats.tokens?.output_reduction?.ci_low_percent || 0).toFixed(1) + '–' + (stats.tokens?.output_reduction?.ci_high_percent || 0).toFixed(1) + '%'"
-                                  data-help-title="{{help.overview.95_confidence_interval.title}}" data-help="{{help.overview.95_confidence_interval.body}}"></span>
-                        </div>
-                        <div class="mt-1 text-xs text-gray-600 leading-relaxed"
-                             x-text="formatNumber(stats.tokens?.output_reduction?.requests || 0) + ' shaped responses · counterfactual'">
-                        </div>
-                    </div>
-                </template>
-                <template x-if="!stats.tokens?.output_reduction?.available">
-                    <div class="mt-1 text-xs text-gray-500 leading-relaxed">
-                        <span class="text-2xl font-light tabular-nums text-gray-600">—</span>
-                        <div class="mt-1">Enable the output shaper (HEADROOM_OUTPUT_SHAPER=1) and run
-                            <code class="text-gray-400">headroom learn --verbosity --apply</code> to start measuring.</div>
-                    </div>
-                </template>
-            </div>
-
-            <!-- Headroom Overhead -->
-            <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.overview.overhead.title}}" data-help="{{help.overview.overhead.body}}">Overhead <span class="text-gray-600">&#9432;</span></div>
-                <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-light tabular-nums" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms'"></span>
-                </div>
-                <div class="mt-2 text-xs text-gray-500">
-                    TTFB <span x-text="((stats.ttfb?.average_ms || 0) / 1000).toFixed(2)"></span>s avg
-                </div>
-                <div class="mt-2 h-8" data-testid="overhead-sparkline">
-                    <svg class="w-full h-full" viewBox="0 0 100 32" preserveAspectRatio="none">
-                        <defs>
-                            <linearGradient id="sparkline-gradient-overhead" x1="0%" y1="0%" x2="0%" y2="100%">
-                                <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.3"/>
-                                <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
-                            </linearGradient>
-                        </defs>
-                        <path fill="url(#sparkline-gradient-overhead)" :d="getSparklineArea(overheadHistory)"></path>
-                        <path class="sparkline" :d="getSparkline(overheadHistory)"></path>
                     </svg>
                 </div>
             </div>
@@ -328,27 +274,65 @@
             </div>
         </div>
 
-        <!-- Savings Breakdown -->
-        <template x-if="(stats.cost?.savings_usd || 0) > 0 || (stats.cost?.cache_savings_usd || 0) > 0">
-            <div class="bg-surface rounded-lg p-4 border border-border mb-6"
-                 data-help-title="{{help.overview.savings_breakdown.title}}" data-help="{{help.overview.savings_breakdown.body}}">
-                <div class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">Savings Breakdown <span class="text-[10px] uppercase tracking-wide text-gray-500" title="Priced from a pricing table (LiteLLM or your Settings override) — can be stale or $0.00 for unlisted models.">estimated</span></div>
-                <div class="flex items-center gap-8">
-                    <div data-help-title="{{help.overview.compression.title}}" data-help="{{help.overview.compression.body}}">
-                        <div class="text-xs text-gray-500 mb-1">Compression</div>
-                        <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.cost?.compression_savings_usd || 0)"></div>
-                        <div class="text-xs text-gray-500" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' proxy tokens removed (measured)'"></div>
-                    </div>
-                    <template x-if="(stats.cost?.cache_savings_usd || 0) > 0">
-                        <div data-help-title="{{help.overview.prefix_cache_discount.title}}" data-help="{{help.overview.prefix_cache_discount.body}}">
-                            <div class="text-xs text-gray-500 mb-1">Prefix Cache Discount</div>
-                            <div class="text-2xl font-light tabular-nums text-cyan-400" x-text="'$' + formatCurrency(stats.cost?.cache_savings_usd || 0)"></div>
-                            <div class="text-xs text-gray-500">Provider-native caching</div>
-                        </div>
-                    </template>
-                </div>
+        <!-- Savings Breakdown: 3 equal-width cards. Compression is the primary
+             metric and always shows; Prefix Cache Discount keeps its own gate
+             (only meaningful once there's cache-discount $); Output Tokens Saved
+             is a token count (not a $ figure) so it always shows regardless of
+             $ savings state -- it must not be gated behind a $-savings check. -->
+        <div class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2"
+             data-help-title="{{help.overview.savings_breakdown.title}}" data-help="{{help.overview.savings_breakdown.body}}">
+            Savings Breakdown <span class="text-[10px] uppercase tracking-wide text-gray-500" title="Priced from a pricing table (LiteLLM or your Settings override) — can be stale or $0.00 for unlisted models.">estimated</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <!-- Compression -->
+            <div class="bg-surface rounded-lg p-4 border border-border" data-help-title="{{help.overview.compression.title}}" data-help="{{help.overview.compression.body}}">
+                <div class="text-xs text-gray-500 mb-1">Compression</div>
+                <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.cost?.compression_savings_usd || 0)"></div>
+                <div class="text-xs text-gray-500" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' proxy tokens removed (measured)'"></div>
             </div>
-        </template>
+
+            <!-- Prefix Cache Discount: only meaningful once there's a cache discount -->
+            <template x-if="(stats.cost?.cache_savings_usd || 0) > 0">
+                <div class="bg-surface rounded-lg p-4 border border-border" data-help-title="{{help.overview.prefix_cache_discount.title}}" data-help="{{help.overview.prefix_cache_discount.body}}">
+                    <div class="text-xs text-gray-500 mb-1">Prefix Cache Discount</div>
+                    <div class="text-2xl font-light tabular-nums text-cyan-400" x-text="'$' + formatCurrency(stats.cost?.cache_savings_usd || 0)"></div>
+                    <div class="text-xs text-gray-500">Provider-native caching</div>
+                </div>
+            </template>
+
+            <!-- Output Tokens Saved (counterfactual), relocated from the hero row -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.overview.output_tokens_saved.title}}" data-help="{{help.overview.output_tokens_saved.body}}">Output Tokens Saved <span class="text-gray-600">&#9432;</span></div>
+                <template x-if="stats.tokens?.output_reduction?.available">
+                    <div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums text-accent" x-text="formatNumber(stats.tokens?.output_saved || 0)"></span>
+                            <span class="text-sm text-accent" x-text="(stats.tokens?.output_reduction_percent || 0).toFixed(1) + '%'"></span>
+                        </div>
+                        <div class="mt-1 text-xs text-gray-500 leading-relaxed">
+                            <!-- "measured" = A/B holdout (unbiased); "estimated" = vs learned baseline -->
+                            <span class="uppercase tracking-wide"
+                                  :class="stats.tokens?.output_reduction?.method === 'measured' ? 'text-emerald-400' : 'text-gray-400'"
+                                  x-text="stats.tokens?.output_reduction?.method || ''"
+                                  :data-help-title="stats.tokens?.output_reduction?.method === 'measured' ? helpText.overview.output_reduction_measured.title : helpText.overview.output_reduction_estimated.title"
+                                  :data-help="stats.tokens?.output_reduction?.method === 'measured' ? helpText.overview.output_reduction_measured.body : helpText.overview.output_reduction_estimated.body"></span>
+                            <span x-text="'· 95% CI ' + (stats.tokens?.output_reduction?.ci_low_percent || 0).toFixed(1) + '–' + (stats.tokens?.output_reduction?.ci_high_percent || 0).toFixed(1) + '%'"
+                                  data-help-title="{{help.overview.95_confidence_interval.title}}" data-help="{{help.overview.95_confidence_interval.body}}"></span>
+                        </div>
+                        <div class="mt-1 text-xs text-gray-600 leading-relaxed"
+                             x-text="formatNumber(stats.tokens?.output_reduction?.requests || 0) + ' shaped responses · counterfactual'">
+                        </div>
+                    </div>
+                </template>
+                <template x-if="!stats.tokens?.output_reduction?.available">
+                    <div class="mt-1 text-xs text-gray-500 leading-relaxed">
+                        <span class="text-2xl font-light tabular-nums text-gray-600">—</span>
+                        <div class="mt-1">Enable the output shaper (HEADROOM_OUTPUT_SHAPER=1) and run
+                            <code class="text-gray-400">headroom learn --verbosity --apply</code> to start measuring.</div>
+                    </div>
+                </template>
+            </div>
+        </div>
 
             </div>
         </section>

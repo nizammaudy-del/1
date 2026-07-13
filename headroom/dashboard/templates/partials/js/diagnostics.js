@@ -30,6 +30,25 @@ function dashboardDiagnosticsMixin() {
                     }
                 },
 
+                learnRunPending: false,
+                async triggerLearnRun() {
+                    this.learnRunPending = true;
+                    try {
+                        const res = await fetch('/learn/run', { method: 'POST' });
+                        if (res.ok) {
+                            this.showToast('headroom learn --apply started in the background');
+                        } else {
+                            this.showToast('Failed to start learn run', { error: true });
+                        }
+                    } catch (e) {
+                        this.showToast('Failed to start learn run', { error: true });
+                    } finally {
+                        // Brief pending state only -- the run itself continues detached
+                        // server-side; refresh Learn history later to see the result.
+                        setTimeout(() => { this.learnRunPending = false; }, 2000);
+                    }
+                },
+
                 async fetchDoctor() {
                     try {
                         const res = await fetch('/doctor');

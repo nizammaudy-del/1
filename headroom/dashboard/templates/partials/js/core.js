@@ -50,6 +50,10 @@ function dashboardCore() {
                     this.fetchDoctor();
                     this.fetchActiveAgents();
                     this.fetchDiagnostics();
+                    // Live Feed defaults open, so it needs its own initial fetch here --
+                    // toggleFeed() only fetches on a manual click, which won't fire on
+                    // page load when the drawer is already open.
+                    if (this.feedOpen) this.fetchTransformations();
                     await this.loadSettingsIntoPoll();
 
                     this.pollInterval = setInterval(() => {

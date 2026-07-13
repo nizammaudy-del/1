@@ -39,6 +39,10 @@
     "after": {
       "title": "After",
       "body": "What Headroom actually sent upstream to the provider after compression."
+    },
+    "no_changes": {
+      "title": "No changes detected",
+      "body": "The input and the output are byte-identical and uncompressed for this request -- nothing was rewritten, so there's no before/after diff to show."
     }
   },
   "header": {
@@ -93,6 +97,14 @@
     "theme": {
       "title": "Theme",
       "body": "Toggle light/dark mode. Your choice is remembered in this browser."
+    },
+    "overhead": {
+      "title": "Overhead",
+      "body": "Extra latency the proxy adds per request while compressing. Lower is better; this is the cost you pay for the token savings above. Also shows average TTFB (time to first byte)."
+    },
+    "notifications": {
+      "title": "Notifications",
+      "body": "Near-limit warnings for budgets and provider quota windows (Anthropic, Codex, Copilot). Fires at 80/90/100% utilization. Dismiss individually or all at once; re-appears when a new threshold is crossed."
     },
     "active_profile": {
       "title": "Active profile",
@@ -669,6 +681,10 @@
     "memory_sync": {
       "title": "Memory sync",
       "body": "Per-agent memory import/export counts and dedup rate from the last sync, sourced from /debug/memory/sync."
+    },
+    "run_learn": {
+      "title": "Run learn --apply",
+      "body": "Starts `headroom learn --apply` as a detached background job to analyze recent sessions and persist new compression recommendations. Runs in the background; refresh Learn history below later to see the result."
     }
   },
   "history": {

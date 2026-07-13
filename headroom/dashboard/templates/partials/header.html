@@ -49,6 +49,24 @@
                             <span data-help-title="{{help.header.proxy_uptime.title}}" data-help="{{help.header.proxy_uptime.body}}">Up <span class="text-gray-300 font-mono" x-text="uptimeText"></span></span>
                         </span>
                     </template>
+                    <!-- Overhead badge: compact ms + sparkline, moved here from the
+                         Overview hero cards. Hidden below lg since header space gets
+                         tight on narrower viewports. -->
+                    <span class="hidden lg:flex items-center gap-1.5"
+                          data-help-title="{{help.header.overhead.title}}" data-help="{{help.header.overhead.body}}">
+                        <span class="text-gray-700">·</span>
+                        <span class="text-gray-300 font-mono" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms overhead'"></span>
+                        <svg width="70" height="24" viewBox="0 0 100 32" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="sparkline-gradient-overhead-header" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.3"/>
+                                    <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
+                                </linearGradient>
+                            </defs>
+                            <path fill="url(#sparkline-gradient-overhead-header)" :d="getSparklineArea(overheadHistory)"></path>
+                            <path class="sparkline" :d="getSparkline(overheadHistory)"></path>
+                        </svg>
+                    </span>
                 </div>
             </template>
         </div>
@@ -157,6 +175,43 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     </svg>
                 </button>
+                <div class="relative" x-data="{ notifOpen: false }" @click.outside="notifOpen = false">
+                    <button @click="notifOpen = !notifOpen" id="notifications-toggle"
+                            class="relative px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
+                            aria-label="Notifications"
+                            data-help-title="{{help.header.notifications.title}}" data-help="{{help.header.notifications.body}}">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                        </svg>
+                        <span x-show="warnings.length > 0" x-cloak
+                              class="absolute -top-1 -right-1 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none"
+                              x-text="warnings.length"></span>
+                    </button>
+                    <div x-show="notifOpen" x-transition x-cloak
+                         class="absolute right-0 mt-2 w-80 z-20 bg-surface border border-border rounded-lg shadow-lg p-2">
+                        <div class="flex items-center justify-between px-2 py-1">
+                            <span class="text-[10px] uppercase tracking-wide text-gray-500">Near-Limit Warnings</span>
+                            <button type="button" x-show="warnings.length > 0" @click="dismissAllWarnings()"
+                                    class="text-[11px] text-gray-500 hover:text-gray-300">Dismiss all</button>
+                        </div>
+                        <template x-if="warnings.length === 0">
+                            <div class="px-2 py-3 text-xs text-gray-500 italic">No active warnings.</div>
+                        </template>
+                        <template x-if="warnings.length > 0">
+                            <ul class="max-h-72 overflow-y-auto">
+                                <template x-for="w in warnings" :key="w.key">
+                                    <li class="flex items-start justify-between gap-2 px-2 py-1.5 border-t border-border/40 first:border-t-0">
+                                        <span class="text-xs text-red-300" x-text="w.text"></span>
+                                        <button type="button" @click="dismissWarning(w.key)" aria-label="Dismiss"
+                                                class="shrink-0 text-red-400 hover:text-red-200">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </li>
+                                </template>
+                            </ul>
+                        </template>
+                    </div>
+                </div>
                 <button onclick="toggleTheme()" id="theme-toggle"
                         class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
                         data-help-title="{{help.header.theme.title}}" data-help="{{help.header.theme.body}}">
