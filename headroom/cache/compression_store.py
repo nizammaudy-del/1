@@ -88,6 +88,16 @@ def _get_env_default_ttl_seconds() -> int:
     return ttl_seconds
 
 
+def default_ccr_hash(content: str) -> str:
+    """SHA-256(content)[:24] -- the default CCR store key.
+
+    Single source of truth so the compression store's key and any exemption
+    recompute (e.g. the agy retrieve exemption in
+    ``headroom.transforms.agy_fr_compressor``) cannot drift.
+    """
+    return hashlib.sha256(content.encode()).hexdigest()[:24]
+
+
 def format_retrieval_miss_detail(status: dict[str, Any]) -> str:
     """Return an operator-facing miss reason for CCR retrieval failures."""
     default_ttl = status.get("default_ttl_seconds", DEFAULT_CCR_TTL_SECONDS)
@@ -322,7 +332,7 @@ class CompressionStore:
             # in-memory, so changing the hash function on upgrade has no
             # persistence-side effect — the same content always hashes
             # deterministically under whichever function is in use.
-            hash_key = hashlib.sha256(original.encode()).hexdigest()[:24]
+            hash_key = default_ccr_hash(original)
 
         entry = CompressionEntry(
             hash=hash_key,

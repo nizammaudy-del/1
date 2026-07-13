@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import importlib.util
 import io
@@ -27,6 +28,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -34,7 +36,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from headroom._subprocess import pid_alive, run
+from headroom._subprocess import Popen, pid_alive, run
 
 # Fix Windows cp1252 encoding — box-drawing characters require UTF-8
 if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
@@ -727,6 +729,436 @@ def _setup_lean_ctx_agent(agent: str, verbose: bool = False) -> Path | None:
 # Hook-command markers Headroom manages in Claude settings.json. unwrap drops
 # any hook entry whose command contains one of these.
 _HEADROOM_HOOK_MARKERS = ("rtk-rewrite", "headroom-init-claude")
+#: agy flags that put it into single-shot, non-interactive output mode.
+#: In this mode agy hangs indefinitely whenever ANY mcpServers entry is present
+#: in its MCP config (post-migration ~/.gemini/config/mcp_config.json; verified
+#: live on the legacy path: lean-ctx of any
+#: tool profile, serena, and even a nonexistent command all hang; empty
+#: mcpServers answers in seconds).  So Headroom must NOT activate any MCP server
+#: for print-mode invocations.
+_AGY_PRINT_FLAGS = ("--print", "-p", "--prompt")
+
+#: Minimum agy version known to no longer hang on a registered MCP server in
+#: print mode (re-verified 2026-07-05: lean-ctx + tokensave + serena all
+#: answer in ~4s on 1.0.16).  Older or unparseable/unknown versions are
+#: treated as unsafe — see ``_agy_print_mode_mcp_allowed``.
+_AGY_PRINT_MODE_MCP_MIN_VERSION = (1, 0, 16)
+
+
+def _agy_print_mode(agy_args: tuple[str, ...] | list[str]) -> bool:
+    """Return True if agy is being launched in non-interactive print mode.
+
+    agy treats ``--print`` / ``-p`` / ``--prompt`` as "run one prompt and exit".
+    Older/unknown agy versions hang in this mode whenever a registered MCP
+    server is present, so callers use this to gate MCP wiring behind an agy
+    version preflight (see ``_agy_print_mode_mcp_allowed``); interactive mode
+    is never suppressed.
+
+    Matches both space-separated forms (``--print hi``) and ``=``-joined forms
+    (``--print=hi``, ``--prompt=hi``, ``-p=hi``) — all live-verified as valid
+    agy print invocations (2026-06-16).  The attached short form ``-pVALUE`` is
+    *not* matched because agy rejects it (``flags provided but not defined``,
+    exit 2) — it never reaches MCP init, so it cannot trigger the hang.
+    """
+    return any(arg.split("=", 1)[0] in _AGY_PRINT_FLAGS for arg in agy_args)
+
+
+def _detect_agy_version(agy_bin: str | None) -> tuple[int, ...] | None:
+    """Best-effort detect the installed agy binary's version.
+
+    Runs ``<agy_bin> --version`` with a 1s timeout and parses the LAST
+    ``\\d+(\\.\\d+)+`` token found in stdout (defends against a wrapper
+    script printing its own version banner before delegating to the real
+    binary).  Returns ``None`` whenever the version cannot be established —
+    no binary, non-zero exit, no parseable version token, or a slow/hung
+    process (killed after the timeout) — so callers can treat "unknown" the
+    same as "known old" (safe-by-default).  Never raises.
+    """
+    try:
+        if not agy_bin:
+            return None
+        result = run(
+            [agy_bin, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=1.0,
+        )
+        if result.returncode != 0:
+            return None
+        matches = re.findall(r"\d+(?:\.\d+)+", result.stdout or "")
+        if not matches:
+            return None
+        return tuple(int(part) for part in matches[-1].split("."))
+    except Exception:
+        return None
+
+
+def _agy_print_mode_mcp_allowed(agy_args: tuple[str, ...] | list[str], agy_bin: str | None) -> bool:
+    """Gate print-mode MCP wiring on a known-good agy version.
+
+    Interactive mode is always allowed — the hang is print-mode-only, so no
+    version check is performed. In print mode, MCP wiring is allowed only
+    when the detected agy version is >= ``_AGY_PRINT_MODE_MCP_MIN_VERSION``;
+    an unparseable/unknown version is treated as too old (safe-by-default).
+    """
+    if not _agy_print_mode(agy_args):
+        return True
+    version = _detect_agy_version(agy_bin)
+    return version is not None and version >= _AGY_PRINT_MODE_MCP_MIN_VERSION
+
+
+def _smoke_verify_mcp_handshake(
+    command: str, args: list[str], env: dict[str, str], *, timeout: float = 8.0
+) -> bool:
+    """Spawn an stdio MCP server and assert it answers an ``initialize`` request.
+
+    Sends a minimal JSON-RPC ``initialize`` over stdin and waits up to
+    ``timeout`` seconds for a JSON-RPC response on stdout.  Returns True iff a
+    well-formed response object (``"jsonrpc"`` + matching ``"id"``) is seen.
+    The process is always terminated before returning.  This is a *guard*: a
+    passing handshake does not by itself prove agy will be happy (an unrelated
+    agy print-mode bug hangs on any MCP), but a *failing* handshake proves the
+    entry is broken and must not be persisted.
+    """
+    request = (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "headroom-smoke", "version": "1"},
+                },
+            }
+        )
+        + "\n"
+    )
+    full_env = {**os.environ, **env}
+    proc: subprocess.Popen[str] | None = None
+    try:
+        proc = Popen(
+            [command, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env=full_env,
+        )
+        try:
+            stdout, _ = proc.communicate(input=request, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        for line in (stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(payload, dict)
+                and payload.get("jsonrpc") == "2.0"
+                and payload.get("id") == 1
+            ):
+                return True
+        return False
+    except (OSError, ValueError):
+        return False
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+def _setup_lean_ctx_mcp_agy(registrar: Any, *, verbose: bool = False) -> None:
+    """Register the lean-ctx context-tool MCP with agy, verify-then-remove.
+
+    Builds an explicit spec (``lean-ctx mcp`` + ``LEAN_CTX_DATA_DIR``), registers
+    it, then smoke-verifies the MCP ``initialize`` handshake.  If the handshake
+    fails the entry is unregistered again so a broken tool can never persist and
+    hang agy.  If lean-ctx is unavailable, wiring is skipped with a notice.
+    """
+    from headroom.lean_ctx import get_lean_ctx_path
+    from headroom.mcp_registry import build_lean_ctx_spec
+    from headroom.mcp_registry.base import RegisterStatus
+
+    lean_ctx = get_lean_ctx_path()
+    if lean_ctx is None:
+        click.echo(
+            "  Context tool: lean-ctx not found — skipping (agy still works transport-only)."
+        )
+        return
+
+    data_dir = str(Path.home() / ".config" / "lean-ctx")
+    spec = build_lean_ctx_spec(str(lean_ctx), data_dir)
+    result = registrar.register_server(spec, force=True)
+    if result.status not in (RegisterStatus.REGISTERED, RegisterStatus.ALREADY):
+        click.echo(f"  Context tool: could not register lean-ctx MCP — skipping ({result.detail}).")
+        return
+
+    if _smoke_verify_mcp_handshake(spec.command, list(spec.args), dict(spec.env)):
+        # Record in the ledger so unwrap removes only Headroom-installed entries,
+        # never a user's own pre-existing lean-ctx MCP.
+        from headroom.mcp_registry.ledger import record_install
+
+        record_install(registrar.name, spec)
+        if verbose:
+            click.echo("  Context tool: lean-ctx MCP registered and handshake-verified.")
+        else:
+            click.echo("  Context tool: lean-ctx MCP wired (handshake verified).")
+    else:
+        registrar.unregister_server("lean-ctx")
+        click.echo(
+            "  Context tool: lean-ctx MCP failed handshake — entry removed (agy left transport-only)."
+        )
+
+
+def _setup_tokensave_mcp_agy(registrar: Any, *, verbose: bool = False) -> bool:
+    """Register the tokensave code-graph MCP with agy, verify-then-remove.
+
+    tokensave is agy's PRIMARY code-graph compressor (Serena is the backup).
+    Resolves the tokensave binary (fetching the release asset if missing),
+    warms the project graph, registers an explicit spec, then smoke-verifies
+    the MCP ``initialize`` handshake.  If the binary is unavailable or the
+    handshake fails, the entry is removed again — so a broken/hanging tool can
+    never persist — and ``False`` is returned so the caller falls back to
+    Serena.  Returns ``True`` only when tokensave is wired and verified.
+    """
+    from headroom.mcp_registry import build_tokensave_spec
+    from headroom.mcp_registry.ledger import record_install
+
+    bin_path = _ensure_tokensave_binary(verbose=verbose)
+    if bin_path is None:
+        click.echo(
+            "  Code graph: tokensave unavailable — falling back to Serena "
+            "(agy still works transport-only)."
+        )
+        return False
+
+    # Warm the graph so the first query is instant (non-fatal).
+    _index_tokensave_project(bin_path, verbose=verbose)
+
+    spec = build_tokensave_spec(str(bin_path))
+    registrar.register_server(spec, force=True)
+
+    if _smoke_verify_mcp_handshake(spec.command, list(spec.args), dict(spec.env or {})):
+        # Record in the ledger so `unwrap agy` can identify and remove this
+        # Headroom-installed entry (WU2), leaving user-managed entries untouched.
+        record_install(registrar.name, spec)
+        click.echo("  Code graph: tokensave MCP wired (handshake verified).")
+        return True
+
+    registrar.unregister_server("tokensave")
+    click.echo(
+        "  Code graph: tokensave MCP failed handshake — entry removed (agy left transport-only)."
+    )
+    return False
+
+
+def _setup_headroom_retrieve_mcp_agy(registrar: Any, *, verbose: bool = False) -> bool:
+    """Register the headroom retrieve MCP with agy PERSISTENTLY (mirrors CBM).
+
+    The retrieve tool is an ``headroom mcp serve`` stdio child that resolves
+    ``[Retrieve more: hash=…]`` markers.  It resolves them from the shared
+    on-disk CCR store (``ccr_store.db``) FIRST — see
+    ``ccr.mcp_server._retrieve_content`` — so it needs no live proxy and no
+    per-run ephemeral port; the spec is stable and port-independent
+    (``build_headroom_spec()`` with the default URL yields ``env={}``).
+
+    agy only surfaces tools from servers in its persistent per-tool cache, so
+    the entry is registered persistently and RECORDED in the install ledger
+    (like codebase-memory-mcp / Serena), NOT reverted on teardown.  That is what
+    lets agy discover, cache, and expose ``headroom_retrieve`` across sessions —
+    the exposure the h76.5 gate then checks before keeping ccr compression on.
+
+    Returns True iff the entry is registered AND survives the smoke handshake.
+    """
+    from headroom.mcp_registry import build_headroom_spec
+    from headroom.mcp_registry.base import RegisterStatus
+    from headroom.mcp_registry.ledger import clear_install, record_install
+
+    spec = build_headroom_spec()
+    result = registrar.register_server(spec, force=True)
+    if result.status not in (RegisterStatus.REGISTERED, RegisterStatus.ALREADY):
+        click.echo(
+            f"  MCP retrieve tool: could not register headroom MCP — skipping ({result.detail})."
+        )
+        return False
+
+    if _smoke_verify_mcp_handshake(spec.command, list(spec.args), dict(spec.env)):
+        # Record on BOTH REGISTERED and ALREADY: a matching on-disk entry whose
+        # ledger record was lost (e.g. cleared by the old-agy print-mode purge)
+        # must be re-claimed as Headroom-owned so ledger-gated uninstall works.
+        # record_install upserts on spec.name, so this never double-counts.
+        record_install(registrar.name, spec)
+        _prime_agy_retrieve_tool_cache(registrar)
+        if verbose:
+            click.echo(
+                "  MCP retrieve tool: headroom MCP registered persistently "
+                "(local-store resolution) and handshake-verified."
+            )
+        else:
+            click.echo("  MCP retrieve tool: headroom MCP wired (persistent, handshake verified).")
+        return True
+
+    # Handshake failed: remove the entry AND clear any ledger record so a broken
+    # pointer can never persist or masquerade as Headroom-owned.
+    registrar.unregister_server("headroom")
+    clear_install(registrar.name, "headroom")
+    click.echo(
+        "  MCP retrieve tool: headroom MCP failed handshake — entry removed (agy left transport-only)."
+    )
+    return False
+
+
+def _prime_agy_retrieve_tool_cache(registrar: Any) -> None:
+    """Pre-write agy's per-tool cache for ``headroom_retrieve`` on first run.
+
+    agy only surfaces a server's tools from its persistent per-tool cache
+    (``<cache_dir>/<server>/<tool>.json``), which it otherwise writes only
+    *during* a session. So on a clean install the h76.5 exposure gate
+    (``_agy_exposes_retrieve_tool``) sees no cache file, withholds ``WIRED``,
+    and ccr downgrades to lossless for that first run — the "launch, exit,
+    re-launch" tax. Seeding the file here (verified: agy reads it at startup and
+    exposes the tool immediately) removes it. The schema mirrors the live
+    ``list_tools()`` entry via the shared ``CCR_RETRIEVE_TOOL_*`` constants, so
+    the primed cache cannot drift from what the server actually offers; ``agy``
+    serialises MCP ``inputSchema`` under the ``parameters`` key. Existing caches
+    are left untouched, and any write error degrades to the pre-fix behavior.
+    """
+    from headroom.ccr.mcp_server import (
+        CCR_RETRIEVE_TOOL_DESCRIPTION,
+        CCR_RETRIEVE_TOOL_INPUT_SCHEMA,
+        CCR_TOOL_NAME,
+    )
+
+    tool_cache = registrar.cache_dir / "headroom" / f"{CCR_TOOL_NAME}.json"
+    if tool_cache.is_file():
+        return
+    try:
+        tool_cache.parent.mkdir(parents=True, exist_ok=True)
+        tool_cache.write_text(
+            json.dumps(
+                {
+                    "name": CCR_TOOL_NAME,
+                    "description": CCR_RETRIEVE_TOOL_DESCRIPTION,
+                    "parameters": CCR_RETRIEVE_TOOL_INPUT_SCHEMA,
+                }
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        # A cache-write failure must never abort setup; the exposure gate simply
+        # falls back to the pre-fix downgrade-to-lossless for the first run.
+        pass
+
+
+def _ccr_backend_is_cross_process() -> bool:
+    """True unless the CCR store backend is process-local (``memory``).
+
+    The agy-spawned ``headroom mcp serve`` child resolves markers against the
+    CCR store. With ``HEADROOM_CCR_BACKEND=memory`` that store is a per-process
+    dict (compression_store.py ``_create_default_ccr_backend``), so the child
+    sees an empty store and cannot resolve the proxy's hashes — markers would
+    ship unrecoverable. Every other backend (default sqlite, redis, custom
+    entry points) is shared across processes. This is a PRODUCT guard on
+    ``WIRED``, not a test-only check.
+    """
+    return (os.environ.get("HEADROOM_CCR_BACKEND") or "").strip().lower() != "memory"
+
+
+def _agy_exposes_retrieve_tool(registrar: Any) -> bool:
+    """True iff agy will actually expose ``headroom_retrieve`` as a callable tool.
+
+    A successful wrap↔child ``initialize`` handshake is necessary but NOT
+    sufficient: agy only surfaces tools from servers in its persistent per-tool
+    cache (``<appdata>/mcp/<server>/<tool>.json``, written *during* a session),
+    so an entry that is registered-then-reverted every run never enters that
+    cache and agy rejects the call with "Unknown tool: headroom_retrieve".
+
+    Positive exposure requires ALL of:
+      1. a live ``headroom`` entry in ``mcp_config.json`` (registrar.get_server),
+      2. an agy-written tool-cache file for ``headroom_retrieve``, and
+      3. a cross-process CCR backend (so the child can resolve hashes).
+
+    Anything else = UNVERIFIED → caller withholds ``WIRED`` → ccr downgrades to
+    lossless (fail-safe; never ships unrecoverable compression). The cache is a
+    *previous* session's artifact, so pairing it with the live config entry
+    avoids a stale-cache false positive.
+    """
+    from headroom.ccr.mcp_server import CCR_TOOL_NAME
+
+    if registrar.get_server("headroom") is None:
+        return False
+    # Cache lives under agy's app-data dir (cache_dir), NOT the migrated config
+    # dir — agy writes <appdata>/mcp/<server>/<tool>.json regardless of which
+    # config file declared the server.
+    tool_cache = registrar.cache_dir / "headroom" / f"{CCR_TOOL_NAME}.json"
+    if not tool_cache.is_file():
+        return False
+    return _ccr_backend_is_cross_process()
+
+
+def _maybe_warn_agy_ccr_downgrade(retrieve_wired: bool) -> None:
+    """Loudly warn when ccr mode silently downgraded to lossless this run.
+
+    Fires iff ``headroom.proxy.handlers.gemini._resolve_agy_fr_mode`` would
+    downgrade: both read the requested mode from the shared
+    ``_requested_agy_fr_mode`` helper (single source of truth). ccr is the
+    default mode, and it is the only mode that ships recoverable
+    functionResponse compression, so it requires the retrieve MCP
+    to resolve ``[Retrieve more: hash=…]`` markers. When the retrieve MCP did not wire
+    for this run, that handler falls back to ``lossless`` -- a byte-recoverable
+    no-op -- so tool-output savings collapse to ~0 with no other signal to the
+    user. Stays silent when retrieve DID wire, or when ``lossless`` was
+    requested explicitly (no downgrade occurred).
+
+    Cause detection is ADVISORY only: this probes ``mcp`` importability in
+    THIS (parent) interpreter, but the agy child is launched via
+    ``resolve_headroom_command()`` (``shutil.which("headroom")``), which need
+    not share this venv. A false negative here (mcp present in the parent,
+    absent in the child) still degrades gracefully to the generic
+    handshake-failure branch.
+
+    ``retrieve_wired`` is the EXPOSURE-gated signal (handshake AND agy actually
+    caching the tool), not the bare handshake result -- so this also fires when
+    the child registers/handshakes fine but agy has not yet exposed the tool.
+    """
+    from headroom.proxy.handlers.gemini import _requested_agy_fr_mode
+
+    if _requested_agy_fr_mode() != "ccr" or retrieve_wired:
+        return
+
+    if _module_available("mcp"):
+        cause = (
+            "the retrieve MCP did not register/handshake, or agy has not yet "
+            "exposed it as a callable tool (see the 'MCP retrieve tool:' line "
+            "above)"
+        )
+        remedy = "Fix the failure shown on that line, then re-run `headroom wrap agy`."
+    else:
+        cause = (
+            "mcp is not importable in this interpreter (ADVISORY: likely cause -- "
+            "the agy child is resolved via `headroom` on PATH and may run in a "
+            "different environment than this one)"
+        )
+        remedy = "Install with: pip install 'headroom-ai[proxy]'  (or: pip install mcp)"
+
+    click.echo()
+    click.echo("  ⚠️  WARNING: agy compression savings are DISABLED this run.")
+    click.echo("  ⚠️  ccr mode requires the retrieve MCP; it did not wire, so")
+    click.echo("  ⚠️  functionResponse compression fell back to lossless (saves ~0 on tool output).")
+    click.echo(f"  ⚠️  Cause: {cause}.")
+    click.echo(f"  ⚠️  Fix:   {remedy}")
+    click.echo()
+
 
 # Env vars Headroom's init/wrap inject into Claude settings.json; unwrap removes
 # them. ENABLE_TOOL_SEARCH keeps Claude Code's tool deferral on behind the proxy
@@ -1167,6 +1599,50 @@ def _remove_headroom_installed_serena_mcp(registrar: Any) -> str:
     return "failed"
 
 
+def _remove_headroom_installed_cbm_mcp(registrar: Any) -> str:
+    """Remove codebase-memory-mcp only if the ledger proves Headroom installed it."""
+    from headroom.mcp_registry.ledger import clear_install, headroom_installed_matching
+
+    current = registrar.get_server(_CBM_MCP_SERVER_NAME)
+    if not headroom_installed_matching(registrar.name, current):
+        return "not_headroom_owned"
+    if registrar.unregister_server(_CBM_MCP_SERVER_NAME):
+        clear_install(registrar.name, _CBM_MCP_SERVER_NAME)
+        return "removed"
+    return "failed"
+
+
+def _remove_headroom_installed_lean_ctx_mcp(registrar: Any) -> str:
+    """Remove the lean-ctx MCP only if the ledger proves Headroom installed it."""
+    from headroom.mcp_registry.ledger import clear_install, headroom_installed_matching
+
+    current = registrar.get_server("lean-ctx")
+    if not headroom_installed_matching(registrar.name, current):
+        return "not_headroom_owned"
+    if registrar.unregister_server("lean-ctx"):
+        clear_install(registrar.name, "lean-ctx")
+        return "removed"
+    return "failed"
+
+
+def _remove_headroom_installed_retrieve_mcp(registrar: Any) -> str:
+    """Remove the headroom retrieve MCP only if the ledger proves Headroom installed it.
+
+    Mirrors ``_remove_headroom_installed_cbm_mcp``: the retrieve entry is now a
+    persistent, ledger-recorded server, so cooperative uninstall is ledger-gated
+    (never clobber a user's own "headroom" entry) and clears the ledger record.
+    """
+    from headroom.mcp_registry.ledger import clear_install, headroom_installed_matching
+
+    current = registrar.get_server("headroom")
+    if not headroom_installed_matching(registrar.name, current):
+        return "not_headroom_owned"
+    if registrar.unregister_server("headroom"):
+        clear_install(registrar.name, "headroom")
+        return "removed"
+    return "failed"
+
+
 def _disable_serena_mcp(
     registrar: Any, *, verbose: bool = False, reason: str = "--no-serena"
 ) -> None:
@@ -1400,6 +1876,29 @@ def _setup_coding_compressor(registrar: Any, *, serena_context: str, **kwargs: A
 _CBM_MCP_SERVER_NAME = "codebase-memory-mcp"
 
 
+def _purge_agy_mcp_entries(registrar: Any) -> None:
+    """Actively remove all agy MCP entries that could hang a print-mode run.
+
+    Used when the print-mode agy-version preflight fails (older or unknown
+    agy): merely skipping *new* registration is not enough, since a prior
+    interactive ``headroom wrap agy`` run may have already persisted entries
+    in mcp_config.json.  Every call here is idempotent -- a no-op when the
+    entry is already absent -- so this is safe to call unconditionally.
+    """
+    from headroom.mcp_registry.ledger import clear_install
+
+    _disable_tokensave_mcp(registrar)
+    _disable_serena_mcp(registrar, reason="agy print-mode MCP preflight failed")
+    _remove_headroom_installed_lean_ctx_mcp(registrar)
+    registrar.unregister_server(_CBM_MCP_SERVER_NAME)
+    # headroom retrieve is now a ledger-recorded PERSISTENT entry; old agy hangs
+    # in print mode on ANY MCP entry, so purge it AND clear its ledger record so
+    # the persistent-skip on the next compatible-agy run does not treat the now
+    # absent entry as still-installed. Re-registration happens on that next wrap.
+    registrar.unregister_server("headroom")
+    clear_install(registrar.name, "headroom")
+
+
 def _setup_code_graph(verbose: bool = False) -> bool:
     """Ensure the tokensave code graph is set up and the project indexed.
 
@@ -1475,6 +1974,10 @@ _RTK_MARKER = "<!-- headroom:rtk-instructions -->"
 _MEMORY_MCP_MARKER = "# --- Headroom memory MCP (auto-injected) ---"
 _MEMORY_MCP_END = "# --- end Headroom memory ---"
 _MEMORY_AGENTS_MARKER = "<!-- headroom:memory-instructions -->"
+
+# agy / GEMINI.md instruction-block markers
+_AGY_GEMINI_BLOCK_START = "<!-- headroom:agy-instructions -->"
+_AGY_GEMINI_BLOCK_END = "<!-- /headroom:agy-instructions -->"
 
 # Codex config injection markers
 _CODEX_TOP_LEVEL_MARKER = "# --- Headroom proxy (auto-injected by headroom wrap codex) ---"
@@ -2312,6 +2815,75 @@ def _remove_rtk_instructions(file_path: Path) -> bool:
         _write_text(file_path, cleaned)
     else:
         file_path.unlink()
+    return True
+
+
+def _inject_gemini_md_block(gemini_md: Path, content: str, verbose: bool = False) -> bool:
+    """Inject a Headroom-marked block into GEMINI.md (idempotent).
+
+    If the block is already present it is replaced in-place so re-runs with
+    updated instructions are safe.  User content outside the markers is
+    preserved verbatim.  Returns ``True`` if the file was written.
+    """
+    block = f"{_AGY_GEMINI_BLOCK_START}\n{content}\n{_AGY_GEMINI_BLOCK_END}"
+
+    if gemini_md.exists():
+        existing = gemini_md.read_text(encoding="utf-8")
+        if _AGY_GEMINI_BLOCK_START in existing and _AGY_GEMINI_BLOCK_END in existing:
+            # Replace existing block in-place.
+            start = existing.index(_AGY_GEMINI_BLOCK_START)
+            end = existing.index(_AGY_GEMINI_BLOCK_END) + len(_AGY_GEMINI_BLOCK_END)
+            new_text = (
+                existing[:start].rstrip("\n")
+                + ("\n\n" if existing[:start].rstrip("\n") else "")
+                + block
+                + "\n"
+                + existing[end:].lstrip("\n")
+            )
+            if new_text == existing:
+                if verbose:
+                    click.echo("  GEMINI.md headroom block already up-to-date")
+                return False
+            gemini_md.write_text(new_text, encoding="utf-8")
+        else:
+            # Append after existing user content.
+            sep = "\n\n" if existing.rstrip("\n") else ""
+            gemini_md.write_text(existing.rstrip("\n") + sep + block + "\n", encoding="utf-8")
+    else:
+        gemini_md.parent.mkdir(parents=True, exist_ok=True)
+        gemini_md.write_text(block + "\n", encoding="utf-8")
+
+    if verbose:
+        click.echo(f"  headroom block injected into {gemini_md}")
+    return True
+
+
+def _remove_gemini_md_block(gemini_md: Path, verbose: bool = False) -> bool:
+    """Remove the Headroom-marked block from GEMINI.md (idempotent).
+
+    Only removes the delimited block; all user content outside the markers is
+    preserved.  Returns ``True`` if a block was found and removed.
+    """
+    if not gemini_md.exists():
+        return False
+    existing = gemini_md.read_text(encoding="utf-8")
+    if _AGY_GEMINI_BLOCK_START not in existing or _AGY_GEMINI_BLOCK_END not in existing:
+        return False
+    start = existing.index(_AGY_GEMINI_BLOCK_START)
+    end = existing.index(_AGY_GEMINI_BLOCK_END) + len(_AGY_GEMINI_BLOCK_END)
+    before = existing[:start].rstrip("\n")
+    after = existing[end:].lstrip("\n")
+    if before and after:
+        new_text = before + "\n\n" + after
+    elif before:
+        new_text = before + "\n"
+    elif after:
+        new_text = after
+    else:
+        new_text = ""
+    gemini_md.write_text(new_text, encoding="utf-8")
+    if verbose:
+        click.echo(f"  headroom block removed from {gemini_md}")
     return True
 
 
@@ -3528,6 +4100,7 @@ def _launch_tool(
         if args:
             click.echo(f"  Extra args: {' '.join(args)}")
         _print_telemetry_notice()
+        _inject_ssl_bypass(env, agent_type=agent_type)
         click.echo()
 
         result = subprocess.run([binary, *args], env=env)
@@ -6369,4 +6942,825 @@ def unwrap_codex(port: int, no_stop_proxy: bool) -> None:
     click.echo("✓ Codex is no longer routed through the Headroom proxy.")
     if not no_stop_proxy and status != "noop":
         _echo_unwrap_proxy_stop_status(_stop_local_proxy_for_unwrap(port), port)
+    click.echo()
+
+
+def _inject_ssl_bypass(env: dict[str, str], agent_type: str = "unknown") -> None:
+    """Inject environment variables to bypass SSL verification in child processes.
+
+    For ``agent_type="agy"`` the bypass vars are intentionally NOT injected:
+    agy routes through our CONNECT terminator via HTTPS_PROXY and must trust
+    the minted CA bundle.  Blanking SSL_CERT_FILE / CACERT_PATH /
+    NODE_EXTRA_CA_CERTS / CURL_CA_BUNDLE would prevent the terminator's TLS
+    leaf from being verified, defeating the MITM entirely.  The global
+    NODE_TLS_REJECT_UNAUTHORIZED=0 / PYTHONHTTPSVERIFY=0 bypass would also
+    be counterproductive here — agy must verify TLS against our bundle.
+
+    All other agent types keep byte-identical behaviour to the original.
+    """
+    if agent_type == "agy":
+        # agy MUST trust the CA bundle — do NOT blank or disable verification.
+        return
+    ssl_verify = os.environ.get("HEADROOM_SSL_VERIFY", "true").lower()
+    if ssl_verify in ("false", "0", "no", "off"):
+        # Node.js (Claude Code is Node)
+        env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
+        # Python
+        env["PYTHONHTTPSVERIFY"] = "0"
+        # general / some libraries
+        env["CURL_CA_BUNDLE"] = ""
+        env["SSL_CERT_FILE"] = ""
+
+
+# =============================================================================
+# agy MITM lifecycle helpers
+# =============================================================================
+
+
+class _AgyServers:
+    """Handle to the running terminator + dispatch pair.
+
+    Holds the async event-loop thread and exposes a synchronous ``stop()``
+    that schedules cleanup on that loop and joins the thread.
+    """
+
+    def __init__(
+        self,
+        terminator: Any,
+        dispatch: Any,
+        loop: asyncio.AbstractEventLoop,
+        thread: threading.Thread,
+        stop_flag: asyncio.Event,
+        retrieve: Any | None = None,
+        retrieve_port: int | None = None,
+    ) -> None:
+        self.terminator = terminator
+        self.dispatch = dispatch
+        # Plain-HTTP loopback retrieve listener (interactive mode only). ``None``
+        # in print mode, where no MCP server may run (agy hangs otherwise).
+        self.retrieve = retrieve
+        self.retrieve_port = retrieve_port
+        self._loop = loop
+        self._thread = thread
+        self._stop_flag = stop_flag
+        self._lock = threading.Lock()
+        self._stopped = False
+
+    def stop(self) -> None:
+        """Best-effort graceful shutdown (idempotent)."""
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
+        # Wake the event loop so it can stop() the servers and exit.
+        self._loop.call_soon_threadsafe(self._stop_flag.set)
+        self._thread.join(timeout=10)
+
+
+def _start_agy_servers(
+    ca_key: Any,
+    ca_cert: Any,
+    base_dir: Path | None = None,
+    *,
+    start_retrieve: bool = False,
+    project: str | None = None,
+) -> _AgyServers:
+    """Start AgyCONNECTTerminator + AgyDispatchServer on a dedicated thread.
+
+    Both servers bind loopback ephemeral ports (port=0).  Readiness is
+    signalled via a threading.Event; startup errors raise RuntimeError fast.
+
+    When ``start_retrieve`` is True an additional PLAIN-HTTP loopback
+    :class:`AgyRetrieveServer` is started on the same loop; its port is exposed
+    via ``.retrieve_port`` so the headroom retrieve MCP can point at it. The
+    caller now passes ``start_retrieve=True`` in every mode: the listener is a
+    harmless idle loopback socket, and whether the retrieve MCP *entry* is
+    registered is decided separately by the print-mode version gate
+    (``_agy_print_mode_mcp_allowed``, headroom-37g.37). The retrieve server
+    shares the process-global compression cache the dispatch server populates,
+    so ``[Retrieve more: hash=…]`` markers resolve.
+
+    Returns an _AgyServers handle with ``.terminator`` and ``.dispatch``
+    already started, and a ``.stop()`` method for clean shutdown.
+    """
+    from headroom.proxy.agy_dispatch import AgyDispatchServer
+    from headroom.proxy.agy_retrieve import AgyRetrieveServer
+    from headroom.proxy.agy_terminator import DEFAULT_ALLOWLIST, AgyCONNECTTerminator
+
+    allowlist = DEFAULT_ALLOWLIST
+
+    ready_event: threading.Event = threading.Event()
+    error_holder: list[Exception] = []
+    result_holder: list[_AgyServers] = []
+
+    def _run_loop() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        stop_flag = asyncio.Event()
+
+        async def _main() -> None:
+            dispatch = AgyDispatchServer(
+                ca_key=ca_key,
+                ca_cert=ca_cert,
+                base_dir=base_dir,
+                port=0,
+                allowlist=allowlist,
+                project=project,
+            )
+            await dispatch.start()
+            _, dispatch_port = dispatch.address
+
+            terminator = AgyCONNECTTerminator(
+                ca_key=ca_key,
+                ca_cert=ca_cert,
+                base_dir=base_dir,
+                port=0,
+                dispatch_port=dispatch_port,
+                allowlist=allowlist,
+            )
+            await terminator.start()
+
+            retrieve: AgyRetrieveServer | None = None
+            retrieve_port: int | None = None
+            if start_retrieve:
+                retrieve = AgyRetrieveServer(port=0)
+                await retrieve.start()
+                _, retrieve_port = retrieve.address
+
+            servers = _AgyServers(
+                terminator=terminator,
+                dispatch=dispatch,
+                loop=loop,
+                thread=current_thread,
+                stop_flag=stop_flag,
+                retrieve=retrieve,
+                retrieve_port=retrieve_port,
+            )
+            result_holder.append(servers)
+            ready_event.set()
+
+            # Keep event loop alive until stop_flag is set.
+            await stop_flag.wait()
+
+            # Graceful shutdown.
+            await terminator.stop()
+            await dispatch.stop()
+            if retrieve is not None:
+                await retrieve.stop()
+
+        try:
+            loop.run_until_complete(_main())
+        except Exception as exc:  # noqa: BLE001
+            error_holder.append(exc)
+            ready_event.set()
+        finally:
+            # Cancel and drain any stragglers (hypercorn per-connection tasks,
+            # the app lifespan's periodic stats task) before closing the loop —
+            # otherwise loop.close() with pending tasks spews "Task was destroyed
+            # but it is pending" / "Event loop is closed" on every agy exit.
+            try:
+                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:  # noqa: BLE001
+                pass
+            loop.close()
+
+    current_thread = threading.Thread(target=_run_loop, daemon=True, name="headroom-agy-mitm")
+    current_thread.start()
+    ready_event.wait(timeout=15)
+
+    if error_holder:
+        raise RuntimeError(f"agy MITM server startup failed: {error_holder[0]}") from error_holder[
+            0
+        ]
+    if not result_holder:
+        raise RuntimeError("agy MITM servers did not start within 15 seconds")
+
+    return result_holder[0]
+
+
+def _stop_agy_servers(servers: _AgyServers | None) -> None:
+    """Best-effort stop of agy servers (called from finally block).
+
+    Accepts the _AgyServers handle returned by _start_agy_servers.
+    Idempotent and None-safe so it can run from both the normal exit path
+    and the SIGTERM handler without double-teardown errors.
+    """
+    if servers is None:
+        return
+    try:
+        servers.stop()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# =============================================================================
+# wrap agy
+# =============================================================================
+
+
+@wrap.command(context_settings={"ignore_unknown_options": True})
+@click.option(
+    # NOTE: no "-p" short alias here (unlike sibling wrap subcommands): agy's
+    # own CLI uses -p for --print, so a -p alias on --port would swallow the
+    # user's prompt as the proxy port (headroom-r9k). Long --port only.
+    "--port",
+    default=8787,
+    type=click.IntRange(1, 65535),
+    help="Proxy port (default: 8787)",
+)
+@click.option(
+    "--no-intercept",
+    is_flag=True,
+    help=(
+        "Passthrough / escape hatch: launch agy unchanged, with no TLS interception. "
+        "agy traffic is NOT compressed or inspected by Headroom.  Use this to verify "
+        "issues are caused by the MITM transport, or to opt out entirely.  "
+        "Run 'headroom unwrap agy' to revert any persistent changes."
+    ),
+)
+@click.option(
+    "--backend",
+    default=None,
+    help="API backend for the proxy (env: HEADROOM_BACKEND).  NOTE: only Python backend is supported for agy.",
+)
+@click.option("--no-serena", is_flag=True, help="Skip Serena MCP server registration")
+@click.option(
+    "--no-tokensave", is_flag=True, help="Never register the tokensave code-graph compressor"
+)
+@click.option(
+    "--code-graph",
+    is_flag=True,
+    default=False,
+    help="Enable code graph indexing via codebase-memory-mcp (optional; interactive-only)",
+)
+@click.option("--no-proxy", is_flag=True, help="Skip proxy startup (use existing proxy)")
+@click.argument("agy_args", nargs=-1, type=click.UNPROCESSED)
+def agy(
+    port: int,
+    no_intercept: bool,
+    backend: str | None,
+    no_serena: bool,
+    no_tokensave: bool,
+    code_graph: bool,
+    no_proxy: bool,
+    agy_args: tuple,
+) -> None:
+    """Launch agy through Headroom's selective TLS-MITM transport.
+
+    \b
+    agy has no base-URL override knob, so Headroom intercepts its traffic via
+    an in-process HTTP CONNECT terminator that TLS-terminates only the Cloud
+    Code backend hosts in the terminator allowlist (daily-cloudcode-pa and
+    cloudcode-pa googleapis.com). All other connections are byte-spliced
+    unchanged (and chained through any pre-existing corporate HTTPS_PROXY).
+
+    \b
+    The process-local CA (headroom.proxy.agy_ca) is used to mint leaf
+    certificates for the intercepted host.  It is NEVER added to the OS trust
+    store; it lives only in the child process environment.
+
+    \b
+    Use --no-intercept to launch agy with no interception (passthrough mode).
+    Run 'headroom unwrap agy' to undo any persistent configuration changes.
+
+    \b
+    Examples:
+        headroom wrap agy                   # Start with MITM transport
+        headroom wrap agy -- --help         # Pass args to agy
+        headroom wrap agy --no-intercept    # Passthrough / escape hatch
+    """
+    from headroom.mcp_registry.agy import AgyRegistrar
+
+    # Resolve binary first — fast exit if not installed.
+    agy_bin = shutil.which("agy")
+    if not agy_bin:
+        raise click.ClickException(
+            "'agy' not found in PATH.  "
+            "Install agy: https://github.com/google/agy (or via your package manager)"
+        )
+
+    # Rust backend is Python-only for agy (T11 deferred).
+    effective_backend = backend or os.environ.get("HEADROOM_BACKEND")
+    if effective_backend == "rust":
+        click.echo(
+            "Error: agy MITM transport is Python-only.  "
+            "Rust backend support is deferred (T11).  "
+            "Use the Python backend (omit --backend rust / unset HEADROOM_BACKEND)."
+        )
+        raise SystemExit(1)
+
+    if no_intercept:
+        # Passthrough: launch agy unchanged, zero modification to its env.
+        click.echo()
+        click.echo("  ╔═══════════════════════════════════════════════╗")
+        click.echo("  ║           HEADROOM WRAP: AGY                  ║")
+        click.echo("  ╚═══════════════════════════════════════════════╝")
+        click.echo()
+        click.echo(
+            "  Mode: --no-intercept (passthrough).  Headroom does NOT intercept agy traffic."
+        )
+        click.echo()
+        result = subprocess.run([agy_bin, *agy_args])
+        raise SystemExit(result.returncode)
+
+    # -----------------------------------------------------------------------
+    # MITM path
+    # -----------------------------------------------------------------------
+    # Quiet litellm's "Provider List: https://..." banner, which it prints to
+    # stderr on every cost lookup for models it doesn't know (agy's Cloud Code
+    # model ids). Set the global flags once, before the dispatch handles any
+    # request. Assign through an Any alias (the flags aren't in litellm's stubs).
+    try:
+        import litellm
+
+        _litellm: Any = litellm
+        _litellm.suppress_debug_info = True
+        _litellm.set_verbose = False
+    except Exception:  # noqa: BLE001 - best-effort noise suppression
+        pass
+
+    from headroom.providers.agy import build_agy_env
+    from headroom.proxy.agy_ca import build_combined_bundle, ensure_root_ca
+    from headroom.proxy.agy_terminator import DEFAULT_ALLOWLIST
+
+    allowlist = DEFAULT_ALLOWLIST
+
+    ca_key, ca_cert, _key_path, _cert_path = ensure_root_ca()
+    bundle_path = build_combined_bundle()
+
+    # Capture the corporate HTTPS_PROXY (if any) BEFORE building the child env,
+    # for transparency only.  Chaining itself needs no plumbing: build_agy_env
+    # returns a copy and never mutates os.environ, so the terminator (running in
+    # THIS parent process) still reads the original corporate
+    # os.environ["HTTPS_PROXY"] for non-allowlisted CONNECT chaining.
+    corp_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+
+    # ------------------------------------------------------------------
+    # Observability: fail-open warning + session compression summary.
+    # Ref: headroom-30y.15
+    # ------------------------------------------------------------------
+    from headroom.providers.agy.stats import (
+        AgySessionStats,
+        FailOpenWarnHandler,
+        install_fail_open_handler,
+        remove_fail_open_handler,
+    )
+
+    session_stats = AgySessionStats()
+    fail_open_handler: FailOpenWarnHandler | None = None
+
+    servers: _AgyServers | None = None
+    old_sigint: Any = None
+    old_sigterm: Any = None
+    retrieve_registered = False
+
+    # Shared Headroom proxy (default :8787). Its savings-inbox DRAIN loop
+    # (_drain_agy_savings_periodically) is what turns the savings.d events
+    # emitted below into the dashboard's $/token hero number and this
+    # project's row. Set up the same way every other wrap subcommand does
+    # (_make_cleanup / _register_proxy_client) but WITHOUT a second
+    # signal.signal(SIGTERM, ...): agy installs its own SIGTERM handler
+    # (_agy_sigterm below), which calls cleanup() itself, and the `finally`
+    # block below also calls cleanup() — together they cover both the
+    # signal-exit and normal-exit paths without clobbering agy's handler.
+    proxy_holder: list[subprocess.Popen | None] = [None]
+    cleanup = _make_cleanup(proxy_holder, port)
+    _register_proxy_client(port)
+
+    # Cross-process savings: redirect THIS process's in-proxy funnel writes to a
+    # throwaway dir and turn on the inbox emit marker. agy runs its dispatch app
+    # in this process, so the funnel's durable writes (savings ledger,
+    # SavingsTracker, OTEL) must go nowhere durable — the shared proxy replays
+    # each emitted inbox event through its OWN funnel and is the sole writer of
+    # shared state. The tmp dir + env vars live only for this agy session.
+    agy_savings_tmp: str | None = None
+    try:
+        # MUST run before the os.environ mutations below: when no proxy is
+        # already running, _ensure_proxy -> _start_proxy snapshots
+        # os.environ.copy() to launch the shared proxy subprocess. If this ran
+        # after HEADROOM_AGY_INBOX_EMIT / HEADROOM_SAVINGS_PATH /
+        # HEADROOM_SAVINGS_EVENTS_PATH / HEADROOM_OTEL_METRICS_ENABLED were
+        # set, the shared durable proxy would inherit them: double-count its
+        # own traffic, redirect its durable savings ledger into this session's
+        # throwaway tmp dir (deleted on agy exit), and disable OTEL for every
+        # client sharing the proxy. agy uses its own MITM env (build_agy_env
+        # below) rather than a base-URL redirect, so unlike the other wrap
+        # subcommands we do NOT call _push_runtime_env here.
+        # _ensure_proxy returns (proxy, actual_port); agy addresses the shared
+        # proxy by the requested `port` throughout (_make_cleanup /
+        # _register_proxy_client above), so the bound port is unused here — but
+        # proxy_holder[0] MUST be the Popen, not the tuple, for cleanup to reap
+        # an agy-started proxy.
+        proxy_holder[0], _actual_port = _ensure_proxy(port, no_proxy, agent_type="agy")
+
+        agy_savings_tmp = tempfile.mkdtemp(prefix="headroom-agy-savings-")
+        os.environ["HEADROOM_SAVINGS_PATH"] = str(Path(agy_savings_tmp) / "proxy_savings.json")
+        os.environ["HEADROOM_SAVINGS_EVENTS_PATH"] = str(
+            Path(agy_savings_tmp) / "savings_events.jsonl"
+        )
+        os.environ["HEADROOM_OTEL_METRICS_ENABLED"] = "0"
+        os.environ["HEADROOM_AGY_INBOX_EMIT"] = "1"
+        # Snapshot compression-store baseline and install the fail-open warning
+        # handler BEFORE the dispatch thread starts so we catch every event.
+        session_stats.snapshot_start()
+        fail_open_handler = install_fail_open_handler()
+
+        agy_project = _project_name_from_cwd()
+        servers = _start_agy_servers(ca_key, ca_cert, start_retrieve=True, project=agy_project)
+        term_host, term_port = servers.terminator.address
+        terminator_url = f"http://{term_host}:{term_port}"
+
+        env = build_agy_env(
+            terminator_url=terminator_url,
+            bundle_path=bundle_path,
+            base_env=os.environ.copy(),
+        )
+
+        env_vars_display = [
+            f"HTTPS_PROXY={terminator_url}  (agy CONNECT terminator)",
+            f"HTTP_PROXY={terminator_url}",
+            "NO_PROXY=127.0.0.1,localhost",
+            f"SSL_CERT_FILE={bundle_path}",
+            f"CACERT_PATH={bundle_path}",
+            f"NODE_EXTRA_CA_CERTS={bundle_path}",
+        ]
+        if corp_proxy:
+            env_vars_display.append(f"chaining non-allowlisted CONNECTs via {corp_proxy}")
+
+        click.echo()
+        click.echo("  ╔═══════════════════════════════════════════════╗")
+        click.echo("  ║           HEADROOM WRAP: AGY                  ║")
+        click.echo("  ╚═══════════════════════════════════════════════╝")
+        click.echo()
+        click.echo("  ┌─ TLS INTERCEPTION DISCLOSURE ──────────────────")
+        for _intercepted_host in sorted(allowlist):
+            click.echo(f"  │  Headroom terminates TLS for: {_intercepted_host}")
+        click.echo("  │  A process-local CA mints leaf certificates for those hosts.")
+        click.echo("  │  This CA is NEVER added to the OS trust store.")
+        click.echo("  │  Compression and context injection are applied on the decrypted stream.")
+        click.echo("  │  Leaf private keys: held in anonymous process memory (memfd) on Linux;")
+        click.echo("  │    on other platforms a 0600 temp file is written and unlinked immediately")
+        click.echo("  │    after load (permissions asserted). Keys are never trust-stored.")
+        click.echo("  │")
+        click.echo("  │  To opt out of interception:  headroom wrap agy --no-intercept")
+        click.echo("  │  To revert all changes:        headroom unwrap agy")
+        click.echo("  └────────────────────────────────────────────────")
+        click.echo()
+        click.echo("  Launching agy (traffic routed through Headroom MITM transport)...")
+        for var in env_vars_display:
+            click.echo(f"  {var}")
+        if agy_args:
+            click.echo(f"  Extra args: {' '.join(agy_args)}")
+        _print_telemetry_notice()
+        click.echo()
+
+        # ------------------------------------------------------------------
+        # MCP tooling wiring is gated on a runtime agy-version preflight: older
+        # or unknown agy binaries hang on ANY mcpServers entry when launched in
+        # print mode.  Interactive mode is unaffected and is always wired.
+        # ------------------------------------------------------------------
+        mcp_allowed = _agy_print_mode_mcp_allowed(agy_args, agy_bin)
+        if mcp_allowed:
+            # ------------------------------------------------------------------
+            # MCP tooling is wired identically in print and interactive mode. agy
+            # 1.0.16 no longer hangs on MCP servers in --print mode (re-verified
+            # 2026-07-05: lean-ctx + tokensave + serena all answer in ~4s), so agy
+            # gets first-class MCP parity in every mode, like any other client.
+            # ------------------------------------------------------------------
+
+            # ------------------------------------------------------------------
+            # Context-tool and instruction-surface setup (idempotent, best-effort).
+            # ------------------------------------------------------------------
+            gemini_md = Path.home() / ".gemini" / "GEMINI.md"
+            if _selected_context_tool() == _CONTEXT_TOOL_LEAN_CTX:
+                # lean-ctx context tool: register an explicit MCP entry and
+                # smoke-verify the handshake (verify-then-remove on failure).
+                # Wired in ALL modes — agy 1.0.16 no longer hangs on MCP in print
+                # mode, so agy gets first-class MCP parity in print and interactive.
+                _setup_lean_ctx_mcp_agy(AgyRegistrar(), verbose=False)
+            elif shutil.which("rtk") is not None:
+                # RTK path: only inject context instructions when rtk is installed —
+                # otherwise GEMINI.md would tell agy to use a missing tool.
+                _inject_gemini_md_block(gemini_md, RTK_INSTRUCTIONS_BLOCK, verbose=False)
+            else:
+                click.echo(
+                    "  Context tool: rtk not found — skipping context instructions "
+                    "(agy still works transport-only)."
+                )
+
+            # ------------------------------------------------------------------
+            # Code-graph compressor — tokensave PRIMARY, Serena BACKUP.
+            # tokensave and Serena are uvx/binary stdio servers with no proxy-URL/
+            # ephemeral-port dependency, so they persist cleanly in mcp_config.json
+            # (unlike the Headroom retrieve tool).  context="ide-assistant":
+            # Antigravity is an IDE agent and this is Serena's generic IDE profile.
+            # tokensave becomes the primary compressor when available; Serena is
+            # only registered as the backup when tokensave is unavailable (unless
+            # --no-serena).  Wired in ALL modes (print + interactive) — agy 1.0.16
+            # no longer hangs on MCP servers in print mode (re-verified 2026-07-05).
+            # ------------------------------------------------------------------
+            tokensave_ok = False
+            if no_tokensave:
+                _disable_tokensave_mcp(AgyRegistrar(), verbose=False)
+            else:
+                tokensave_ok = _setup_tokensave_mcp_agy(AgyRegistrar(), verbose=False)
+            if not tokensave_ok and not no_serena:
+                _setup_serena_mcp(
+                    AgyRegistrar(), context="ide-assistant", verbose=False, force=True
+                )
+            else:
+                _disable_serena_mcp(
+                    AgyRegistrar(),
+                    verbose=False,
+                    reason=(
+                        "--no-serena"
+                        if no_serena
+                        else "tokensave is now the primary code-graph compressor"
+                    ),
+                )
+
+            # ------------------------------------------------------------------
+            # Code graph MCP — OPT-IN, INTERACTIVE ONLY.
+            # codebase-memory-mcp is a persistent stdio MCP server that gives the
+            # agent query access to a code knowledge graph (call chains, symbol
+            # definitions, impact analysis).  Registered via AgyRegistrar behind a
+            # ``--code-graph`` flag (default OFF); skipped in print mode because
+            # any MCP server hangs agy in print mode (headroom-30y.18).
+            # On first use the cbm binary is resolved/ensured by _setup_code_graph;
+            # we re-use get_cbm_path() here for the registration-only path so we
+            # do NOT index the project a second time (that is already done by
+            # _setup_code_graph).
+            # ------------------------------------------------------------------
+            if code_graph:
+                from headroom.graph.installer import ensure_cbm, get_cbm_path
+                from headroom.mcp_registry import build_codegraph_spec
+                from headroom.mcp_registry.base import RegisterStatus
+                from headroom.mcp_registry.ledger import record_install as _record_install
+
+                cbm_path = get_cbm_path()
+                if not cbm_path:
+                    click.echo("  Code graph: downloading codebase-memory-mcp...")
+                    cbm_path = ensure_cbm()
+                    if cbm_path:
+                        click.echo(f"  Code graph: installed at {cbm_path}")
+                    else:
+                        click.echo(
+                            "  Code graph: download failed — skipping code-graph MCP for agy"
+                        )
+
+                if cbm_path:
+                    cbm_bin = str(cbm_path)
+                    cbm_spec = build_codegraph_spec(cbm_bin)
+                    cbm_result = AgyRegistrar().register_server(cbm_spec, force=True)
+                    if cbm_result.status in (RegisterStatus.REGISTERED, RegisterStatus.ALREADY):
+                        if _smoke_verify_mcp_handshake(
+                            cbm_spec.command, list(cbm_spec.args), dict(cbm_spec.env)
+                        ):
+                            if cbm_result.status == RegisterStatus.REGISTERED:
+                                _record_install(AgyRegistrar().name, cbm_spec)
+                            click.echo(
+                                "  Code graph: codebase-memory-mcp MCP wired (handshake verified)."
+                            )
+                            # Also index the project (idempotent).
+                            _setup_code_graph(verbose=False)
+                        else:
+                            AgyRegistrar().unregister_server(_CBM_MCP_SERVER_NAME)
+                            click.echo(
+                                "  Code graph: codebase-memory-mcp MCP failed handshake — "
+                                "entry removed (agy left without code graph)."
+                            )
+                    else:
+                        click.echo(
+                            f"  Code graph: could not register codebase-memory-mcp MCP — "
+                            f"skipping ({cbm_result.detail})."
+                        )
+
+            # ------------------------------------------------------------------
+            # Headroom retrieve MCP.  The retrieve tool is an ``headroom mcp serve``
+            # stdio child that resolves ``[Retrieve more: hash=…]`` markers from the
+            # shared on-disk CCR store.  It is registered PERSISTENTLY and recorded
+            # in the install ledger (like codebase-memory-mcp / Serena) so agy can
+            # cache and expose it across sessions — it is NOT reverted on teardown.
+            # Wired in all print-mode-capable agy versions.
+            # ------------------------------------------------------------------
+            if servers is not None and servers.retrieve_port is not None:
+                retrieve_registered = _setup_headroom_retrieve_mcp_agy(
+                    AgyRegistrar(), verbose=False
+                )
+            else:
+                # No in-process servers this run.  Leave a ledger-recorded
+                # PERSISTENT headroom entry in place (it resolves from the on-disk
+                # store, no live port required); only purge a stale NON-ledgered
+                # entry left by a pre-persistent SIGKILLed session (its ephemeral
+                # proxy URL is dead).  Idempotent — no-op when absent.
+                from headroom.mcp_registry.ledger import headroom_installed_matching
+
+                _reg = AgyRegistrar()
+                if not headroom_installed_matching(_reg.name, _reg.get_server("headroom")):
+                    _reg.unregister_server("headroom")
+
+        else:
+            # Print-mode MCP preflight failed: agy is older than
+            # _AGY_PRINT_MODE_MCP_MIN_VERSION, or its version could not be
+            # detected.  Actively PURGE any MCP entries a prior interactive run
+            # may have persisted in mcp_config.json -- merely skipping
+            # registration is not enough, since a stale entry from an earlier
+            # run would still hang this print-mode invocation.  All calls below
+            # are idempotent (no-op when the entry is already absent).  The
+            # retrieve LISTENER started above still runs (harmless idle loopback)
+            # -- only MCP *registration* is suppressed here.
+            _purge_agy_mcp_entries(AgyRegistrar())
+            _detected_version = _detect_agy_version(agy_bin)
+            _detected_str = (
+                ".".join(str(part) for part in _detected_version)
+                if _detected_version is not None
+                else "unknown"
+            )
+            click.echo(
+                f"  MCP tooling: suppressed (detected agy version {_detected_str}; "
+                "print-mode MCP requires agy >= "
+                f"{'.'.join(str(p) for p in _AGY_PRINT_MODE_MCP_MIN_VERSION)}). "
+                "agy still runs transport-only.",
+                err=True,
+            )
+
+        # WU1 (headroom-37g.1): tell the in-process Cloud Code Assist handler
+        # whether the CCR retrieve listener is wired for this run. The handler
+        # ships recoverable functionResponse hash markers only when retrieval can
+        # resolve them; otherwise it falls back to lossless. The dispatch app
+        # runs in THIS process, so the signal must live in os.environ (mirrors
+        # HEADROOM_AGY_INBOX_EMIT above); also mirror it into the child env.
+        # HEADROOM_AGY_FR_MODE is already inherited via os.environ.copy() above.
+        #
+        # WIRED requires POSITIVE agy exposure, not just a successful handshake:
+        # the handshake proves wrap can spawn the child, but agy only surfaces
+        # tools it has cached, so a registered-then-reverted entry is rejected as
+        # "Unknown tool: headroom_retrieve". Gate WIRED on the exposure signal so
+        # ccr never ships unrecoverable markers on a false-positive handshake.
+        retrieve_exposed = retrieve_registered and _agy_exposes_retrieve_tool(AgyRegistrar())
+        if retrieve_exposed:
+            os.environ["HEADROOM_AGY_RETRIEVE_WIRED"] = "1"
+            env["HEADROOM_AGY_RETRIEVE_WIRED"] = "1"
+        else:
+            os.environ.pop("HEADROOM_AGY_RETRIEVE_WIRED", None)
+            env.pop("HEADROOM_AGY_RETRIEVE_WIRED", None)
+
+        _maybe_warn_agy_ccr_downgrade(retrieve_exposed)
+
+        # ------------------------------------------------------------------
+        # Install signal handlers so the terminator/dispatch are always torn
+        # down on SIGINT/SIGTERM (mirrors _launch_tool's signal-safe teardown
+        # without registering agy as a proxy client).  SIGINT is ignored here
+        # so agy itself owns Ctrl-C; SIGTERM stops our servers then exits via
+        # SystemExit(143) so the finally below also runs.
+        def _agy_sigterm(_signum: int | None = None, _frame: Any = None) -> None:
+            # retrieve + code_graph are persistent ledger-recorded entries (like
+            # Serena), NOT reverted on exit — they resolve from the on-disk store
+            # and must survive so agy can cache/expose them next session.
+            _stop_agy_servers(servers)
+            cleanup()
+            # Flush compression summary on kill (idempotent — won't double-print
+            # if the finally below also runs). Ref: headroom-30y.15
+            session_stats.print_summary(fail_open_handler)
+            remove_fail_open_handler(fail_open_handler)
+            raise SystemExit(143)
+
+        old_sigint = signal.signal(signal.SIGINT, _ignore_child_sigint)
+        old_sigterm = signal.signal(signal.SIGTERM, _agy_sigterm)
+
+        result = subprocess.run([agy_bin, *agy_args], env=env)
+        raise SystemExit(result.returncode)
+
+    except SystemExit:
+        raise
+    except Exception as e:
+        # Walk the exception chain to surface a specific port-in-use message.
+        cause: BaseException | None = e
+        _port_in_use = False
+        while cause is not None:
+            if isinstance(cause, OSError) and cause.errno == errno.EADDRINUSE:
+                _port_in_use = True
+                break
+            cause = cause.__cause__ or cause.__context__
+        if _port_in_use:
+            click.echo(
+                f"Error: a required proxy port is already in use ({cause}).  "
+                "Stop the conflicting process and retry.",
+                err=True,
+            )
+        else:
+            click.echo(f"Error: agy MITM transport failed to start: {e}", err=True)
+        raise SystemExit(1) from e
+    finally:
+        # The headroom retrieve entry is PERSISTENT (ledger-recorded, resolves
+        # from the on-disk store) — like Serena/CBM it is intentionally NOT
+        # reverted here so agy can cache and expose it on the next session.
+        # Restore prior signal handlers so they don't leak into the click process.
+        if old_sigint is not None:
+            signal.signal(signal.SIGINT, old_sigint)
+        if old_sigterm is not None:
+            signal.signal(signal.SIGTERM, old_sigterm)
+        _stop_agy_servers(servers)
+        cleanup()
+        # Print session compression summary (idempotent — won't double-print
+        # if _agy_sigterm already flushed it). Remove the logging handler so
+        # it doesn't leak into the click process. Ref: headroom-30y.15
+        session_stats.print_summary(fail_open_handler)
+        remove_fail_open_handler(fail_open_handler)
+        # Clean up the throwaway savings dir (the env vars die with the process,
+        # which is fine — nothing else in this process consumes them).
+        if agy_savings_tmp is not None:
+            shutil.rmtree(agy_savings_tmp, ignore_errors=True)
+
+
+# =============================================================================
+# unwrap agy
+# =============================================================================
+
+
+@unwrap.command("agy")
+def unwrap_agy() -> None:
+    """Undo ``headroom wrap agy`` — revert any persistent agy configuration changes.
+
+    Removes the Headroom block from GEMINI.md and unregisters any MCP server
+    entry that Headroom registered in the Antigravity CLI config.  All user
+    content outside Headroom-managed markers is preserved.
+    """
+    from headroom.mcp_registry.agy import AgyRegistrar
+
+    click.echo()
+    click.echo("  ╔═══════════════════════════════════════════════╗")
+    click.echo("  ║         HEADROOM UNWRAP: AGY                  ║")
+    click.echo("  ╚═══════════════════════════════════════════════╝")
+    click.echo()
+
+    # 1. Remove headroom block from GEMINI.md.
+    gemini_md = Path.home() / ".gemini" / "GEMINI.md"
+    if _remove_gemini_md_block(gemini_md, verbose=True):
+        click.echo("  headroom block removed from GEMINI.md")
+    else:
+        click.echo("  GEMINI.md: no headroom block found (already clean)")
+
+    # 2. Remove the headroom MCP retrieve entry only if the ledger proves
+    #    'wrap agy' installed it. It is now a persistent, ledger-recorded server,
+    #    so cooperative uninstall is ledger-gated like Serena/lean-ctx/CBM.
+    #    BEHAVIOR: a 'headroom mcp install' fleet entry is NOT ledger-recorded by
+    #    that path, so unwrap now leaves it in place (respecting the deliberate
+    #    fleet-wide install) instead of clobbering it. A stable persistent entry
+    #    is harmless to leave — it resolves from the on-disk store, never hangs.
+    agy_reg = AgyRegistrar()
+    retrieve_status = _remove_headroom_installed_retrieve_mcp(agy_reg)
+    if retrieve_status == "removed":
+        click.echo("  Removed Headroom MCP retrieve tool from agy.")
+    elif retrieve_status == "failed":
+        click.echo("  Headroom MCP retrieve tool matched Headroom ledger but could not be removed.")
+    else:  # not_headroom_owned (absent, or a user/fleet-managed entry left untouched)
+        click.echo("  Headroom MCP retrieve tool left as-is (not 'wrap agy'-installed).")
+
+    # 3. Remove Serena MCP only if the ledger proves Headroom installed it;
+    #    a user-managed 'serena' entry is left untouched.
+    serena_status = _remove_headroom_installed_serena_mcp(agy_reg)
+    if serena_status == "removed":
+        click.echo("  Removed Headroom-installed Serena MCP server from agy.")
+    elif serena_status == "failed":
+        click.echo("  Serena MCP server matched Headroom ledger but could not be removed.")
+    elif serena_status == "not_headroom_owned":
+        click.echo("  Kept user-managed Serena MCP server (not Headroom-owned).")
+
+    # 4. Remove the lean-ctx context-tool MCP entry only if the ledger proves
+    #    Headroom installed it (preserves a user's own lean-ctx MCP entry).
+    lean_ctx_status = _remove_headroom_installed_lean_ctx_mcp(agy_reg)
+    if lean_ctx_status == "removed":
+        click.echo("  Removed Headroom-installed lean-ctx context-tool MCP server from agy.")
+    elif lean_ctx_status == "failed":
+        click.echo("  lean-ctx MCP server matched Headroom ledger but could not be removed.")
+    else:  # not_headroom_owned (absent, or a user-managed entry left untouched)
+        click.echo("  lean-ctx MCP server left as-is (not Headroom-installed).")
+
+    # 5. Remove codebase-memory-mcp only if the ledger proves Headroom
+    #    installed it via --code-graph (user-managed entries are left untouched).
+    cbm_status = _remove_headroom_installed_cbm_mcp(agy_reg)
+    if cbm_status == "removed":
+        click.echo("  Removed Headroom-installed codebase-memory-mcp MCP server from agy.")
+    elif cbm_status == "failed":
+        click.echo("  codebase-memory-mcp matched Headroom ledger but could not be removed.")
+    elif cbm_status == "not_headroom_owned":
+        click.echo("  codebase-memory-mcp: not Headroom-owned — left in place.")
+
+    # 6. Remove the tokensave code-graph MCP only if the ledger proves Headroom
+    #    installed it as the primary compressor (user-managed entries untouched).
+    tokensave_status = _remove_headroom_installed_tokensave_mcp(agy_reg)
+    if tokensave_status == "removed":
+        click.echo("  Removed Headroom-installed tokensave MCP server from agy.")
+    elif tokensave_status == "failed":
+        click.echo("  tokensave MCP server matched Headroom ledger but could not be removed.")
+    elif tokensave_status == "not_headroom_owned":
+        click.echo("  tokensave MCP server left as-is (not Headroom-installed).")
+
+    click.echo()
+    click.echo("✓ agy headroom configuration reverted.")
     click.echo()

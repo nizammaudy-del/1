@@ -1709,9 +1709,6 @@ class HeadroomProxy(
         The real implementation lives in ``outcome.py`` as a free function so
         test dummies and provider mixins can call it without inheriting from
         ``HeadroomProxy``.
-
-        See ``docs/superpowers/specs/P0-proxy-pipeline-audit.md`` for the
-        divergence catalog this funnel collapses.
         """
         from headroom.proxy.outcome import emit_request_outcome
 
@@ -1949,6 +1946,24 @@ async def _log_toin_stats_periodically(interval_seconds: int = 300) -> None:
             logger.debug("Failed to log TOIN stats: %s", e)
 
 
+async def _drain_agy_savings_periodically(metrics: Any, interval_seconds: int = 5) -> None:
+    """Background task: drain the agy cross-process savings inbox on a timer.
+
+    Each agy process drops per-request savings events into a canonical inbox;
+    this replays them through the shared proxy's own ``record_request`` funnel so
+    they land on the dashboard, counted once. Best-effort — a drain error never
+    crashes the loop (``drain_inbox`` also never raises out on its own).
+    """
+    from headroom.proxy import agy_savings_inbox
+
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await agy_savings_inbox.drain_inbox(metrics)
+        except Exception as e:  # noqa: BLE001 - never let a drain error kill the loop
+            logger.debug("Failed to drain agy savings inbox: %s", e)
+
+
 def _register_memory_components(proxy: HeadroomProxy, tracker: MemoryTracker) -> None:
     """Register all memory-tracked components with the tracker.
 
@@ -2163,6 +2178,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         app.state.startup_error = None
         await initialize_context_tool_session_baseline()
 
+        agy_drain_task: asyncio.Task[None] | None = None
         try:
             try:
                 previous_handler = _install_loop_exception_handler()
@@ -2170,6 +2186,10 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 await proxy.startup()
                 if config.periodic_toin_stats_enabled:
                     asyncio.create_task(_log_toin_stats_periodically())
+                # Periodically drain the agy cross-process savings inbox so
+                # agy sessions' savings surface on the shared dashboard.
+                # Tracked so it is cancelled on shutdown (no leaked task).
+                agy_drain_task = asyncio.create_task(_drain_agy_savings_periodically(proxy.metrics))
                 if proxy.usage_reporter:
                     await proxy.usage_reporter.start(proxy)
                 if proxy.traffic_learner:
@@ -2207,6 +2227,11 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
             app.state.ready = False
             # Shutdown
+            # Cancel the agy savings-drain loop so it does not leak past shutdown.
+            if agy_drain_task is not None:
+                agy_drain_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await agy_drain_task
             if _cc_reconciler is not None:
                 await _cc_reconciler.stop()
             if _beacon_is_owner[0]:
@@ -3619,6 +3644,15 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         only for loopback callers — the local dashboard. Network callers still
         get the aggregate counters but never the per-request metadata.
         """
+        # Opportunistically drain the agy cross-process savings inbox so the
+        # dashboard reflects any pending agy events promptly. Best-effort.
+        try:
+            from headroom.proxy import agy_savings_inbox
+
+            await agy_savings_inbox.drain_inbox(proxy.metrics)
+        except Exception:  # noqa: BLE001 - never let a drain error break /stats
+            pass
+
         include_sensitive = _request_is_loopback(request)
         if cached:
             payload = dict(await _get_cached_stats_payload())

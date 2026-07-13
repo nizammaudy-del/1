@@ -1,11 +1,10 @@
 """``RequestOutcome``: the canonical value type for "what happened during
 one completed proxy request."
 
-Per the P0 audit (``docs/superpowers/specs/P0-proxy-pipeline-audit.md``),
-18 ``metrics.record_request`` call sites across four handler files
-disagreed on argument shape — 9 of 18 omitted ``cached=``, 7 of 18
-omitted ``attempted_input_tokens=``, only 4 sites emitted a structured
-PERF log at all. This module is the structural fix: every handler
+An earlier audit found that 18 ``metrics.record_request`` call sites across
+four handler files disagreed on argument shape — 9 of 18 omitted ``cached=``,
+7 of 18 omitted ``attempted_input_tokens=``, only 4 sites emitted a
+structured PERF log at all. This module is the structural fix: every handler
 converges on building a :class:`RequestOutcome` at end-of-request and
 hands it to :func:`emit_request_outcome` (also exposed as
 :meth:`HeadroomProxy._record_request_outcome`), which owns the four
@@ -391,6 +390,38 @@ async def emit_request_outcome(handler: Any, outcome: RequestOutcome) -> None:
         project=project,
         client=outcome.client,
     )
+
+    # 1b. agy cross-process emit (best-effort, agy process only). When agy runs
+    #     as a separate process from the shared proxy, this drops one inbox
+    #     event carrying the SAME funnel kwargs; the shared proxy drains and
+    #     replays it through its own record_request so the savings land on the
+    #     shared dashboard, counted once. Gated by a marker env var the shared
+    #     proxy never sets, so it never emits. Never raises into the request.
+    from headroom.proxy import agy_savings_inbox
+
+    if agy_savings_inbox.agy_emit_enabled():
+        try:
+            agy_savings_inbox.emit_event(
+                provider=outcome.provider,
+                model=outcome.model,
+                input_tokens=outcome.optimized_tokens,
+                output_tokens=outcome.output_tokens,
+                tokens_saved=outcome.tokens_saved,
+                latency_ms=outcome.total_latency_ms,
+                cached=outcome.cache_hit,
+                overhead_ms=outcome.overhead_ms,
+                ttfb_ms=outcome.ttfb_ms,
+                cache_read_tokens=outcome.cache_read_tokens,
+                cache_write_tokens=outcome.cache_write_tokens,
+                cache_write_5m_tokens=outcome.cache_write_5m_tokens,
+                cache_write_1h_tokens=outcome.cache_write_1h_tokens,
+                uncached_input_tokens=outcome.uncached_input_tokens,
+                attempted_input_tokens=outcome.attempted_input_tokens,
+                project=project,
+                client=outcome.client,
+            )
+        except Exception:  # noqa: BLE001 - best-effort, never break the response
+            pass
 
     # 2. Cost tracker (optional).
     cost_tracker = getattr(handler, "cost_tracker", None)

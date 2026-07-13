@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 from headroom.install.runtime import resolve_headroom_command
 
+from .agy import AgyRegistrar
 from .base import MCPRegistrar, RegisterResult, RegisterStatus, ServerSpec
 from .claude import ClaudeRegistrar
 from .codex import CodexRegistrar
@@ -20,7 +21,7 @@ def get_all_registrars() -> list[MCPRegistrar]:
 
     The list grows as we add adapters for Cursor, Continue, Cline, etc.
     """
-    return [ClaudeRegistrar(), CodexRegistrar(), OpencodeRegistrar()]
+    return [ClaudeRegistrar(), CodexRegistrar(), AgyRegistrar(), OpencodeRegistrar()]
 
 
 def build_headroom_spec(proxy_url: str = DEFAULT_PROXY_URL) -> ServerSpec:
@@ -38,6 +39,25 @@ def build_headroom_spec(proxy_url: str = DEFAULT_PROXY_URL) -> ServerSpec:
         command=command[0],
         args=(*command[1:], "mcp", "serve"),
         env=env,
+    )
+
+
+def build_lean_ctx_spec(lean_ctx_path: str, data_dir: str) -> ServerSpec:
+    """Construct the canonical lean-ctx context-tool MCP server spec.
+
+    ``lean-ctx init --agent antigravity-cli`` writes a *bare* entry
+    (``command: lean-ctx`` with no ``args``).  Bare ``lean-ctx`` does run as a
+    stdio MCP server, but we author the spec explicitly here — with the
+    ``mcp`` subcommand and an explicit ``LEAN_CTX_DATA_DIR`` — so the
+    registered entry is unambiguous and reproducible rather than dependent on
+    lean-ctx's init output.  ``data_dir`` selects the lean-ctx data directory
+    (which carries the ``tool_profile``).
+    """
+    return ServerSpec(
+        name="lean-ctx",
+        command=lean_ctx_path,
+        args=("mcp",),
+        env={"LEAN_CTX_DATA_DIR": data_dir},
     )
 
 
@@ -84,6 +104,25 @@ def build_tokensave_spec(binary: str = "tokensave") -> ServerSpec:
         name="tokensave",
         command=binary,
         args=("serve",),
+    )
+
+
+def build_codegraph_spec(cbm_bin: str) -> ServerSpec:
+    """Construct the canonical codebase-memory-mcp server spec for agy.
+
+    ``command`` is the resolved cbm binary path; no extra args are needed
+    (the binary exposes a stdio MCP server when invoked bare, matching how
+    ``_register_cbm_mcp_server`` invokes it via ``claude mcp add <name> -- <bin>``).
+
+    The server name ``"codebase-memory-mcp"`` matches the constant
+    ``_CBM_MCP_SERVER_NAME`` in ``headroom.cli.wrap``; kept here as a literal
+    to avoid a circular import (wrap.py imports from mcp_registry at call time).
+    """
+    return ServerSpec(
+        name="codebase-memory-mcp",
+        command=cbm_bin,
+        args=(),
+        env={},
     )
 
 

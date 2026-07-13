@@ -31,6 +31,9 @@ from headroom.providers.proxy_targets import (
     api_target as _api_target,
 )
 from headroom.providers.proxy_targets import (
+    cloudcode_host_base as _cloudcode_host_base,
+)
+from headroom.providers.proxy_targets import (
     select_passthrough_base_url as _select_passthrough_base_url,
 )
 from headroom.providers.proxy_targets import (
@@ -456,10 +459,12 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
         normalized_cloudcode_path = normalize_cloudcode_passthrough_path(path)
         if normalized_cloudcode_path is not None:
             normalize_request_path(request, normalized_cloudcode_path)
+            host = request.headers.get("host", "")
+            cloudcode_base = _cloudcode_host_base(host) or _api_target(proxy, "cloudcode")
 
             return await proxy.handle_passthrough(
                 request,
-                _api_target(proxy, "cloudcode"),
+                cloudcode_base,
             )
 
         return await proxy.handle_passthrough(
