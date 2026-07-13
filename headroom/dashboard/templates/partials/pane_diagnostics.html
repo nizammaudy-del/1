@@ -1,0 +1,102 @@
+
+        <!-- Pane: Diagnostics -->
+        <section x-show="paneVisible('diagnostics')" class="mb-6" :class="panes.diagnostics ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('diagnostics')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="{{help.diagnostics.diagnostics.title}}" data-help="{{help.diagnostics.diagnostics.body}}">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Diagnostics</span>
+            </button>
+            <div x-show="!panes.diagnostics">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <!-- Deployments -->
+                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="{{help.diagnostics.local_install_profiles.title}}" data-help="{{help.diagnostics.local_install_profiles.body}}">
+                        <div class="text-sm font-medium text-gray-300 mb-1">Local install profiles (this host)</div>
+                        <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/admin/deployments</span></div>
+                        <template x-if="diagnosticsDeployments.length > 0">
+                            <div class="space-y-2">
+                                <template x-for="d in diagnosticsDeployments" :key="d.profile">
+                                    <div class="flex items-center justify-between text-sm border-t border-border/40 pt-2 first:border-t-0 first:pt-0">
+                                        <div>
+                                            <div class="text-gray-200 font-mono" x-text="d.profile"></div>
+                                            <div class="text-xs text-gray-500" x-text="d.updated_at || 'unknown time'"></div>
+                                        </div>
+                                        <div class="text-xs text-gray-400" x-text="formatNum(d.artifact_count || 0) + ' artifacts'"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                        <template x-if="diagnosticsDeployments.length === 0">
+                            <div class="text-sm text-gray-500 italic">No local install profiles recorded yet.</div>
+                        </template>
+                    </div>
+
+                    <!-- Learn history -->
+                    <div class="bg-surface rounded-lg border border-border p-4">
+                        <div class="flex items-center justify-between mb-1 gap-2">
+                            <div data-help-title="{{help.diagnostics.learn_history.title}}" data-help="{{help.diagnostics.learn_history.body}}">
+                                <div class="text-sm font-medium text-gray-300">Learn history</div>
+                            </div>
+                            <button type="button" @click="triggerLearnRun()" :disabled="learnRunPending"
+                                    class="shrink-0 text-xs px-2 py-1 rounded-md border border-border bg-card-alt text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    data-help-title="{{help.diagnostics.run_learn.title}}" data-help="{{help.diagnostics.run_learn.body}}">
+                                <span x-text="learnRunPending ? 'Starting…' : 'Run learn --apply'"></span>
+                            </button>
+                        </div>
+                        <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/learn/history</span></div>
+                        <template x-if="diagnosticsLearnHistory.length > 0">
+                            <div class="space-y-2 max-h-64 overflow-y-auto">
+                                <template x-for="(run, idx) in diagnosticsLearnHistory" :key="idx">
+                                    <div class="text-sm border-t border-border/40 pt-2 first:border-t-0 first:pt-0">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-gray-200" x-text="run.agent || 'unknown agent'"></span>
+                                            <span class="text-xs" :class="run.applied ? 'text-emerald-400' : 'text-gray-500'"
+                                                  x-text="run.applied ? 'applied' : 'not applied'"></span>
+                                        </div>
+                                        <div class="text-xs text-gray-500 truncate" x-text="run.project || ''"></div>
+                                        <div class="text-xs text-gray-500">
+                                            <span x-text="formatNum(run.recommendations_count || 0) + ' recommendations'"></span>
+                                            <span class="mx-1 text-gray-700">·</span>
+                                            <span x-text="run.timestamp ? new Date(run.timestamp).toLocaleString() : ''"></span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                        <template x-if="diagnosticsLearnHistory.length === 0">
+                            <div class="text-sm text-gray-500 italic">No learn runs recorded yet. Run <span class="font-mono">headroom learn</span> to populate this.</div>
+                        </template>
+                    </div>
+
+                    <!-- Memory sync -->
+                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="{{help.diagnostics.memory_sync.title}}" data-help="{{help.diagnostics.memory_sync.body}}">
+                        <div class="text-sm font-medium text-gray-300 mb-1">Memory sync</div>
+                        <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/debug/memory/sync</span></div>
+                        <template x-if="(diagnosticsMemorySync.agents || []).length > 0">
+                            <div class="space-y-2">
+                                <template x-for="a in diagnosticsMemorySync.agents" :key="a.name">
+                                    <div class="text-sm border-t border-border/40 pt-2 first:border-t-0 first:pt-0">
+                                        <div class="text-gray-200" x-text="a.name"></div>
+                                        <div class="text-xs text-gray-500">
+                                            <span x-text="'imported ' + formatNum(a.imported_count || 0)"></span>
+                                            <span class="mx-1 text-gray-700">/</span>
+                                            <span x-text="'exported ' + formatNum(a.exported_count || 0)"></span>
+                                            <template x-if="a.last_sync">
+                                                <span>
+                                                    <span class="mx-1 text-gray-700">/</span>
+                                                    <span x-text="'last sync ' + a.last_sync"></span>
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                                <!-- dedup_rate is always null today — sync.py doesn't persist a dedup
+                                     count, so there's nothing honest to show here yet. -->
+                            </div>
+                        </template>
+                        <template x-if="(diagnosticsMemorySync.agents || []).length === 0">
+                            <div class="text-sm text-gray-500 italic">No memory-sync activity recorded yet.</div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </section>

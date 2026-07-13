@@ -1,0 +1,391 @@
+        <template x-if="viewMode === 'history'">
+            <div>
+                <div class="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-300">Historical Proxy Compression</div>
+                        <div class="text-xs text-gray-500">
+                            Durable local savings history from <span class="font-mono">/stats-history</span>
+                        </div>
+                    </div>
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <div class="flex items-center gap-2">
+                            <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
+                                    @click="downloadHistory('json')"
+                                    data-help-title="{{help.history.export_json.title}}" data-help="{{help.history.export_json.body}}">
+                                Export JSON
+                            </button>
+                            <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
+                                    @click="downloadHistory('csv')"
+                                    data-help-title="{{help.history.export_csv.title}}" data-help="{{help.history.export_csv.body}}">
+                                Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <section x-show="paneVisible('historyOverview')" class="mb-6" :class="panes.historyOverview ? 'pane-collapsed' : ''">
+                    <button type="button" @click="togglePane('historyOverview')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                            data-help-title="{{help.history.overview.title}}" data-help="{{help.history.overview.body}}">
+                        <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Overview</span>
+                    </button>
+                    <div x-show="!panes.historyOverview">
+                <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.lifetime_compression_savings.title}}" data-help="{{help.history.lifetime_compression_savings.body}}">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums text-emerald-400"
+                                  x-text="'$' + formatCurrency(historyStats.lifetime?.compression_savings_usd || 0)"></span>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500">
+                            Proxy compression only
+                        </div>
+                    </div>
+
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.lifetime_tokens_saved.title}}" data-help="{{help.history.lifetime_tokens_saved.body}}">Lifetime Tokens Saved <span class="text-gray-600">&#9432;</span></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums text-accent"
+                                  x-text="formatNumber(historyStats.lifetime?.tokens_saved || 0)"></span>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500"
+                             x-text="formatNumber((historyStats.history || []).length) + ' recorded checkpoints'"></div>
+                    </div>
+
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.active_days.title}}" data-help="{{help.history.active_days.body}}">Active Days <span class="text-gray-600">&#9432;</span></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums"
+                                  x-text="formatNumber((historyStats.series?.daily || []).length)"></span>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500" x-text="historyWindowLabel"></div>
+                    </div>
+
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.average_saved_day.title}}" data-help="{{help.history.average_saved_day.body}}">Average Saved / Day <span class="text-gray-600">&#9432;</span></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums"
+                                  x-text="formatNumber(historyAverageTokensPerDay)"></span>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500">Based on persisted daily buckets</div>
+                    </div>
+
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.average_saved_week.title}}" data-help="{{help.history.average_saved_week.body}}">Average Saved / Week <span class="text-gray-600">&#9432;</span></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums"
+                                  x-text="formatNumber(historyAverageTokensPerWeek)"></span>
+                        </div>
+                        <div class="mt-2 text-xs text-gray-500">Based on persisted weekly buckets</div>
+                    </div>
+                </div>
+                    </div>
+                </section>
+
+                <section x-show="paneVisible('historyTrends')" class="mb-6" :class="panes.historyTrends ? 'pane-collapsed' : ''">
+                    <button type="button" @click="togglePane('historyTrends')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                            data-help-title="{{help.history.trends.title}}" data-help="{{help.history.trends.body}}">
+                        <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Trends</span>
+                    </button>
+                    <div x-show="!panes.historyTrends">
+                <template x-if="hasHistoricalData">
+                    <div>
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                            <div class="bg-surface rounded-lg p-4 border border-border lg:col-span-2">
+                                <div class="flex flex-col gap-3 mb-4 lg:flex-row lg:items-center lg:justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-sm font-medium text-gray-300">Historical Savings Trend</span>
+                                        <span class="text-xs text-gray-500 font-mono" x-text="historyTrendLabel"></span>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 self-start lg:self-auto">
+                                        <div class="inline-flex rounded-lg border border-border p-1" style="background: var(--card-alt-bg);"
+                                             data-help-title="{{help.history.granularity.title}}" data-help="{{help.history.granularity.body}}">
+                                            <template x-for="[label, key] in historyGranularityOptions" :key="key">
+                                                <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
+                                                        :class="historyGranularity === key ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
+                                                        @click="historyGranularity = key"
+                                                x-text="label"></button>
+                                            </template>
+                                        </div>
+                                        <div class="inline-flex rounded-lg border border-border p-1" style="background: var(--card-alt-bg);"
+                                             data-help-title="{{help.history.chart_mode.title}}" data-help="{{help.history.chart_mode.body}}">
+                                            <template x-for="[label, key] in historyChartModeOptions" :key="key">
+                                                <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
+                                                        :class="historyChartMode === key ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
+                                                        @click="historyChartMode = key"
+                                                x-text="label"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-gray-500 mb-4"
+                                     x-text="'Showing ' + formatNumber(historySelectedPointCount) + ' ' + historySelectedSeriesLabel.toLowerCase() + ' points'"></div>
+                                <template x-if="historicalTrend.length >= 2">
+                                    <div class="h-48">
+                                        <svg class="w-full h-full" viewBox="0 0 200 64" preserveAspectRatio="none">
+                                            <defs>
+                                                <linearGradient id="history-trend-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                    <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.2"/>
+                                                    <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
+                                                </linearGradient>
+                                            </defs>
+                                            <path :d="historyChartMode === 'tokens' && !historyActiveModel ? getObjectTrendArea(historicalTrend, 'total_tokens_saved') : ''"
+                                                  fill="url(#history-trend-gradient)"></path>
+                                            <path class="trend-line"
+                                                  :d="historyChartMode === 'tokens' && !historyActiveModel ? getObjectTrendLine(historicalTrend, 'total_tokens_saved') : ''"></path>
+                                            <path fill="none" stroke-width="1"
+                                                  :stroke="historyModelColor(0)" :d="historyModelLine(0)"></path>
+                                            <path fill="none" stroke-width="1"
+                                                  :stroke="historyModelColor(1)" :d="historyModelLine(1)"></path>
+                                            <path fill="none" stroke-width="1"
+                                                  :stroke="historyModelColor(2)" :d="historyModelLine(2)"></path>
+                                            <path fill="none" stroke-width="1"
+                                                  :stroke="historyModelColor(3)" :d="historyModelLine(3)"></path>
+                                            <path fill="none" stroke-width="1"
+                                                  :stroke="historyModelColor(4)" :d="historyModelLine(4)"></path>
+                                            <path fill="none" stroke="#22d3ee" stroke-width="1.5"
+                                                  :d="historyCostLine('actual')"></path>
+                                            <path fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="3 2"
+                                                  :d="historyCostLine('expected')"></path>
+                                        </svg>
+                                    </div>
+                                </template>
+                                <template x-if="historicalTrend.length < 2">
+                                    <div class="h-48 flex items-center justify-center text-sm text-gray-500 italic">
+                                        Historical trend data will appear after more saved checkpoints in this granularity.
+                                    </div>
+                                </template>
+                                <div class="flex flex-wrap gap-3 mt-3"
+                                     x-show="historyChartMode === 'tokens' && historyGranularity !== 'history' && historyModelChartSeries.length > 0">
+                                    <template x-for="(series, index) in historyModelChartSeries" :key="series.model">
+                                        <button class="flex items-center gap-1.5 text-xs transition-opacity cursor-pointer"
+                                                :class="historyActiveModel && historyActiveModel !== series.model
+                                                    ? 'text-gray-600 opacity-50'
+                                                    : 'text-gray-400 hover:text-gray-200'"
+                                                @click="toggleHistoryModel(series.model)"
+                                                :title="historySelectedModel === series.model
+                                                    ? 'Show all models'
+                                                    : 'Show only this model'">
+                                            <span class="inline-block w-2 h-2 rounded-full"
+                                                  :style="'background:' + historyModelColor(index)"></span>
+                                            <span :class="historySelectedModel === series.model ? 'underline' : ''"
+                                                  x-text="truncateModel(series.model)"></span>
+                                        </button>
+                                    </template>
+                                </div>
+                                <div class="flex flex-wrap gap-4 mt-3" x-show="historyChartMode === 'cost'">
+                                    <span class="flex items-center gap-1.5 text-xs text-gray-400">
+                                        <span class="inline-block w-3 h-0.5" style="background:#22d3ee"></span>
+                                        Actual cost (with Headroom)
+                                    </span>
+                                    <span class="flex items-center gap-1.5 text-xs text-gray-400">
+                                        <span class="inline-block w-3 h-0.5"
+                                              style="background:repeating-linear-gradient(90deg,#fbbf24 0 4px,transparent 4px 7px)"></span>
+                                        Expected cost (without Headroom)
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="flex items-center justify-between mb-4">
+                                    <span class="text-sm font-medium text-gray-300">Per-Model Breakdown</span>
+                                    <span class="text-xs text-gray-500 font-mono"
+                                          x-text="historyModelSourceSeriesLabel + ' buckets'"></span>
+                                </div>
+                                <template x-if="historyModelBreakdown.length === 0">
+                                    <div class="text-sm text-gray-500 italic">
+                                        Per-model attribution appears for checkpoints recorded after upgrading.
+                                    </div>
+                                </template>
+                                <template x-if="historyModelBreakdown.length > 0">
+                                    <div class="overflow-x-auto">
+                                        <table class="w-full text-sm">
+                                            <thead>
+                                                <tr class="text-xs text-gray-500 text-left">
+                                                    <th class="py-2 pr-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'model', 'asc')" data-help-title="{{help.history.model.title}}" data-help="{{help.history.model.body}}">Model<span x-text="sortIcon('historyModel', 'model')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'tokens_saved')" data-help-title="{{help.history.tokens_saved.title}}" data-help="{{help.history.tokens_saved.body}}">Tokens saved<span x-text="sortIcon('historyModel', 'tokens_saved')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'input_cost_usd')" data-help-title="{{help.history.cost_with_headroom.title}}" data-help="{{help.history.cost_with_headroom.body}}">Cost with Headroom<span x-text="sortIcon('historyModel', 'input_cost_usd')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'expected_cost_usd')" data-help-title="{{help.history.expected_cost_without_headroom.title}}" data-help="{{help.history.expected_cost_without_headroom.body}}">Expected cost without Headroom <span class="text-gray-600">&#9432;</span><span x-text="sortIcon('historyModel', 'expected_cost_usd')"></span></th>
+                                                    <th class="py-2 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'savings_usd')" data-help-title="{{help.history.saved.title}}" data-help="{{help.history.saved.body}}">Saved<span x-text="sortIcon('historyModel', 'savings_usd')"></span></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template x-for="row in historyModelBreakdown" :key="row.model">
+                                                    <tr class="border-t border-border text-gray-300 cursor-pointer transition-colors focus:ring-2 focus:ring-accent focus:outline-none"
+                                                        :class="historySelectedModel === row.model ? 'bg-card-alt' : 'hover-bg-surface'"
+                                                        role="button" tabindex="0"
+                                                        :aria-expanded="historySelectedModel === row.model"
+                                                        @click="toggleHistoryModel(row.model)"
+                                                        @keydown.enter="toggleHistoryModel(row.model)"
+                                                        @keydown.space.prevent="toggleHistoryModel(row.model)"
+                                                        :title="historySelectedModel === row.model
+                                                            ? 'Show all models'
+                                                            : 'Show only this model in the chart'">
+                                                        <td class="py-2 pr-4 font-mono text-xs"
+                                                            :class="historySelectedModel === row.model ? 'underline' : ''"
+                                                            x-text="truncateModel(row.model)"></td>
+                                                        <td class="py-2 pr-4 text-right tabular-nums" x-text="formatNumber(row.tokens_saved)"></td>
+                                                        <td class="py-2 pr-4 text-right tabular-nums" x-text="'$' + formatCurrency(row.input_cost_usd)"></td>
+                                                        <td class="py-2 pr-4 text-right tabular-nums" x-text="'$' + formatCurrency(row.expected_cost_usd)"></td>
+                                                        <td class="py-2 text-right tabular-nums text-accent" x-text="'$' + formatCurrency(row.savings_usd)"></td>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-sm font-medium mb-4 text-gray-300">Historical Summary</div>
+                                <div class="space-y-3">
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.latest_total.title}}" data-help="{{help.history.latest_total.body}}">Latest total</span>
+                                        <span class="font-mono text-sm"
+                                              x-text="formatNumber(historyStats.lifetime?.tokens_saved || 0) + ' tokens'"></span>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.selected_series.title}}" data-help="{{help.history.selected_series.body}}">Selected series</span>
+                                        <span class="font-mono text-sm"
+                                              x-text="historySelectedSeriesLabel"></span>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.selected_points.title}}" data-help="{{help.history.selected_points.body}}">Selected points</span>
+                                        <span class="font-mono text-sm"
+                                              x-text="formatNumber(historySelectedPointCount)"></span>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.average_month.title}}" data-help="{{help.history.average_month.body}}">Average / month</span>
+                                        <span class="font-mono text-sm"
+                                              x-text="formatNumber(historyAverageTokensPerMonth) + ' tokens'"></span>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.retention.title}}" data-help="{{help.history.retention.body}}">Retention</span>
+                                        <span class="font-mono text-sm"
+                                              x-text="(historyStats.retention?.max_history_age_days || 0) + 'd / ' + formatNumber(historyStats.retention?.max_history_points || 0)"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.daily_savings.title}}" data-help="{{help.history.daily_savings.body}}">Daily Savings</div>
+                                <template x-if="(historyStats.series?.daily || []).length > 0">
+                                    <div class="space-y-3">
+                                        <template x-for="point in recentDailyHistory" :key="point.timestamp">
+                                            <div class="flex items-center justify-between">
+                                                <div>
+                                                    <div class="text-sm text-gray-300" x-text="formatDate(point.timestamp)"></div>
+                                                    <div class="text-xs text-gray-500"
+                                                         x-text="formatNumber(point.total_tokens_saved) + ' cumulative'"></div>
+                                                </div>
+                                                <div class="text-right">
+                                                    <div class="font-mono text-sm text-accent"
+                                                         x-text="formatNumber(point.tokens_saved) + ' tokens'"></div>
+                                                    <div class="text-xs text-emerald-400"
+                                                         x-text="'$' + formatCurrency(point.compression_savings_usd_delta || 0)"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="(historyStats.series?.daily || []).length === 0">
+                                    <div class="text-sm text-gray-500 italic py-8 text-center">
+                                        Daily rollups will appear after persisted history spans at least one checkpoint.
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.weekly_savings.title}}" data-help="{{help.history.weekly_savings.body}}">Weekly Savings</div>
+                                <template x-if="(historyStats.series?.weekly || []).length > 0">
+                                    <div class="space-y-3">
+                                        <template x-for="point in recentWeeklyHistory" :key="point.timestamp">
+                                            <div class="flex items-center justify-between">
+                                                <div>
+                                                    <div class="text-sm text-gray-300" x-text="formatDate(point.timestamp)"></div>
+                                                    <div class="text-xs text-gray-500"
+                                                         x-text="formatNumber(point.total_tokens_saved) + ' cumulative'"></div>
+                                                </div>
+                                                <div class="text-right">
+                                                    <div class="font-mono text-sm text-accent"
+                                                         x-text="formatNumber(point.tokens_saved) + ' tokens'"></div>
+                                                    <div class="text-xs text-emerald-400"
+                                                         x-text="'$' + formatCurrency(point.compression_savings_usd_delta || 0)"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="(historyStats.series?.weekly || []).length === 0">
+                                    <div class="text-sm text-gray-500 italic py-8 text-center">
+                                        Weekly rollups will appear after persisted history spans multiple days.
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.monthly_savings.title}}" data-help="{{help.history.monthly_savings.body}}">Monthly Savings</div>
+                                <template x-if="(historyStats.series?.monthly || []).length > 0">
+                                    <div class="space-y-3">
+                                        <template x-for="point in recentMonthlyHistory" :key="point.timestamp">
+                                            <div class="flex items-center justify-between">
+                                                <div>
+                                                    <div class="text-sm text-gray-300" x-text="formatMonth(point.timestamp)"></div>
+                                                    <div class="text-xs text-gray-500"
+                                                         x-text="formatNumber(point.total_tokens_saved) + ' cumulative'"></div>
+                                                </div>
+                                                <div class="text-right">
+                                                    <div class="font-mono text-sm text-accent"
+                                                         x-text="formatNumber(point.tokens_saved) + ' tokens'"></div>
+                                                    <div class="text-xs text-emerald-400"
+                                                         x-text="'$' + formatCurrency(point.compression_savings_usd_delta || 0)"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="(historyStats.series?.monthly || []).length === 0">
+                                    <div class="text-sm text-gray-500 italic py-8 text-center">
+                                        Monthly rollups will appear after persisted history spans multiple months.
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.recent_historical_checkpoints.title}}" data-help="{{help.history.recent_historical_checkpoints.body}}">Recent Historical Checkpoints</div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <template x-for="point in recentHistoricalPoints" :key="point.timestamp">
+                                    <div class="flex items-center justify-between rounded-lg border border-border px-3 py-3">
+                                        <div>
+                                            <div class="text-sm text-gray-300" x-text="formatDateTime(point.timestamp)"></div>
+                                            <div class="text-xs text-gray-500">Cumulative proxy compression savings</div>
+                                        </div>
+                                        <div class="text-right">
+                                            <div class="font-mono text-sm text-accent"
+                                                 x-text="formatNumber(point.total_tokens_saved) + ' tokens'"></div>
+                                            <div class="text-xs text-emerald-400"
+                                                 x-text="'$' + formatCurrency(point.compression_savings_usd || 0)"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="!hasHistoricalData">
+                    <div class="bg-surface rounded-lg border border-border p-10 text-center">
+                        <div class="text-lg text-gray-300 mb-2">No persisted savings history yet</div>
+                        <div class="text-sm text-gray-500 max-w-2xl mx-auto">
+                            Historical data is written locally after proxy requests save tokens. Keep using Headroom and this view will fill in automatically across restarts.
+                        </div>
+                    </div>
+                </template>
+                    </div>
+                </section>
+            </div>
+        </template>

@@ -1,0 +1,84 @@
+        <!-- Pane: Per-Project -->
+        <section x-show="paneVisible('project')" class="mb-6" :class="panes.project ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('project')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="{{help.project.per_project.title}}" data-help="{{help.project.per_project.body}}">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Per-Project</span>
+            </button>
+            <div x-show="!panes.project">
+        <!-- Per-Project Savings Breakdown -->
+        <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
+            <div class="px-4 py-3 border-b border-border flex justify-between items-center">
+                <div>
+                    <span class="text-sm font-medium text-gray-300">Per-Project Savings</span>
+                    <div class="text-xs text-gray-500 mt-0.5">Lifetime totals — attributed requests only</div>
+                </div>
+                <span class="text-xs text-gray-500 font-mono"
+                      x-text="Object.keys(stats.savings?.per_project || {}).length + ' project(s)'"></span>
+            </div>
+
+            <!-- Empty state: no project data yet -->
+            <template x-if="Object.keys(stats.savings?.per_project || {}).length === 0">
+                <div class="px-4 py-8 text-center">
+                    <div class="text-xs text-gray-500 mb-3">No per-project data yet.</div>
+                    <div class="text-xs text-gray-600 font-mono leading-relaxed">
+                        Add to each project's <span class="text-gray-400">.claude/settings.local.json</span>:<br>
+                        <span class="text-accent">ANTHROPIC_BASE_URL: http://127.0.0.1:8787/p/&lt;project-name&gt;</span>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Project rows -->
+            <template x-if="Object.keys(stats.savings?.per_project || {}).length > 0">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm" style="table-layout:fixed">
+                        <colgroup>
+                            <col style="width:25%">
+                            <col style="width:10%">
+                            <col style="width:15%">
+                            <col style="width:12%">
+                            <col style="width:18%">
+                            <col style="width:20%">
+                        </colgroup>
+                        <thead>
+                            <tr class="text-xs text-gray-500 uppercase tracking-wide">
+                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'project', 'asc')" data-help-title="{{help.project.project.title}}" data-help="{{help.project.project.body}}">Project<span x-text="sortIcon('perProject', 'project')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'requests')" data-help-title="{{help.project.requests.title}}" data-help="{{help.project.requests.body}}">Requests<span x-text="sortIcon('perProject', 'requests')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'tokens_saved')" data-help-title="{{help.project.tokens_saved.title}}" data-help="{{help.project.tokens_saved.body}}">Tokens Saved<span x-text="sortIcon('perProject', 'tokens_saved')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'compression_savings_usd')" data-help-title="{{help.project.saved.title}}" data-help="{{help.project.saved.body}}">Saved $<span x-text="sortIcon('perProject', 'compression_savings_usd')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'savings_percent')" data-help-title="{{help.project.savings.title}}" data-help="{{help.project.savings.body}}">Savings %<span x-text="sortIcon('perProject', 'savings_percent')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'last_activity_at')" data-help-title="{{help.project.last_active.title}}" data-help="{{help.project.last_active.body}}">Last Active<span x-text="sortIcon('perProject', 'last_activity_at')"></span></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-border">
+                            <template x-for="row in perProjectRows" :key="row.project">
+                                <tr class="hover:bg-border/30 transition-colors">
+                                    <td class="px-4 py-3 text-left">
+                                        <span class="px-2 py-0.5 bg-border rounded text-xs font-mono" x-text="row.project"></span>
+                                    </td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="row.requests"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-accent" x-text="formatNumber(row.tokens_saved)"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-emerald-400"
+                                        x-text="'$' + formatCurrency(row.compression_savings_usd || 0)"></td>
+                                    <td class="px-4 py-3 text-right">
+                                        <div class="flex items-center justify-end gap-2">
+                                            <div class="w-16 h-1.5 bg-border rounded-full overflow-hidden">
+                                                <div class="h-full bg-accent rounded-full"
+                                                     :style="'width:' + Math.min(row.savings_percent || 0, 100) + '%'"></div>
+                                            </div>
+                                            <span class="text-accent font-mono tabular-nums text-xs w-10 text-right"
+                                                  x-text="(row.savings_percent || 0).toFixed(1) + '%'"></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3 text-right text-xs text-gray-500 font-mono hidden md:table-cell"
+                                        x-text="row.last_activity_at ? new Date(row.last_activity_at).toLocaleString() : '—'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+        </div>
+
+            </div>
+        </section>

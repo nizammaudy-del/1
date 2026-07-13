@@ -1,0 +1,956 @@
+{
+  "dashboard": {
+    "proxy_restarted": {
+      "title": "Proxy Restarted",
+      "body": "Session stats live in the proxy's memory. If the process restarted, counters reset to 0 even though nothing is wrong."
+    },
+    "near_limit_warnings": {
+      "title": "Near-Limit Warnings",
+      "body": "Fires when a budget or provider quota window crosses 80/90/100% utilization. Dismiss to hide until the next new threshold is crossed. Enable native OS notifications in Settings."
+    },
+    "live_feed": {
+      "title": "Live Feed",
+      "body": "Every request the proxy has handled recently, newest first, showing what Headroom compressed away."
+    },
+    "count": {
+      "title": "Count",
+      "body": "Number of recent requests currently loaded in the feed."
+    },
+    "close": {
+      "title": "Close",
+      "body": "Close the live feed drawer."
+    },
+    "new_messages": {
+      "title": "New messages",
+      "body": "Click to jump to the newest message and resume auto-scrolling (Follow)."
+    },
+    "savings": {
+      "title": "Savings",
+      "body": "Tokens Headroom removed from this request and the resulting percentage reduction."
+    },
+    "transforms_applied": {
+      "title": "Transforms applied",
+      "body": "The compression transforms Headroom ran on this request, in order."
+    },
+    "before": {
+      "title": "Before",
+      "body": "The original prompt exactly as sent to Headroom, before any compression."
+    },
+    "after": {
+      "title": "After",
+      "body": "What Headroom actually sent upstream to the provider after compression."
+    },
+    "no_changes": {
+      "title": "No changes detected",
+      "body": "The input and the output are byte-identical and uncompressed for this request -- nothing was rewritten, so there's no before/after diff to show."
+    }
+  },
+  "header": {
+    "headroom": {
+      "title": "Headroom",
+      "body": "Headroom is a local proxy that compresses prompts before they reach the model, cutting token cost and context bloat. This dashboard reports what it saved."
+    },
+    "version": {
+      "title": "Version",
+      "body": "The running Headroom proxy version, reported by the /health endpoint."
+    },
+    "last_update": {
+      "title": "Last update",
+      "body": "Wall-clock time of the last successful stats poll from your browser."
+    },
+    "proxy_uptime": {
+      "title": "Proxy uptime",
+      "body": "How long the Headroom proxy process has been running, ticking live between /health polls."
+    },
+    "session_view": {
+      "title": "Session view",
+      "body": "Live stats for the current proxy process: savings, throughput, agents, and recent requests since it started."
+    },
+    "historical_view": {
+      "title": "Historical view",
+      "body": "Persisted savings across restarts, rolled up daily, weekly, and monthly."
+    },
+    "mcp_view": {
+      "title": "MCP view",
+      "body": "Usage stats for MCP tool calls proxied through Headroom."
+    },
+    "anonymous_telemetry": {
+      "title": "Anonymous telemetry",
+      "body": "Anonymous aggregate telemetry is enabled. Disable with HEADROOM_TELEMETRY=off or --no-telemetry."
+    },
+    "github": {
+      "title": "GitHub",
+      "body": "Open the Headroom source repository on GitHub in a new tab."
+    },
+    "report_an_issue": {
+      "title": "Report an issue",
+      "body": "Open a new GitHub issue to report a bug or request a feature."
+    },
+    "mcp_dashboards": {
+      "title": "MCP Dashboards",
+      "body": "Open the web dashboards of installed MCP servers Headroom detected. The dot shows whether each server is currently reachable."
+    },
+    "settings": {
+      "title": "Settings",
+      "body": "Configure poll intervals, savings profile and budget, token pricing overrides, and which panes/tabs are shown."
+    },
+    "theme": {
+      "title": "Theme",
+      "body": "Toggle light/dark mode. Your choice is remembered in this browser."
+    },
+    "overhead": {
+      "title": "Overhead",
+      "body": "Extra latency the proxy adds per request while compressing. Lower is better; this is the cost you pay for the token savings above. Also shows average TTFB (time to first byte)."
+    },
+    "notifications": {
+      "title": "Notifications",
+      "body": "Near-limit warnings for budgets and provider quota windows (Anthropic, Codex, Copilot). Fires at 80/90/100% utilization. Dismiss individually or all at once; re-appears when a new threshold is crossed."
+    },
+    "active_profile": {
+      "title": "Active profile",
+      "body": "Current proxy savings profile: {value}. Sets how aggressively prompts are compressed."
+    },
+    "live_feed_toggle_on": {
+      "title": "Live Feed",
+      "body": "Open the live drawer of message transformations to inspect what the proxy rewrote per request."
+    },
+    "live_feed_toggle_off": {
+      "title": "Live Feed",
+      "body": "Open the live drawer of transformation events. Start the proxy with --log-messages (or HEADROOM_LOG_MESSAGES=true) to also see full request/response bodies here."
+    },
+    "mcp_dashboard_available": {
+      "title": "MCP server",
+      "body": "This MCP server is reachable."
+    },
+    "mcp_dashboard_unavailable": {
+      "title": "MCP server",
+      "body": "This MCP server is not reachable — is it running?"
+    },
+    "proxy_healthy": {
+      "title": "Proxy healthy",
+      "body": "The proxy answered /health and /stats normally on the last poll."
+    },
+    "proxy_error": {
+      "title": "Proxy error",
+      "body": "The last poll to the proxy failed."
+    }
+  },
+  "overview": {
+    "overview": {
+      "title": "Overview",
+      "body": "Headline results for this session: money and tokens saved, agent usage, and the savings breakdown."
+    },
+    "get_started": {
+      "title": "Get Started",
+      "body": "Headroom hasn't seen any traffic yet. Point your client at the proxy or run a learn pass to get started."
+    },
+    "proxy_saved": {
+      "title": "Proxy $ Saved",
+      "body": "Estimated money saved by the proxy compressing tool outputs before they reach the model, priced at the model's list input rate. Compression only — excludes cache and other effects."
+    },
+    "token_savings": {
+      "title": "Token Savings",
+      "body": "Total input tokens removed by compression, and the percentage that represents of what was compressed: how much smaller the prompt got after the proxy shrank tool outputs, versus the original size."
+    },
+    "of_total_wire": {
+      "title": "Of total wire",
+      "body": "Savings as a fraction of all input tokens actually sent, including the frozen (uncompressible) prefix."
+    },
+    "output_tokens_saved": {
+      "title": "Output Tokens Saved",
+      "body": "Fewer output tokens the model generated because prompts were compressed, measured against a holdout baseline (counterfactual). 'measured' = A/B holdout; 'estimated' = vs a learned baseline."
+    },
+    "95_confidence_interval": {
+      "title": "95% confidence interval",
+      "body": "The range the true output reduction percentage is likely to fall in, given the sample of shaped responses measured so far."
+    },
+    "overhead": {
+      "title": "Overhead",
+      "body": "Extra latency the proxy adds per request while compressing. Lower is better; this is the cost you pay for the token savings above."
+    },
+    "throughput": {
+      "title": "Throughput",
+      "body": "Token processing rates across the proxy pipeline, in tokens/second. p50/p95 are the median and 95th-percentile over a rolling window."
+    },
+    "input_throughput": {
+      "title": "Input throughput",
+      "body": "Rate the proxy ingests input tokens. Wall-clock counts total elapsed time; active p50 is the median rate over just the busy processing time."
+    },
+    "compression_throughput": {
+      "title": "Compression throughput",
+      "body": "How fast the compression stage processes tokens (median / 95th percentile). Higher means compression adds less delay."
+    },
+    "forward_throughput": {
+      "title": "Forward throughput",
+      "body": "Rate tokens are forwarded upstream to the provider (median / 95th percentile), after compression."
+    },
+    "generation_throughput": {
+      "title": "Generation throughput",
+      "body": "Rate the model streams output tokens back (median / 95th percentile). Reflects the provider's generation speed, not the proxy's."
+    },
+    "current_5m_active_p50": {
+      "title": "Current 5m (active p50)",
+      "body": "Median input and forward rates over just the last 5 minutes of active processing — a near-real-time snapshot versus the longer rolling window above."
+    },
+    "budget": {
+      "title": "Budget",
+      "body": "Spend against the configured budget for the current period. Set a budget limit in Settings to enable this."
+    },
+    "agent_usage": {
+      "title": "Agent Usage",
+      "body": "Token usage before vs after compression, broken down by the client (Cursor, Claude, Codex, etc.) Headroom detected for each request."
+    },
+    "coverage": {
+      "title": "Coverage",
+      "body": "Share of requests that could be attributed to a known client. Low coverage means many requests arrived without a recognizable client fingerprint."
+    },
+    "before": {
+      "title": "Before",
+      "body": "Total input tokens across all agents as they arrived, before the proxy compressed anything."
+    },
+    "after": {
+      "title": "After",
+      "body": "Total input tokens actually forwarded upstream after compression."
+    },
+    "saved": {
+      "title": "Saved",
+      "body": "Tokens removed by compression across all agents (Before minus After)."
+    },
+    "savings": {
+      "title": "Savings",
+      "body": "Saved as a percentage of Before tokens — the overall compression rate across all agents."
+    },
+    "token_flow": {
+      "title": "Token flow",
+      "body": "Share of this agent's input tokens saved by compression versus how much was actually sent, shown as a proportional bar."
+    },
+    "before_2": {
+      "title": "Before",
+      "body": "This agent's input tokens as they arrived, before the proxy compressed anything."
+    },
+    "after_2": {
+      "title": "After",
+      "body": "This agent's input tokens actually forwarded upstream after compression."
+    },
+    "saved_2": {
+      "title": "Saved",
+      "body": "Tokens removed by compression for this agent (Before minus After)."
+    },
+    "share": {
+      "title": "Share",
+      "body": "This agent's share of all tokens saved across every detected client this session."
+    },
+    "savings_breakdown": {
+      "title": "Savings Breakdown",
+      "body": "Estimated dollar savings split by source: Headroom's own compression versus the provider's native prefix-cache discount."
+    },
+    "compression": {
+      "title": "Compression",
+      "body": "Dollar value of tokens Headroom's compression removed before they were sent, priced at the model's list input rate."
+    },
+    "prefix_cache_discount": {
+      "title": "Prefix Cache Discount",
+      "body": "Dollar value saved from the provider's own prefix-cache read discount — separate from anything Headroom compressed."
+    },
+    "compression_ratio": {
+      "title": "Compression ratio",
+      "body": "Of total wire input tokens"
+    },
+    "output_reduction_measured": {
+      "title": "Measured",
+      "body": "'Measured' comes from an A/B holdout comparing shaped vs unshaped responses; 'estimated' compares against a learned baseline instead, so it carries more uncertainty."
+    },
+    "output_reduction_estimated": {
+      "title": "Estimated",
+      "body": "'Measured' comes from an A/B holdout comparing shaped vs unshaped responses; 'estimated' compares against a learned baseline instead, so it carries more uncertainty."
+    }
+  },
+  "tokens": {
+    "token_usage_providers_performance": {
+      "title": "Token Usage, Providers & Performance",
+      "body": "Where tokens went (before/after compression), which providers served traffic, proxy latency, and per-model savings."
+    },
+    "token_usage": {
+      "title": "Token Usage",
+      "body": "Where input tokens went at each stage of the pipeline: what arrived, what was removed, and what was ultimately sent to the model."
+    },
+    "before_compression": {
+      "title": "Before Compression",
+      "body": "Total input tokens as they arrived at the proxy, before any filtering or compression."
+    },
+    "client_side_filtered": {
+      "title": "Client-side filtered",
+      "body": "Tokens removed by client-side filtering (e.g. RTK) before the request reached the proxy. Not priced into proxy $ savings."
+    },
+    "proxy_removed": {
+      "title": "Proxy Removed",
+      "body": "Input tokens the proxy itself compressed away — the component priced into Proxy $ Saved."
+    },
+    "after_compression_sent": {
+      "title": "After Compression (sent)",
+      "body": "Input tokens actually forwarded to the provider after all filtering and compression."
+    },
+    "output_tokens": {
+      "title": "Output Tokens",
+      "body": "Total tokens the model generated in responses across all requests this session."
+    },
+    "providers": {
+      "title": "Providers",
+      "body": "Breakdown of traffic by upstream provider (Anthropic, OpenAI, etc.) that the proxy routed requests to."
+    },
+    "performance": {
+      "title": "Performance",
+      "body": "Latency the proxy adds and how fast upstream responds, plus failure count."
+    },
+    "headroom_overhead": {
+      "title": "Headroom Overhead",
+      "body": "Average extra time the proxy spends per request on compression and processing. This is the latency cost of the savings."
+    },
+    "overhead_range": {
+      "title": "Overhead Range",
+      "body": "Minimum to maximum proxy overhead observed per request — shows how variable the added latency is."
+    },
+    "ttfb_upstream": {
+      "title": "TTFB (upstream)",
+      "body": "Average time to first byte from the upstream provider — the model's own response latency, not the proxy's."
+    },
+    "ttfb_range": {
+      "title": "TTFB Range",
+      "body": "Minimum to maximum upstream time-to-first-byte observed."
+    },
+    "failed_requests": {
+      "title": "Failed Requests",
+      "body": "Requests that errored (upstream error or proxy failure) this session."
+    },
+    "pipeline_breakdown": {
+      "title": "Pipeline Breakdown",
+      "body": "Average and max time spent in each named transform stage of the compression pipeline, per request."
+    },
+    "per_model_token_savings": {
+      "title": "Per-Model Token Savings",
+      "body": "Exact tokens saved, sent, and requested per model, so you can see which models Headroom compresses best against."
+    },
+    "model": {
+      "title": "Model",
+      "body": "The model name reported on requests. Click to sort alphabetically."
+    },
+    "requests": {
+      "title": "Requests",
+      "body": "Number of requests sent to this model this session. Click to sort."
+    },
+    "tokens_saved": {
+      "title": "Tokens Saved",
+      "body": "Input tokens removed by compression for requests to this model. Click to sort."
+    },
+    "tokens_sent": {
+      "title": "Tokens Sent",
+      "body": "Input tokens actually forwarded to this model after compression. Click to sort."
+    },
+    "reduction": {
+      "title": "Reduction %",
+      "body": "Tokens saved divided by (tokens saved + tokens sent) for this model — how much smaller compressed requests are versus what they would have been uncompressed. Assumes the same request shape would have been sent without Headroom."
+    },
+    "provider_breakdown": {
+      "title": "Provider breakdown",
+      "body": "Requests routed to {value} this session, and its share of total request volume."
+    },
+    "pipeline_stage": {
+      "title": "Pipeline stage",
+      "body": "Time spent in the {value} pipeline stage: average and worst-case (max) milliseconds per request."
+    }
+  },
+  "windows": {
+    "provider_windows_cache": {
+      "title": "Provider Windows & Cache",
+      "body": "Subscription/rate-limit windows for Anthropic, Codex, and Copilot, plus prefix-cache impact. Only cards with data appear."
+    },
+    "provider_windows_cache_2": {
+      "title": "Provider Windows & Cache",
+      "body": "Subscription/quota windows (Anthropic 5h/7d, Codex rate limits, Copilot quota) and prefix-cache efficiency appear here once that provider's traffic flows through the proxy."
+    },
+    "anthropic_subscription_window": {
+      "title": "Anthropic Subscription Window",
+      "body": "Utilization of your Anthropic subscription's rolling 5-hour and 7-day usage windows, reported by the last observed API response headers."
+    },
+    "window_activity": {
+      "title": "Window activity",
+      "body": "Whether Headroom has seen Anthropic traffic recently enough to consider this subscription window active."
+    },
+    "5_hour_window": {
+      "title": "5-Hour Window",
+      "body": "Percent of your rolling 5-hour Anthropic usage allowance consumed. This window resets on a rolling basis, not at a fixed clock time."
+    },
+    "7_day_window": {
+      "title": "7-Day Window",
+      "body": "Percent of your rolling 7-day Anthropic usage allowance consumed. Separate from the 5-hour window; either can bind you first depending on your plan."
+    },
+    "extra_usage_overage": {
+      "title": "Extra Usage (Overage)",
+      "body": "Pay-as-you-go credits spent once your 5h/7d subscription windows are exhausted and overage billing kicks in."
+    },
+    "headroom_contribution_this_window": {
+      "title": "Headroom Contribution This Window",
+      "body": "How much of this Anthropic subscription window Headroom saved you by compressing prompts and hitting prefix cache before tokens were submitted."
+    },
+    "efficiency": {
+      "title": "Efficiency",
+      "body": "Share of tokens that would have been submitted without Headroom that were instead saved this window — higher means more of the window's budget was preserved."
+    },
+    "tokens_saved": {
+      "title": "Tokens Saved",
+      "body": "Total tokens kept out of this subscription window by Headroom, combining compression and prefix-cache reads."
+    },
+    "compression": {
+      "title": "Compression",
+      "body": "Tokens saved specifically by the proxy's compression of tool outputs, counted against this window."
+    },
+    "cache_reads": {
+      "title": "Cache Reads",
+      "body": "Tokens served from Anthropic's prefix cache instead of being freshly submitted, counted against this window."
+    },
+    "raw_vs_submitted": {
+      "title": "Raw vs Submitted",
+      "body": "Tokens actually forwarded to Anthropic against this window versus what would have been sent with Headroom disabled."
+    },
+    "anomalies_detected": {
+      "title": "Anomalies Detected",
+      "body": "Inconsistencies Headroom noticed between what Anthropic's headers reported and what it expected for this window — e.g. a utilization jump or reset time that doesn't line up with observed traffic."
+    },
+    "openai_codex_rate_limit_window": {
+      "title": "OpenAI Codex Rate-Limit Window",
+      "body": "Utilization of your Codex CLI/API rate-limit windows, parsed from the last observed OpenAI response headers."
+    },
+    "primary_window": {
+      "title": "Primary Window",
+      "body": "Utilization of Codex's primary rate-limit window (the shorter of the two windows OpenAI reports)."
+    },
+    "secondary_window": {
+      "title": "Secondary Window",
+      "body": "Utilization of Codex's secondary rate-limit window (typically the longer window OpenAI reports alongside the primary one)."
+    },
+    "credits": {
+      "title": "Credits",
+      "body": "Codex API credit balance available once your subscription rate-limit windows are exhausted."
+    },
+    "github_copilot_quota": {
+      "title": "GitHub Copilot Quota",
+      "body": "Utilization of your Copilot plan's monthly Chat, Completions, and Premium Interaction quotas, reported by the last observed Copilot API response."
+    },
+    "monthly_reset": {
+      "title": "Monthly Reset",
+      "body": "When Copilot's quota counters reset for the current billing month, and how far through the month you are."
+    },
+    "prefix_cache_impact": {
+      "title": "Prefix Cache Impact",
+      "body": "How much provider-native prompt caching (Anthropic/OpenAI prefix cache) saved this session, separate from Headroom's own compression."
+    },
+    "cache_reads_2": {
+      "title": "Cache Reads",
+      "body": "Input tokens served from the provider's prefix cache instead of being freshly processed, and the dollar amount saved from the discounted cache-read rate."
+    },
+    "cache_writes": {
+      "title": "Cache Writes",
+      "body": "Input tokens written into the provider's prefix cache for future reuse, and the extra cost of the write-premium rate charged for those tokens."
+    },
+    "hit_rate": {
+      "title": "Hit Rate",
+      "body": "Share of requests this session that hit the prefix cache at least partially, out of all requests observed."
+    },
+    "cache_busts": {
+      "title": "Cache Busts",
+      "body": "Number of times a previously cached prefix had to be rewritten because it changed or expired, and how many tokens that re-write cost."
+    },
+    "providers": {
+      "title": "Providers",
+      "body": "Number of upstream providers that have reported prefix-cache data this session."
+    },
+    "cache_efficiency": {
+      "title": "Cache Efficiency",
+      "body": "Breakdown of input tokens this session between cache reads (discounted), cache writes (premium), and tokens that missed the cache entirely."
+    },
+    "observed_ttl_buckets": {
+      "title": "Observed TTL Buckets",
+      "body": "How cache-write tokens split between the provider's 1-hour and 5-minute TTL buckets — a longer TTL costs more per write but survives idle time better."
+    },
+    "1h_cache_writes": {
+      "title": "1h Cache Writes",
+      "body": "Tokens written to the provider's 1-hour TTL cache bucket, and how many requests contributed to it."
+    },
+    "5m_cache_writes": {
+      "title": "5m Cache Writes",
+      "body": "Tokens written to the provider's 5-minute TTL cache bucket, and how many requests contributed to it."
+    },
+    "saved_by_compression": {
+      "title": "Saved by Compression",
+      "body": "Tokens Headroom's compression removed from prompts before they were sent, independent of caching."
+    },
+    "lost_to_cache_busts": {
+      "title": "Lost to Cache Busts",
+      "body": "Tokens re-written into the cache because compression changed the prefix enough to invalidate a previously cached one."
+    },
+    "net": {
+      "title": "Net",
+      "body": "Tokens saved by compression minus tokens lost to compression-triggered cache busts — whether compression is a net win against this session's caching."
+    },
+    "prefix_freeze_net": {
+      "title": "Prefix Freeze Net",
+      "body": "Net tokens gained by freezing the compressible prefix to preserve cache hits, minus the compression opportunity given up to keep it frozen."
+    },
+    "ttl_expiry": {
+      "title": "TTL Expiry",
+      "body": "Requests that missed the cache because they arrived after the cached prefix's TTL had already lapsed. A longer TTL reduces this."
+    },
+    "prefix_change": {
+      "title": "Prefix Change",
+      "body": "Requests that missed the cache because the cacheable prefix itself changed (e.g. compression or edited system prompt) before the TTL expired."
+    },
+    "unknown": {
+      "title": "Unknown",
+      "body": "Cache misses where the prefix looked stable and the TTL hadn't expired — Headroom couldn't attribute a cause."
+    },
+    "total_misses": {
+      "title": "Total Misses",
+      "body": "Total requests that expected a prefix-cache hit but did not get one, across all attribution reasons."
+    },
+    "per_provider_breakdown": {
+      "title": "Per-Provider Breakdown",
+      "body": "Cache reads, writes, and TTL mix broken out by upstream provider, since each provider prices and expires prefix caching differently."
+    },
+    "copilot_category": {
+      "title": "Copilot quota category",
+      "body": "Copilot {value} quota usage for the current billing month. Unlimited categories never block; otherwise Headroom shows used / entitlement and remaining allowance."
+    },
+    "prefix_cache_provider": {
+      "title": "Provider prefix-cache activity",
+      "body": "Prefix-cache activity reported by {label}: reads at a {read_discount} discount{write_suffix}."
+    }
+  },
+  "requests": {
+    "recent_requests": {
+      "title": "Recent Requests",
+      "body": "The last 10 requests through the proxy — timing, tokens, and savings. Click a row to expand transforms."
+    },
+    "time": {
+      "title": "Time",
+      "body": "When the request was received by the proxy."
+    },
+    "model": {
+      "title": "Model",
+      "body": "The model the request targeted."
+    },
+    "input": {
+      "title": "Input",
+      "body": "Input tokens sent upstream after compression for this request."
+    },
+    "output": {
+      "title": "Output",
+      "body": "Tokens the model generated in the response."
+    },
+    "saved": {
+      "title": "Saved",
+      "body": "Percentage of input tokens compression removed on this request."
+    },
+    "latency": {
+      "title": "Latency",
+      "body": "Total round-trip time for this request, including proxy overhead and upstream response."
+    },
+    "original_tokens": {
+      "title": "Original Tokens",
+      "body": "Input tokens as they arrived, before the proxy compressed this request."
+    },
+    "compressed_tokens": {
+      "title": "Compressed Tokens",
+      "body": "Input tokens actually forwarded upstream after compression."
+    },
+    "tokens_removed": {
+      "title": "Tokens Removed",
+      "body": "Original Tokens minus Compressed Tokens for this request."
+    },
+    "optimization_time": {
+      "title": "Optimization Time",
+      "body": "Time the proxy spent compressing this request before forwarding it upstream."
+    },
+    "transforms_applied": {
+      "title": "Transforms Applied",
+      "body": "The compression transforms Headroom ran on this request, in order."
+    },
+    "waste_detected": {
+      "title": "Waste Detected",
+      "body": "Which kinds of prompt waste (bloated tool output, repeated listings, minifiable JSON, etc.) were found in this specific request, and how many tokens each accounted for."
+    },
+    "transformation_detail": {
+      "title": "Transformation detail",
+      "body": "Click this card to open a larger, unclipped view of the before/after content."
+    },
+    "request": {
+      "title": "Request",
+      "body": "The model this request was routed to, tokens Headroom removed, and the resulting savings percentage."
+    },
+    "time_2": {
+      "title": "Time",
+      "body": "When the proxy handled this request."
+    },
+    "before": {
+      "title": "Before",
+      "body": "The original prompt exactly as sent to Headroom, before any compression."
+    },
+    "after": {
+      "title": "After",
+      "body": "What Headroom actually sent upstream to the provider after compression."
+    },
+    "transforms_applied_2": {
+      "title": "Transforms applied",
+      "body": "The compression transforms Headroom ran on this request, in order."
+    },
+    "unchanged": {
+      "title": "Unchanged",
+      "body": "This request passed through Headroom byte-identical -- the input and output are the same, nothing was compressed. Click the card for the full content."
+    }
+  },
+  "project": {
+    "per_project": {
+      "title": "Per-Project",
+      "body": "Lifetime savings attributed to each project, for clients routed through /p/<project-name>."
+    },
+    "project": {
+      "title": "Project",
+      "body": "Project name from the /p/<project-name> route the client used."
+    },
+    "requests": {
+      "title": "Requests",
+      "body": "Attributed requests routed for this project."
+    },
+    "tokens_saved": {
+      "title": "Tokens Saved",
+      "body": "Lifetime input tokens the proxy compressed away for this project."
+    },
+    "saved": {
+      "title": "Saved $",
+      "body": "Estimated dollars saved from compression for this project, at the model's list input rate."
+    },
+    "savings": {
+      "title": "Savings %",
+      "body": "Tokens saved as a percentage of this project's before-compression input."
+    },
+    "last_active": {
+      "title": "Last Active",
+      "body": "Timestamp of the most recent request attributed to this project."
+    }
+  },
+  "waste_trends": {
+    "waste_trends": {
+      "title": "Waste & Trends",
+      "body": "What kinds of prompt waste the proxy removed, and cumulative token savings over time."
+    },
+    "what_headroom_removed": {
+      "title": "What Headroom Removed",
+      "body": "Breakdown of which kinds of prompt waste the proxy compressed away (verbose tool output, redundant file listings, minifiable JSON, etc.), by tokens removed."
+    },
+    "savings_over_time": {
+      "title": "Savings Over Time",
+      "body": "Cumulative tokens saved across recent requests in this session, plotted as a running total."
+    }
+  },
+  "active_agents": {
+    "active_agents": {
+      "title": "Active Agents",
+      "body": "Agents that sent requests through the proxy in the last minute, derived from completed request logs (not live connections). Traffic through the proxy shows up here."
+    },
+    "project": {
+      "title": "Project",
+      "body": "The /p/<project-name> tag this agent's requests were routed under, if any."
+    },
+    "last_active": {
+      "title": "Last active",
+      "body": "Seconds since this agent's most recent request completed. Agents drop off this list after 60s of inactivity."
+    },
+    "requests_tokens_saved": {
+      "title": "Requests / Tokens Saved",
+      "body": "Requests this agent sent, and cumulative input tokens compression removed for them, within the last-minute window."
+    }
+  },
+  "diagnostics": {
+    "diagnostics": {
+      "title": "Diagnostics",
+      "body": "Local install profiles on this host, recent headroom learn runs, and memory-sync dedup stats — useful when debugging a specific deployment."
+    },
+    "local_install_profiles": {
+      "title": "Local install profiles",
+      "body": "Install profiles recorded by `headroom install` on this host. Not a multi-host fleet or remote deployments — local only."
+    },
+    "learn_history": {
+      "title": "Learn history",
+      "body": "Recent `headroom learn` runs recorded on this host: when they ran, which agent/project, how many recommendations, and whether they were applied."
+    },
+    "memory_sync": {
+      "title": "Memory sync",
+      "body": "Per-agent memory import/export counts and dedup rate from the last sync, sourced from /debug/memory/sync."
+    },
+    "run_learn": {
+      "title": "Run learn --apply",
+      "body": "Starts `headroom learn --apply` as a detached background job to analyze recent sessions and persist new compression recommendations. Runs in the background; refresh Learn history below later to see the result."
+    }
+  },
+  "history": {
+    "export_json": {
+      "title": "Export JSON",
+      "body": "Download the currently selected series (granularity and range) as a JSON file for offline analysis."
+    },
+    "export_csv": {
+      "title": "Export CSV",
+      "body": "Download the currently selected series (granularity and range) as a CSV file for spreadsheets."
+    },
+    "overview": {
+      "title": "Overview",
+      "body": "Headline historical totals: lifetime savings, average tokens saved per day/week."
+    },
+    "lifetime_compression_savings": {
+      "title": "Lifetime Compression Savings",
+      "body": "Total money saved by compression across every session since Headroom was installed, persisted to disk."
+    },
+    "lifetime_tokens_saved": {
+      "title": "Lifetime Tokens Saved",
+      "body": "Total input tokens removed by compression across all sessions since install."
+    },
+    "active_days": {
+      "title": "Active Days",
+      "body": "Number of distinct days on which at least one request flowed through the proxy."
+    },
+    "average_saved_day": {
+      "title": "Average Saved / Day",
+      "body": "Lifetime tokens saved divided by the number of persisted daily buckets — a rough per-day average, not a rolling window."
+    },
+    "average_saved_week": {
+      "title": "Average Saved / Week",
+      "body": "Lifetime tokens saved divided by the number of persisted weekly buckets — a rough per-week average, not a rolling window."
+    },
+    "trends": {
+      "title": "Trends",
+      "body": "Historical savings trend chart, per-model breakdown, daily/weekly/monthly rollups, and recent checkpoints."
+    },
+    "granularity": {
+      "title": "Granularity",
+      "body": "Which persisted rollup bucket to chart: raw checkpoints, or daily/weekly/monthly cumulative sums."
+    },
+    "chart_mode": {
+      "title": "Chart mode",
+      "body": "Switch the trend chart between cumulative tokens saved and actual-vs-expected dollar cost."
+    },
+    "model": {
+      "title": "Model",
+      "body": "Model identifier attributed to this row's traffic, from per-model attribution recorded in persisted checkpoints."
+    },
+    "tokens_saved": {
+      "title": "Tokens saved",
+      "body": "Cumulative input tokens removed by compression for this model, summed across the selected series."
+    },
+    "cost_with_headroom": {
+      "title": "Cost with Headroom",
+      "body": "Actual billed input cost for this model's compressed traffic, at list input price."
+    },
+    "expected_cost_without_headroom": {
+      "title": "Expected cost (without Headroom)",
+      "body": "What this model's traffic would have cost at list input price if Headroom hadn't removed any tokens: actual billed cost + estimated compression savings. Assumes the same requests would have been sent uncompressed and that list pricing is current."
+    },
+    "saved": {
+      "title": "Saved",
+      "body": "Dollar savings for this model: expected cost without Headroom minus actual cost with Headroom."
+    },
+    "latest_total": {
+      "title": "Latest total",
+      "body": "Lifetime tokens saved as of the most recent persisted checkpoint, independent of the granularity currently selected above."
+    },
+    "selected_series": {
+      "title": "Selected series",
+      "body": "Which persisted rollup the chart and stats above are currently reading from (Daily, Weekly, Monthly, or raw Checkpoints)."
+    },
+    "selected_points": {
+      "title": "Selected points",
+      "body": "Number of data points in the currently selected series."
+    },
+    "average_month": {
+      "title": "Average / month",
+      "body": "Lifetime tokens saved divided by the number of persisted monthly buckets."
+    },
+    "retention": {
+      "title": "Retention",
+      "body": "How much persisted history is kept on disk before old checkpoints are pruned: max age in days / max number of checkpoints, whichever limit is hit first."
+    },
+    "daily_savings": {
+      "title": "Daily Savings",
+      "body": "Last 7 persisted daily buckets: tokens saved that day plus the running cumulative total, most recent first."
+    },
+    "weekly_savings": {
+      "title": "Weekly Savings",
+      "body": "Last 6 persisted weekly buckets: tokens saved that week plus the running cumulative total, most recent first."
+    },
+    "monthly_savings": {
+      "title": "Monthly Savings",
+      "body": "Last 6 persisted monthly buckets: tokens saved that month plus the running cumulative total, most recent first."
+    },
+    "recent_historical_checkpoints": {
+      "title": "Recent Historical Checkpoints",
+      "body": "Last 8 raw persisted checkpoints (not rolled up), each with the cumulative tokens and dollars saved at that point in time."
+    }
+  },
+  "mcp": {
+    "mcp_usage": {
+      "title": "MCP Usage",
+      "body": "Counts of mcp__<server>__<tool> calls seen in requests that flowed through the proxy. Requires full-message logging to be enabled."
+    },
+    "calls_by_tool": {
+      "title": "Calls by tool",
+      "body": "Number of invocations of each individual tool exposed by this MCP server."
+    },
+    "ccr_feedback": {
+      "title": "CCR Feedback",
+      "body": "The reversible-compression trust signal: how often a compressed tool result later needed to be retrieved in full. A high retrieval rate for a tool means compression may be too lossy for it — the feedback loop should ease off."
+    },
+    "tool": {
+      "title": "Tool",
+      "body": "MCP tool whose results Headroom has compressed and tracked for later retrieval."
+    },
+    "compressions": {
+      "title": "Compressions",
+      "body": "Number of times this tool's result was compressed by the reversible-compression (CCR) path."
+    },
+    "retrievals": {
+      "title": "Retrievals",
+      "body": "Number of times a compressed result for this tool was later fetched back in full via the retrieval mechanism."
+    },
+    "retrieval_rate": {
+      "title": "Retrieval rate",
+      "body": "Retrievals divided by compressions for this tool. Above 20% (highlighted) suggests compression is discarding information this tool's callers actually need."
+    },
+    "full_retrieval_rate": {
+      "title": "Full retrieval rate",
+      "body": "Share of this tool's compressed results that were retrieved in full at least once, over the tool's entire recorded history (not just the current page window)."
+    },
+    "total_compressions": {
+      "title": "Total compressions",
+      "body": "Lifetime count of this tool's results compressed by the CCR path."
+    },
+    "total_retrievals": {
+      "title": "Total retrievals",
+      "body": "Lifetime count of full-content retrievals for this tool's compressed results."
+    },
+    "common_queries": {
+      "title": "Common queries",
+      "body": "Most frequent retrieval queries issued against this tool's compressed results — recurring lookups hint at what compression is stripping out that callers keep needing back."
+    },
+    "mcp_dashboards": {
+      "title": "MCP Dashboards",
+      "body": "Expand a dashboard to try loading its live UI in an embedded frame (lazy — nothing loads until you expand). If it can't be embedded (blocked, slow, or no native fallback exists for that MCP), a link to open it in a new tab is shown instead."
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "body": "Raw endpoints for scraping Headroom metrics into your own tooling, plus quick exports of the last 30 days of savings history."
+    },
+    "logging_on": {
+      "title": "Logging on",
+      "body": "Full-message logging is enabled, so MCP tool calls in request bodies are being counted."
+    },
+    "logging_off": {
+      "title": "Log-messages off",
+      "body": "Full-message logging is off, so MCP tool calls cannot be detected. Start the proxy with --log-messages to enable this."
+    },
+    "server_row": {
+      "title": "MCP server",
+      "body": "{value} total tool calls through this MCP server. Click to see the per-tool breakdown."
+    }
+  },
+  "settings": {
+    "stats_poll_ms": {
+      "title": "Stats poll (ms)",
+      "body": "How often the browser polls /stats for the hero metrics, throughput, and health. Lower values feel more live but add request overhead."
+    },
+    "history_poll_ms": {
+      "title": "History poll (ms)",
+      "body": "How often the browser re-fetches persisted savings history while the Historical tab is open."
+    },
+    "feed_poll_ms": {
+      "title": "Feed poll (ms)",
+      "body": "How often the Live Feed drawer re-fetches recent transformation events while it's open. Has no effect when the drawer is closed."
+    },
+    "savings_profile": {
+      "title": "Savings profile",
+      "body": "Named preset controlling how aggressively prompts are compressed. Blank uses the built-in default profile."
+    },
+    "target_ratio_0_1": {
+      "title": "Target ratio (0-1)",
+      "body": "Desired fraction of input tokens kept after compression, e.g. 0.6 aims to keep ~60% (remove ~40%). Lower values compress more aggressively."
+    },
+    "budget_limit_usd": {
+      "title": "Budget limit (USD)",
+      "body": "Spend ceiling for the configured budget period. Crossing 80/90/100% of this limit triggers the near-limit warning banner. Leave 0 or blank for no limit."
+    },
+    "budget_period": {
+      "title": "Budget period",
+      "body": "The window the budget limit resets over: hourly, daily, or monthly. Determines when period_spend_usd resets to zero."
+    },
+    "model": {
+      "title": "Model",
+      "body": "Model identifier to override, matched against the model name reported in requests (e.g. claude-sonnet-4-5)."
+    },
+    "input": {
+      "title": "Input",
+      "body": "USD per 1M input tokens. Overrides the LiteLLM list price used to estimate cost and savings for this model."
+    },
+    "output": {
+      "title": "Output",
+      "body": "USD per 1M output tokens. Overrides the LiteLLM list price used to estimate cost for this model's responses."
+    },
+    "c_read": {
+      "title": "C.Read",
+      "body": "USD per 1M cache-read tokens — the discounted rate charged when a request hits the provider's prompt cache."
+    },
+    "c_write": {
+      "title": "C.Write",
+      "body": "USD per 1M cache-write tokens — the rate charged to populate the provider's prompt cache on a cache miss."
+    },
+    "panes": {
+      "title": "Panes",
+      "body": "Show or hide individual collapsible sections within the Session and Historical tabs. Unchecking a pane here removes it from the layout entirely, rather than just collapsing it."
+    },
+    "tabs": {
+      "title": "Tabs",
+      "body": "Show or hide entire top-level tabs (Session, Historical, MCP). Hidden tabs are not rendered until re-enabled here."
+    },
+    "status_uptime_cluster": {
+      "title": "Status & uptime cluster",
+      "body": "Toggle the health/updated/uptime indicators shown in the top-left of the header next to the Headroom title."
+    },
+    "mcp_dashboards_button": {
+      "title": "MCP Dashboards button",
+      "body": "Toggle the 'MCP Dashboards' button in the header that links out to detected MCP servers' own web UIs."
+    },
+    "near_limit_notifications": {
+      "title": "Near-Limit Notifications",
+      "body": "When enabled, fires a native OS notification the first time a budget or provider quota window crosses 80/90/100% utilization (same text as the in-page banner). Client-local preference, not saved to the proxy config."
+    }
+  },
+  "methodology": {
+    "savings_formula": {
+      "title": "savings formula",
+      "body": "tokens_saved is the count of input tokens Headroom removed before the request left the proxy, directly measured (not estimated). List input price is looked up per-model from the pricing table below, or your Settings override if one is set."
+    },
+    "litellm": {
+      "title": "LiteLLM",
+      "body": "An open-source Python library Headroom depends on for its bundled, community-maintained table of per-model input/output/cache token prices."
+    },
+    "estimated": {
+      "title": "estimated",
+      "body": "This badge appears next to every dollar figure on the dashboard: it's priced from the pricing table (LiteLLM or your Settings override) and can drift if that table is stale. Token counts shown nearby are measured directly and never carry this badge."
+    }
+  },
+  "live_feed": {
+    "follow_on": {
+      "title": "Follow",
+      "body": "Follow is on: the feed auto-scrolls to the newest message as new ones arrive. Click to pause and scroll freely."
+    },
+    "follow_off": {
+      "title": "Follow",
+      "body": "Follow is off. Click to jump to the newest message and resume auto-scrolling."
+    }
+  }
+}

@@ -1,0 +1,158 @@
+        <!-- Pane: Token Usage, Providers & Performance -->
+        <section x-show="paneVisible('tokens')" class="mb-6" :class="panes.tokens ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('tokens')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="{{help.tokens.token_usage_providers_performance.title}}" data-help="{{help.tokens.token_usage_providers_performance.body}}">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Token Usage, Providers &amp; Performance</span>
+            </button>
+            <div x-show="!panes.tokens">
+        <!-- Main Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+            <!-- Token Usage -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.tokens.token_usage.title}}" data-help="{{help.tokens.token_usage.body}}">Token Usage</div>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.before_compression.title}}" data-help="{{help.tokens.before_compression.body}}">
+                        <span class="text-sm text-gray-400">Before Compression</span>
+                        <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.total_before_compression || 0)"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.client_side_filtered.title}}" data-help="{{help.tokens.client_side_filtered.body}}">
+                        <span class="text-sm text-gray-400" x-text="cliFilteringLabel + ' Filtered'"></span>
+                        <span class="font-mono text-sm text-emerald-400" x-text="formatNumber(cliFilteringSaved)"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.proxy_removed.title}}" data-help="{{help.tokens.proxy_removed.body}}">
+                        <span class="text-sm text-gray-400">Proxy Removed</span>
+                        <span class="font-mono text-sm text-accent" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0)"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.after_compression_sent.title}}" data-help="{{help.tokens.after_compression_sent.body}}">
+                        <span class="text-sm text-gray-400">After Compression (sent)</span>
+                        <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.input || 0)"></span>
+                    </div>
+                    <div class="border-t border-border my-2"></div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.output_tokens.title}}" data-help="{{help.tokens.output_tokens.body}}">
+                        <span class="text-sm text-gray-400">Output Tokens</span>
+                        <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.output || 0)"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Providers -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.tokens.providers.title}}" data-help="{{help.tokens.providers.body}}">Providers</div>
+                <div class="space-y-2">
+                    <template x-for="(count, provider) in (stats.requests?.by_provider || {})" :key="provider">
+                        <div class="flex justify-between items-center"
+                             :data-help-title="provider" :data-help="helpText.tokens.provider_breakdown.body.replace('{value}', provider)">
+                            <span class="text-sm text-gray-400" x-text="provider"></span>
+                            <div class="flex items-center gap-2">
+                                <div class="w-24 h-1.5 bg-border rounded-full overflow-hidden">
+                                    <div class="h-full bg-accent rounded-full"
+                                         :style="'width: ' + getProviderPercent(count) + '%'"></div>
+                                </div>
+                                <span class="font-mono text-sm w-12 text-right" x-text="formatNumber(count)"></span>
+                            </div>
+                        </div>
+                    </template>
+                    <template x-if="Object.keys(stats.requests?.by_provider || {}).length === 0">
+                        <div class="text-sm text-gray-500 italic">No requests yet</div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Performance -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.tokens.performance.title}}" data-help="{{help.tokens.performance.body}}">Performance</div>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.headroom_overhead.title}}" data-help="{{help.tokens.headroom_overhead.body}}">
+                        <span class="text-sm text-gray-400">Headroom Overhead</span>
+                        <span class="font-mono text-sm" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms avg'"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.overhead_range.title}}" data-help="{{help.tokens.overhead_range.body}}">
+                        <span class="text-sm text-gray-400">Overhead Range</span>
+                        <span class="font-mono text-sm" x-text="(stats.overhead?.min_ms || 0).toFixed(0) + ' - ' + (stats.overhead?.max_ms || 0).toFixed(0) + 'ms'"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.ttfb_upstream.title}}" data-help="{{help.tokens.ttfb_upstream.body}}">
+                        <span class="text-sm text-gray-400">TTFB (upstream)</span>
+                        <span class="font-mono text-sm" x-text="((stats.ttfb?.average_ms || 0) / 1000).toFixed(2) + 's avg'"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.ttfb_range.title}}" data-help="{{help.tokens.ttfb_range.body}}">
+                        <span class="text-sm text-gray-400">TTFB Range</span>
+                        <span class="font-mono text-sm" x-text="((stats.ttfb?.min_ms || 0) / 1000).toFixed(2) + ' - ' + ((stats.ttfb?.max_ms || 0) / 1000).toFixed(2) + 's'"></span>
+                    </div>
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.failed_requests.title}}" data-help="{{help.tokens.failed_requests.body}}">
+                        <span class="text-sm text-gray-400">Failed Requests</span>
+                        <span class="font-mono text-sm" x-text="stats.requests?.failed || 0"></span>
+                    </div>
+                    <!-- Per-transform timing breakdown -->
+                    <template x-if="Object.keys(stats.pipeline_timing || {}).length > 0">
+                        <div>
+                            <div class="border-t border-border my-2"></div>
+                            <div class="text-xs text-gray-500 uppercase tracking-wide mb-2"
+                                 data-help-title="{{help.tokens.pipeline_breakdown.title}}" data-help="{{help.tokens.pipeline_breakdown.body}}">Pipeline Breakdown</div>
+                            <template x-for="[name, t] in Object.entries(stats.pipeline_timing || {})" :key="name">
+                                <div class="flex justify-between items-center mb-1"
+                                     :data-help-title="name" :data-help="helpText.tokens.pipeline_stage.body.replace('{value}', name)">
+                                    <span class="text-xs text-gray-400 font-mono truncate mr-2" x-text="name"></span>
+                                    <span class="text-xs font-mono whitespace-nowrap"
+                                          :class="t.average_ms > 100 ? 'text-amber-400' : t.average_ms > 50 ? 'text-yellow-400' : 'text-gray-400'"
+                                          x-text="t.average_ms.toFixed(0) + 'ms avg / ' + t.max_ms.toFixed(0) + 'ms max'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Per-Model Savings Breakdown -->
+        <template x-if="Object.keys(stats.cost?.per_model || {}).length > 0">
+            <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
+                <div class="px-4 py-3 border-b border-border flex justify-between items-center"
+                     data-help-title="{{help.tokens.per_model_token_savings.title}}" data-help="{{help.tokens.per_model_token_savings.body}}">
+                    <span class="text-sm font-medium text-gray-300">Per-Model Token Savings</span>
+                    <span class="text-xs text-gray-500">Exact tokens saved per model</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm" style="table-layout:fixed">
+                        <colgroup>
+                            <col style="width:40%">
+                            <col style="width:12%">
+                            <col style="width:18%">
+                            <col style="width:18%">
+                            <col style="width:12%">
+                        </colgroup>
+                        <thead>
+                            <tr class="text-xs text-gray-500 uppercase tracking-wide">
+                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'model', 'asc')"
+                                    data-help-title="{{help.tokens.model.title}}" data-help="{{help.tokens.model.body}}">Model<span x-text="sortIcon('perModel', 'model')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'requests')"
+                                    data-help-title="{{help.tokens.requests.title}}" data-help="{{help.tokens.requests.body}}">Requests<span x-text="sortIcon('perModel', 'requests')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_saved')"
+                                    data-help-title="{{help.tokens.tokens_saved.title}}" data-help="{{help.tokens.tokens_saved.body}}">Tokens Saved<span x-text="sortIcon('perModel', 'tokens_saved')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_sent')"
+                                    data-help-title="{{help.tokens.tokens_sent.title}}" data-help="{{help.tokens.tokens_sent.body}}">Tokens Sent<span x-text="sortIcon('perModel', 'tokens_sent')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'reduction_pct')" data-help-title="{{help.tokens.reduction.title}}" data-help="{{help.tokens.reduction.body}}">Reduction<span x-text="sortIcon('perModel', 'reduction_pct')"></span></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-border">
+                            <template x-for="row in perModelRows" :key="row.model">
+                                <tr class="hover:bg-border/30 transition-colors">
+                                    <td class="px-4 py-3 text-left">
+                                        <span class="px-2 py-0.5 bg-border rounded text-xs" x-text="truncateModel(row.model)"></span>
+                                    </td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="row.requests"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums text-accent" x-text="formatNumber(row.tokens_saved)"></td>
+                                    <td class="px-4 py-3 text-right font-mono tabular-nums" x-text="formatNumber(row.tokens_sent)"></td>
+                                    <td class="px-4 py-3 text-right">
+                                        <span class="text-accent font-mono tabular-nums" x-text="row.reduction_pct.toFixed(1) + '%'"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </template>
+
+            </div>
+        </section>

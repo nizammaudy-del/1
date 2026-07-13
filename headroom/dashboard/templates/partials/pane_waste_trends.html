@@ -1,0 +1,72 @@
+        <!-- Pane: Waste & Trends -->
+        <section x-show="paneVisible('insights')" class="mb-6" :class="panes.insights ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('insights')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="{{help.waste_trends.waste_trends.title}}" data-help="{{help.waste_trends.waste_trends.body}}">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Waste &amp; Trends</span>
+            </button>
+            <div x-show="!panes.insights">
+        <!-- New: Waste Signal Breakdown + Cumulative Savings Trend -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <!-- What Headroom Removed -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.waste_trends.what_headroom_removed.title}}" data-help="{{help.waste_trends.what_headroom_removed.body}}">What Headroom Removed <span class="text-gray-600">&#9432;</span></div>
+                <template x-if="Object.keys(stats.waste_signals || {}).length > 0">
+                    <div class="space-y-3">
+                        <template x-for="[signal, tokens] in sortedWasteSignals" :key="signal">
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="text-sm text-gray-400" x-text="wasteSignalLabel(signal)"></span>
+                                    <span class="font-mono text-sm text-accent" x-text="formatNumber(tokens) + ' tokens'"></span>
+                                </div>
+                                <div class="w-full h-2 bg-border rounded-full overflow-hidden">
+                                    <div class="h-full rounded-full transition-all duration-500"
+                                         :class="wasteSignalColor(signal)"
+                                         :style="'width: ' + getWastePercent(tokens) + '%'"></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+                <template x-if="Object.keys(stats.waste_signals || {}).length === 0">
+                    <div class="text-sm text-gray-500 py-8 text-center space-y-1">
+                        <div class="text-gray-400">Nothing removed yet.</div>
+                        <div>Once you route a client through the proxy and make a request,
+                        this breaks down the waste Headroom compressed away &mdash; bloated tool
+                        output, repeated file listings, minifiable JSON.</div>
+                        <div class="text-gray-600">Point a client at
+                        <span class="font-mono">ANTHROPIC_BASE_URL=http://127.0.0.1:8787</span> to start.</div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Cumulative Savings Trend -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="flex justify-between items-center mb-4" data-help-title="{{help.waste_trends.savings_over_time.title}}" data-help="{{help.waste_trends.savings_over_time.body}}">
+                    <span class="text-sm font-medium text-gray-300">Savings Over Time</span>
+                    <span class="text-xs text-gray-500 font-mono" x-text="formatNumber(stats.tokens?.saved || 0) + ' tokens total'"></span>
+                </div>
+                <template x-if="(stats.savings_history || []).length >= 2">
+                    <div class="h-32">
+                        <svg class="w-full h-full" viewBox="0 0 200 64" preserveAspectRatio="none">
+                            <defs>
+                                <linearGradient id="trend-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.2"/>
+                                    <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
+                                </linearGradient>
+                            </defs>
+                            <path class="trend-area" :d="getTrendArea(stats.savings_history)"></path>
+                            <path class="trend-line" :d="getTrendLine(stats.savings_history)"></path>
+                        </svg>
+                    </div>
+                </template>
+                <template x-if="(stats.savings_history || []).length < 2">
+                    <div class="h-32 flex items-center justify-center text-sm text-gray-500 italic">
+                        Trend data will appear after multiple requests.
+                    </div>
+                </template>
+            </div>
+        </div>
+
+            </div>
+        </section>

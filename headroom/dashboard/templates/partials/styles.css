@@ -1,0 +1,141 @@
+        :root {
+            --bg: #f9fafb;
+            --color-surface: #ffffff;
+            --color-border: #e5e7eb;
+            --card-alt-bg: #f3f4f6;
+            --diff-before-header: #fff5f5;
+            --diff-before-body: #fef2f2;
+            --diff-after-header: #f0fdf4;
+            --diff-after-body: #f0fdf4;
+            --ttl-card-bg: linear-gradient(180deg, rgba(34,211,238,0.10), rgba(224,249,253,0.90));
+        }
+        html.dark {
+            --bg: #0f0f0f;
+            --color-surface: #1a1a1a;
+            --color-border: #2a2a2a;
+            --card-alt-bg: #141414;
+            --diff-before-header: #450a0a;
+            --diff-before-body: #3f0d0d;
+            --diff-after-header: #022c22;
+            --diff-after-body: #052e1f;
+            --ttl-card-bg: linear-gradient(180deg, rgba(34,211,238,0.10), rgba(12,16,22,0.88));
+        }
+        body { background: var(--bg); }
+        .sparkline { stroke: #22d3ee; stroke-width: 1.5; fill: none; }
+        .sparkline-area { fill: url(#sparkline-gradient); }
+        .trend-line { stroke: #22d3ee; stroke-width: 2; fill: none; }
+        .trend-area { fill: url(#trend-gradient); }
+        @keyframes pulse-subtle { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .pulse-live { animation: pulse-subtle 2s ease-in-out infinite; }
+        #feed-container {
+            height: calc(100vh - 57px);
+            scroll-behavior: smooth;
+        }
+        #feed-virtual-list {
+            position: relative;
+        }
+        .transformation-card { background: var(--card-alt-bg); }
+        .transformation-card:hover { background: var(--color-surface); }
+        .diff-before-header { background: var(--diff-before-header); }
+        .diff-before { background: var(--diff-before-body); }
+        .diff-after-header { background: var(--diff-after-header); }
+        .diff-after { background: var(--diff-after-body); }
+        .diff-removed { color: #f87171; text-decoration: line-through; opacity: 0.7; }
+        .diff-added { color: #4ade80; text-decoration: none; font-weight: 600; }
+        .diff-unchanged { opacity: 0.55; }
+        html:not(.dark) .diff-removed { color: #b91c1c; }
+        html:not(.dark) .diff-added { color: #15803d; }
+        .ttl-bucket-gradient-card { background: var(--ttl-card-bg); }
+
+        /* Light mode: invert the gray text scale (dark bg grays → light bg grays) */
+        html:not(.dark) body { color: #1f2937; }
+        html:not(.dark) .text-gray-100 { color: #111827; }
+        html:not(.dark) .text-gray-200 { color: #1f2937; }
+        html:not(.dark) .text-gray-300 { color: #374151; }
+        html:not(.dark) .text-gray-400 { color: #4b5563; }
+        html:not(.dark) .text-gray-500 { color: #6b7280; }
+        html:not(.dark) .text-gray-600 { color: #4b5563; }
+        html:not(.dark) .hover\:text-gray-200:hover { color: #111827; }
+        html:not(.dark) .hover\:text-white:hover { color: #111827; }
+        /* Light mode overrides for dark-specific utility classes */
+        html:not(.dark) .bg-black\/20 { background-color: rgba(0,0,0,0.04); }
+        html:not(.dark) .bg-black\/30 { background-color: rgba(0,0,0,0.06); }
+        html:not(.dark) .border-white\/8 { border-color: rgba(0,0,0,0.10); }
+        html:not(.dark) .ring-white\/5 { --tw-ring-color: rgba(0,0,0,0.08); }
+        html:not(.dark) .border-red-900\/30 { border-color: rgba(239,68,68,0.25); }
+        html:not(.dark) .border-emerald-900\/30 { border-color: rgba(16,185,129,0.25); }
+        /* Light mode: amber/yellow text tuned for dark backgrounds, too pale to read on light ones */
+        html:not(.dark) .text-amber-50 { color: #78350f; }
+        html:not(.dark) .text-amber-100\/90 { color: #78350f; }
+        html:not(.dark) .text-amber-200 { color: #78350f; }
+        html:not(.dark) .text-amber-300 { color: #92400e; }
+        html:not(.dark) .text-amber-300\/75 { color: #92400e; }
+        html:not(.dark) .text-amber-300\/90 { color: #92400e; }
+        html:not(.dark) .text-yellow-400 { color: #854d0e; }
+        /* Light mode: TTL card color adjustments */
+        html:not(.dark) .text-cyan-50 { color: #164e63; }
+        html:not(.dark) .text-cyan-100 { color: #164e63; }
+        html:not(.dark) .text-violet-50 { color: #4c1d95; }
+        html:not(.dark) .text-cyan-200\/80 { color: #0e7490; }
+        html:not(.dark) .text-cyan-300\/75 { color: #0891b2; }
+        html:not(.dark) .text-violet-300\/75 { color: #7c3aed; }
+        html:not(.dark) .text-violet-300\/90 { color: #7c3aed; }
+        /* Light mode: amber/cyan gaps missed in the original sweep */
+        html:not(.dark) .text-amber-400 { color: #b45309; }
+        html:not(.dark) .text-amber-400\/70 { color: #b45309; }
+        html:not(.dark) .text-cyan-300 { color: #155e75; }
+        html:not(.dark) .text-cyan-300\/50 { color: #155e75; }
+        html:not(.dark) .text-cyan-300\/70 { color: #155e75; }
+        html:not(.dark) .text-cyan-400 { color: #0e7490; }
+        html:not(.dark) .text-cyan-500\/60 { color: #0e7490; }
+        /* Light mode: red text tuned for dark backgrounds, too pale to read on light ones */
+        html:not(.dark) .text-red-50 { color: #7f1d1d; }
+        html:not(.dark) .text-red-200 { color: #7f1d1d; }
+        html:not(.dark) .text-red-300 { color: #991b1b; }
+        html:not(.dark) .text-red-300\/75 { color: #991b1b; }
+        html:not(.dark) .text-red-300\/90 { color: #991b1b; }
+        html:not(.dark) .text-red-400 { color: #b91c1c; }
+        /* Light mode: emerald/green text tuned for dark backgrounds */
+        html:not(.dark) .text-emerald-50 { color: #064e3b; }
+        html:not(.dark) .text-emerald-300 { color: #065f46; }
+        html:not(.dark) .text-emerald-300\/75 { color: #065f46; }
+        html:not(.dark) .text-emerald-300\/90 { color: #065f46; }
+        html:not(.dark) .text-emerald-400 { color: #047857; }
+        html:not(.dark) .text-emerald-400\/70 { color: #047857; }
+        html:not(.dark) .text-green-300 { color: #166534; }
+        /* Light mode: remaining accent color families tuned for dark backgrounds */
+        html:not(.dark) .text-blue-400 { color: #1d4ed8; }
+        html:not(.dark) .text-orange-400 { color: #c2410c; }
+        html:not(.dark) .text-pink-400 { color: #be185d; }
+        html:not(.dark) .text-purple-400 { color: #9333ea; }
+        html:not(.dark) .text-rose-400 { color: #be123c; }
+        html:not(.dark) .text-teal-400 { color: #0f766e; }
+        /* Light mode: fix hardcoded dark card backgrounds */
+        .bg-card-alt { background: var(--card-alt-bg); }
+        .hover-bg-surface:hover { background: var(--color-surface); }
+
+        [x-cloak] { display: none !important; }
+
+        /* Floating help control: glued to the bottom-right corner of the
+           viewport (position: fixed, so it scrolls along with the page and
+           stays put). Rests as a small button; expands into a card sized to
+           match the old help rail's text (text-sm / text-xs) and width. */
+        #help-float {
+            position: fixed; right: 16px; bottom: 16px; z-index: 60;
+        }
+        .help-float-card {
+            width: 260px;
+            max-width: calc(100vw - 32px);
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            padding: 10px 12px;
+        }
+        @media (max-width: 1024px) {
+            .help-float-card { width: 220px; }
+        }
+
+        /* Collapsible pane chevron */
+        .pane-chevron { transition: transform 0.2s ease; }
+        .pane-collapsed .pane-chevron { transform: rotate(-90deg); }

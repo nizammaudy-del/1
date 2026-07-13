@@ -1,0 +1,189 @@
+    <div x-show="settingsOpen" x-cloak
+         class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
+         @keydown.escape.window="settingsOpen = false"
+         style="display: none;">
+        <div @click.away="settingsOpen = false"
+             class="w-full max-w-2xl rounded-lg border border-border bg-surface shadow-xl">
+            <div class="flex items-center justify-between border-b border-border px-6 py-4">
+                <h2 class="text-lg font-semibold text-gray-100">Settings</h2>
+                <button type="button" @click="settingsOpen = false" aria-label="Close settings" class="text-gray-500 hover:text-gray-200" title="Close">&#10005;</button>
+            </div>
+
+            <div class="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-6">
+                <!-- feedback banner -->
+                <template x-if="settingsMessage">
+                    <div class="rounded-md px-3 py-2 text-sm"
+                         :class="settingsError ? 'bg-red-500/15 text-red-300 border border-red-500/30' : 'bg-green-500/15 text-green-300 border border-green-500/30'"
+                         x-text="settingsMessage"></div>
+                </template>
+
+                <!-- Polling / Display -->
+                <section>
+                    <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Polling &amp; Display</h3>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.stats_poll_ms.title}}" data-help="{{help.settings.stats_poll_ms.body}}">Stats poll (ms)
+                            <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_stats_poll_ms"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">How often the hero metrics, throughput, and health refresh.</span>
+                        </label>
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.history_poll_ms.title}}" data-help="{{help.settings.history_poll_ms.body}}">History poll (ms)
+                            <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_history_poll_ms"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Refresh cadence for the Historical view rollups.</span>
+                        </label>
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.feed_poll_ms.title}}" data-help="{{help.settings.feed_poll_ms.body}}">Feed poll (ms)
+                            <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_feed_poll_ms"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Refresh cadence for the Live Feed drawer when it's open.</span>
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Profiles / Budget (restart required) -->
+                <section>
+                    <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Profiles &amp; Budget</h3>
+                    <p class="mb-2 text-xs text-amber-400">Changes here take effect after a proxy restart.</p>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.savings_profile.title}}" data-help="{{help.settings.savings_profile.body}}">Savings profile
+                            <input type="text" placeholder="(default)" x-model="settingsForm.settings.savings_profile"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Named preset controlling how aggressively prompts are compressed. Blank uses the built-in default.</span>
+                        </label>
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.target_ratio_0_1.title}}" data-help="{{help.settings.target_ratio_0_1.body}}">Target ratio (0-1)
+                            <input type="number" min="0" max="1" step="0.05" x-model.number="settingsForm.settings.target_ratio"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Desired fraction of input kept after compression (e.g. 0.6 aims to keep ~60%). Lower is more aggressive.</span>
+                        </label>
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.budget_limit_usd.title}}" data-help="{{help.settings.budget_limit_usd.body}}">Budget limit (USD)
+                            <input type="number" min="0" step="0.01" x-model.number="settingsForm.settings.budget_limit_usd"
+                                   class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                            <span class="mt-1 block text-xs text-gray-500">Spend ceiling per budget period. Leave 0/blank for no limit.</span>
+                        </label>
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.budget_period.title}}" data-help="{{help.settings.budget_period.body}}">Budget period
+                            <select x-model="settingsForm.settings.budget_period"
+                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
+                                <option value="hourly">hourly</option>
+                                <option value="daily">daily</option>
+                                <option value="monthly">monthly</option>
+                            </select>
+                            <span class="mt-1 block text-xs text-gray-500">Window the budget limit resets over.</span>
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Pricing overrides -->
+                <section>
+                    <div class="mb-2 flex items-center justify-between">
+                        <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400">Token Pricing Overrides</h3>
+                        <button @click="addPricingRow()" class="rounded border border-border px-2 py-1 text-xs text-gray-300 hover:text-gray-100">+ Add model</button>
+                    </div>
+                    <p class="mb-2 text-xs text-gray-500">USD per 1M tokens. Models left unset use the built-in LiteLLM pricing. C.Read / C.Write are the cache read and cache write rates.</p>
+                    <div class="space-y-2">
+                        <!-- Column headers (top labels replace the cramped per-input placeholders) -->
+                        <div class="grid grid-cols-12 gap-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 px-0.5">
+                            <span class="col-span-3" data-help-title="{{help.settings.model.title}}" data-help="{{help.settings.model.body}}">Model</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.input.title}}" data-help="{{help.settings.input.body}}">Input</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.output.title}}" data-help="{{help.settings.output.body}}">Output</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.c_read.title}}" data-help="{{help.settings.c_read.body}}">C.Read</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.c_write.title}}" data-help="{{help.settings.c_write.body}}">C.Write</span>
+                            <span class="col-span-1"></span>
+                        </div>
+                        <template x-for="(row, idx) in settingsForm.pricingRows" :key="idx">
+                            <div class="grid grid-cols-12 items-center gap-2">
+                                <input type="text" x-model="row.model"
+                                       class="col-span-3 rounded border border-border bg-surface px-2 py-1 text-xs text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.input_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.output_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.cache_read_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <input type="number" min="0" step="0.01" x-model.number="row.cache_write_per_1m"
+                                       class="col-span-2 rounded border border-border bg-surface px-2 py-1 text-xs text-right text-gray-100">
+                                <button @click="settingsForm.pricingRows.splice(idx, 1)" class="col-span-1 text-gray-500 hover:text-red-400" title="Remove">&#10005;</button>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+
+                <!-- Layout & Visibility (client-local view prefs; not saved to backend) -->
+                <section>
+                    <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Layout &amp; Visibility</h3>
+                    <p class="mb-3 text-xs text-gray-500">These are view preferences stored only in this browser. Hidden items stop rendering; collapse a pane from its own header.</p>
+
+                    <div class="mb-4">
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500" data-help-title="{{help.settings.panes.title}}" data-help="{{help.settings.panes.body}}">Panes</div>
+                        <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                            <template x-for="p in [
+                                    {key:'overview', label:'Overview'},
+                                    {key:'activeAgents', label:'Active Agents'},
+                                    {key:'windows', label:'Provider Windows & Cache'},
+                                    {key:'insights', label:'Waste & Trends'},
+                                    {key:'tokens', label:'Token Usage, Providers & Performance'},
+                                    {key:'project', label:'Per-Project'},
+                                    {key:'requests', label:'Recent Requests'},
+                                    {key:'ccr', label:'CCR Feedback'},
+                                    {key:'diagnostics', label:'Diagnostics'},
+                                    {key:'historyOverview', label:'History: Overview'},
+                                    {key:'historyTrends', label:'History: Trends'}
+                                ]" :key="p.key">
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" :checked="paneVisible(p.key)"
+                                           @change="setPaneVisible(p.key, $event.target.checked)"
+                                           class="rounded border-border bg-surface">
+                                    <span x-text="p.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500" data-help-title="{{help.settings.tabs.title}}" data-help="{{help.settings.tabs.body}}">Tabs</div>
+                        <div class="flex flex-wrap gap-4">
+                            <template x-for="t in [{key:'session',label:'Session'},{key:'history',label:'Historical'},{key:'mcp',label:'MCP'}]" :key="t.key">
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" :checked="tabVisible(t.key)"
+                                           @change="setTabVisible(t.key, $event.target.checked)"
+                                           class="rounded border-border bg-surface">
+                                    <span x-text="t.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Header</div>
+                        <div class="flex flex-wrap gap-4">
+                            <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="{{help.settings.status_uptime_cluster.title}}" data-help="{{help.settings.status_uptime_cluster.body}}">
+                                <input type="checkbox" x-model="showStatusCluster" @change="saveUiPrefs()"
+                                       class="rounded border-border bg-surface">
+                                <span>Status &amp; uptime cluster</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="{{help.settings.mcp_dashboards_button.title}}" data-help="{{help.settings.mcp_dashboards_button.body}}">
+                                <input type="checkbox" x-model="showMcpButton" @change="saveUiPrefs()"
+                                       class="rounded border-border bg-surface">
+                                <span>MCP Dashboards button</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Notifications</div>
+                        <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="{{help.settings.near_limit_notifications.title}}"
+                               data-help="{{help.settings.near_limit_notifications.body}}">
+                            <input type="checkbox" :checked="notifyEnabled" @change="toggleNotifyEnabled($event.target.checked)"
+                                   class="rounded border-border bg-surface">
+                            <span>Native OS notifications for near-limit warnings</span>
+                        </label>
+                    </div>
+                </section>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 border-t border-border px-6 py-4">
+                <button @click="settingsOpen = false" class="rounded-md border border-border px-4 py-1.5 text-sm text-gray-300 hover:text-gray-100">Cancel</button>
+                <button @click="saveSettings()" :disabled="settingsSaving"
+                        class="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+                        x-text="settingsSaving ? 'Saving...' : 'Save'"></button>
+            </div>
+        </div>
+    </div>

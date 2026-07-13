@@ -30,7 +30,6 @@ import contextlib
 import hmac
 import json
 import logging
-import math
 import os
 import sys
 import threading
@@ -39,7 +38,7 @@ from collections.abc import Callable
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
     from ..backends.base import Backend
@@ -52,9 +51,9 @@ import httpx
 
 try:
     import uvicorn
-    from fastapi import Depends, FastAPI, HTTPException, Request, Response
+    from fastapi import Depends, FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse
 
     FASTAPI_AVAILABLE = True
 except ImportError:
@@ -65,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from headroom._version import __version__
 from headroom.agent_savings import proxy_pipeline_kwargs
-from headroom.cache.compression_feedback import get_compression_feedback
+from headroom.cache.compression_feedback import get_compression_feedback  # noqa: F401
 from headroom.cache.compression_store import format_retrieval_miss_detail, get_compression_store
 from headroom.ccr import (
     CCR_TOOL_NAME,
@@ -82,14 +81,11 @@ from headroom.config import (
     CacheAlignerConfig,
     ReadLifecycleConfig,
 )
-from headroom.dashboard import get_dashboard_html
 from headroom.observability import (
     LangfuseTracingConfig,
     OTelMetricsConfig,
     configure_langfuse_tracing,
     configure_otel_metrics,
-    get_langfuse_tracing_status,
-    get_otel_metrics_status,
     shutdown_headroom_tracing,
     shutdown_otel_metrics,
 )
@@ -131,7 +127,7 @@ from headroom.proxy.helpers import (
     MAX_REQUEST_BODY_SIZE,  # noqa: F401
     MAX_SSE_BUFFER_SIZE,  # noqa: F401
     RETRYABLE_OVERLOAD_STATUSES,
-    _get_context_tool_stats,
+    _get_context_tool_stats,  # noqa: F401
     _get_image_compressor,  # noqa: F401
     _get_rtk_stats,  # noqa: F401
     _read_request_json,  # noqa: F401
@@ -162,7 +158,6 @@ from headroom.proxy.project_context import (
 from headroom.proxy.prometheus_metrics import PrometheusMetrics  # noqa: F401
 from headroom.proxy.rate_limiter import TokenBucketRateLimiter  # noqa: F401
 from headroom.proxy.request_logger import RequestLogger  # noqa: F401
-from headroom.proxy.savings_tracker import LITELLM_AVAILABLE
 from headroom.proxy.semantic_cache import SemanticCache  # noqa: F401
 from headroom.proxy.ssl_context import build_httpx_verify
 from headroom.proxy.tool_schema_savings_policy import tool_schema_saved_from_tags
@@ -2255,6 +2250,16 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     app.state.rust_core_status = "missing"
     app.state.rust_core_error = None
 
+    # Dashboard-support routes (stats, config, admin, MCP monitoring).
+    # Registered EARLY, before any other route in this function, so specific
+    # dashboard paths (e.g. /v1/retrieve/stats) always win against
+    # parametrized routes defined later (e.g. /v1/retrieve/{hash_key}) —
+    # FastAPI matches routes in registration order. Still well before
+    # register_provider_routes's "/{path:path}" catch-all at the end.
+    from headroom.proxy.routers.dashboard import build_dashboard_router
+
+    app.include_router(build_dashboard_router(proxy, config))
+
     def _iso_utc_now() -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -2942,803 +2947,6 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             content={"applied": applied, "runtime_env": runtime_env.effective_runtime_env()},
         )
 
-    @app.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard():
-        """Serve the Headroom dashboard UI."""
-        return get_dashboard_html()
-
-    @app.get("/favicon.ico")
-    async def favicon() -> Response:
-        # Registered before register_provider_routes' catch-all passthrough
-        # route so browsers' automatic favicon requests for /dashboard are
-        # answered locally instead of being tunneled to the wrapped upstream
-        # provider (GH #1787).
-        return Response(status_code=204)
-
-    DASHBOARD_STATS_CACHE_TTL_SECONDS = 5.0
-    _stats_snapshot_lock = asyncio.Lock()
-    _stats_snapshot: dict[str, Any] = {"expires_at": 0.0, "value": None}
-
-    THROUGHPUT_CACHE_TTL_SECONDS = 10.0
-    _throughput_cache_lock = asyncio.Lock()
-    _throughput_cache: dict[str, Any] = {"expires_at": 0.0, "value": None}
-
-    RECENT_REQUEST_LOG_WINDOW = 100
-
-    def _is_recent_request_number(value: Any) -> bool:
-        return (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(float(value))
-        )
-
-    def _recent_request_optional_number(log: dict[str, Any], key: str) -> int | float | None:
-        value = log.get(key)
-        return value if _is_recent_request_number(value) else None
-
-    def _recent_request_token_accounting_status(log: dict[str, Any]) -> str:
-        token_fields = (
-            "input_tokens_original",
-            "input_tokens_optimized",
-            "tokens_saved",
-            "savings_percent",
-        )
-        present = [_is_recent_request_number(log.get(field)) for field in token_fields]
-        if all(present):
-            return "complete"
-        if any(present):
-            return "partial"
-        return "missing"
-
-    def _build_recent_request_payload(limit: int = RECENT_REQUEST_LOG_WINDOW) -> dict[str, Any]:
-        recent_request_logs = proxy.logger.get_recent(limit) if proxy.logger else []
-        dashboard_recent_requests = []
-        for log in recent_request_logs:
-            token_accounting_status = _recent_request_token_accounting_status(log)
-            dashboard_recent_requests.append(
-                {
-                    "request_id": log.get("request_id"),
-                    "timestamp": log.get("timestamp"),
-                    "provider": log.get("provider"),
-                    "model": log.get("model"),
-                    "input_tokens_original": _recent_request_optional_number(
-                        log, "input_tokens_original"
-                    ),
-                    "input_tokens_optimized": _recent_request_optional_number(
-                        log, "input_tokens_optimized"
-                    ),
-                    "output_tokens": _recent_request_optional_number(log, "output_tokens"),
-                    "tokens_saved": _recent_request_optional_number(log, "tokens_saved"),
-                    "savings_percent": _recent_request_optional_number(log, "savings_percent"),
-                    "optimization_latency_ms": _recent_request_optional_number(
-                        log, "optimization_latency_ms"
-                    ),
-                    "total_latency_ms": _recent_request_optional_number(log, "total_latency_ms"),
-                    "has_exact_tokens": token_accounting_status == "complete",
-                    "token_accounting_status": token_accounting_status,
-                    "transforms_applied": log.get("transforms_applied", []),
-                    "waste_signals": log.get("waste_signals"),
-                    "tool_schema_saved_tokens": _tool_schema_saved_from_tags(log.get("tags")),
-                }
-            )
-        dashboard_recent_requests = dashboard_recent_requests[-10:]
-        return {
-            "request_logs": recent_request_logs[-10:],
-            "recent_requests": dashboard_recent_requests,
-        }
-
-    async def _build_stats_payload() -> dict[str, Any]:
-        """Build the full `/stats` response payload.
-
-        This is the main stats endpoint - it aggregates data from all subsystems:
-        - Request metrics (total, cached, failed, by model/provider)
-        - Token usage and savings
-        - Cost tracking
-        - Canonical persisted display_session metrics for downstream dashboards
-        - Compression (CCR) statistics
-        - Telemetry/TOIN (data flywheel) statistics
-        - Cache and rate limiter stats
-        """
-        m = proxy.metrics
-
-        import time
-
-        async with _throughput_cache_lock:
-            now = time.time()
-            if _throughput_cache["expires_at"] < now or _throughput_cache["value"] is None:
-
-                def _compute_throughput():
-                    from headroom.perf.analyzer import build_perf_summary, parse_log_files
-
-                    perf_report = parse_log_files(last_n_hours=1.0)
-                    return build_perf_summary(perf_report).get("throughput")
-
-                try:
-                    throughput = await asyncio.to_thread(_compute_throughput)
-                    _throughput_cache["value"] = throughput
-                    _throughput_cache["expires_at"] = now + THROUGHPUT_CACHE_TTL_SECONDS
-                except Exception as e:
-                    logger.warning("Failed to calculate throughput for stats: %s", e, exc_info=True)
-                    if _throughput_cache["value"] is None:
-                        _throughput_cache["value"] = None
-            throughput = _throughput_cache["value"]
-
-        # Calculate average latency
-        avg_latency_ms = round(m.latency_sum_ms / m.latency_count, 2) if m.latency_count > 0 else 0
-        min_latency_ms = (
-            round(m.latency_min_ms, 2)
-            if m.latency_count > 0 and m.latency_min_ms != float("inf")
-            else 0
-        )
-        max_latency_ms = round(m.latency_max_ms, 2) if m.latency_count > 0 else 0
-
-        # Calculate Headroom overhead (optimization time only, excludes pass-through requests)
-        avg_overhead_ms = (
-            round(m.overhead_sum_ms / m.overhead_count, 2) if m.overhead_count > 0 else 0
-        )
-        min_overhead_ms = (
-            round(m.overhead_min_ms, 2)
-            if m.overhead_count > 0 and m.overhead_min_ms != float("inf")
-            else 0
-        )
-        max_overhead_ms = round(m.overhead_max_ms, 2) if m.overhead_count > 0 else 0
-
-        # Calculate TTFB (time to first byte)
-        avg_ttfb_ms = round(m.ttfb_sum_ms / m.ttfb_count, 2) if m.ttfb_count > 0 else 0
-        min_ttfb_ms = (
-            round(m.ttfb_min_ms, 2) if m.ttfb_count > 0 and m.ttfb_min_ms != float("inf") else 0
-        )
-        max_ttfb_ms = round(m.ttfb_max_ms, 2) if m.ttfb_count > 0 else 0
-
-        def _pct(part: int | float, whole: int | float) -> float:
-            return round((float(part) / float(whole)) * 100.0, 2) if whole else 0.0
-
-        # Get compression store stats
-        store = get_compression_store()
-        compression_stats = store.get_stats()
-
-        # Get telemetry/TOIN stats
-        telemetry = get_telemetry_collector()
-        telemetry_stats = telemetry.get_stats()
-
-        # Get feedback loop stats
-        feedback = get_compression_feedback()
-        feedback_stats = feedback.get_stats()
-
-        # Build prefix cache stats once (used in both prefix_cache and cost)
-        prefix_cache_stats = _build_prefix_cache_stats(m, proxy.cost_tracker)
-
-        # Fetch CLI filtering savings from the selected context tool. These
-        # tokens are avoided before they reach model context.
-        cli_filtering_stats = await asyncio.to_thread(_get_context_tool_stats)
-        cli_filtering_tool = (
-            str(cli_filtering_stats.get("tool", "rtk")) if cli_filtering_stats else "rtk"
-        )
-        cli_filtering_label = (
-            str(cli_filtering_stats.get("label", "RTK")) if cli_filtering_stats else "RTK"
-        )
-        cli_tokens_avoided = (
-            cli_filtering_stats.get("tokens_saved", 0) if cli_filtering_stats else 0
-        )
-        cli_filtering_session = (
-            cli_filtering_stats.get("session", {}) if cli_filtering_stats else {}
-        )
-        cli_filtering_lifetime = (
-            cli_filtering_stats.get("lifetime", {}) if cli_filtering_stats else {}
-        )
-        rtk_tokens_avoided = cli_tokens_avoided if cli_filtering_tool == "rtk" else 0
-        lean_ctx_tokens_avoided = cli_tokens_avoided if cli_filtering_tool == "lean-ctx" else 0
-        cli_filtering_available = bool(
-            cli_filtering_stats and cli_filtering_stats.get("installed", False)
-        )
-
-        # Calculate total tokens before Headroom-side reduction. Proxy
-        # compression and the configured context tool both remove tokens before
-        # they reach model context, so dashboard-facing savings combines them.
-        proxy_compression_tokens = m.tokens_saved_total
-        all_layers_tokens_saved = proxy_compression_tokens + cli_tokens_avoided
-        total_tokens_before = m.tokens_input_total + all_layers_tokens_saved
-        proxy_total_before_compression = m.tokens_input_total + proxy_compression_tokens
-        # `attempted_input_tokens` is the compressible-only denominator
-        # (extracted units + tool schema). The "active compression"
-        # ratio is what fraction of the tokens we *tried* to compress
-        # actually got compressed. Excludes prefix-frozen content
-        # (user/system messages, prior turns) we never touched —
-        # otherwise the ratio is dominated by content we deliberately
-        # avoided changing for prefix-cache safety.
-        # `attempted_input_tokens_total` is already pre-compression: it
-        # accumulates `unit.tokens_before` for each eligible unit that
-        # reached the router, plus the original (pre-compaction) tool
-        # schema size. So the savings rate is plain `saved / attempted`
-        # — adding `saved` again would double-count.
-        attempted_input_tokens = getattr(m, "attempted_input_tokens_total", 0)
-        # New-content denominator: what the provider actually billed as
-        # non-cache-read input (uncached + cache-write tokens, summed
-        # across providers from response usage). Unlike
-        # `proxy_total_before_compression`, this does NOT recount the
-        # full transcript on every turn — a long session's history is
-        # served from prefix cache, not re-billed, so it doesn't belong
-        # in a denominator that claims to measure what compression had
-        # any power over. Tokens Headroom removed never reached the
-        # provider at all, so they're added back to form the baseline.
-        _pc_totals = prefix_cache_stats.get("totals", {})
-        new_input_tokens = int(_pc_totals.get("uncached_input_tokens", 0) or 0) + int(
-            _pc_totals.get("cache_write_tokens", 0) or 0
-        )
-
-        # Build human-readable summary
-        summary = _build_session_summary(
-            proxy, m, prefix_cache_stats, cli_tokens_avoided, total_tokens_before
-        )
-        # DEBUG: log the summary payload for external upsert consumers
-        try:
-            logger.debug("/stats summary data: %r", summary)
-        except Exception:
-            logger.warning("Failed to log /stats summary payload")
-
-        # Compression cache stats (token mode). Snapshot the cache list under
-        # the dict lock so a concurrent eviction can't mutate the dict while
-        # we iterate. Each per-session `get_stats()` is independently
-        # thread-safe via the cache's own internal lock.
-        compression_cache_stats: dict = {}
-        if proxy.config.mode == PROXY_MODE_TOKEN and proxy._compression_caches:
-            with proxy._compression_caches_lock:
-                _caches_snapshot = list(proxy._compression_caches.values())
-                _active_sessions = len(proxy._compression_caches)
-            total_entries = 0
-            total_hits = 0
-            total_misses = 0
-            total_tokens_saved = 0
-            for cache in _caches_snapshot:
-                s = cache.get_stats()
-                total_entries += s.get("entries", 0)
-                total_hits += s.get("hits", 0)
-                total_misses += s.get("misses", 0)
-                total_tokens_saved += s.get("total_tokens_saved", 0)
-            compression_cache_stats = {
-                "mode": PROXY_MODE_TOKEN,
-                "active_sessions": _active_sessions,
-                "total_entries": total_entries,
-                "total_hits": total_hits,
-                "total_misses": total_misses,
-                "hit_rate": round(total_hits / max(1, total_hits + total_misses) * 100, 1),
-                "total_tokens_saved": total_tokens_saved,
-            }
-        else:
-            compression_cache_stats = {"mode": proxy.config.mode}
-
-        # Build unified savings summary (all layers)
-        cache_net_usd = prefix_cache_stats.get("totals", {}).get("net_savings_usd", 0.0)
-        total_tokens_all_layers = all_layers_tokens_saved
-        persistent_savings = m.savings_tracker.stats_preview()
-        display_session = persistent_savings.get("display_session", {})
-        recent_request_logs = proxy.logger.get_recent(10_000) if proxy.logger else []
-        recent_request_payload = _build_recent_request_payload()
-
-        # Tool-schema deferral savings: tool-definition tokens kept out of the
-        # model's context by deferring heavy schemas until they're needed
-        # (native tool-search injection + any registered turn-hook tools
-        # rewrite). Attributed to Headroom only — see _tool_schema_saved_from_tags.
-        # Aggregated over the recent request-log window.
-        tool_schema_tokens = 0
-        tool_schema_requests = 0
-        for _ts_log in recent_request_logs:
-            _ts_saved = _tool_schema_saved_from_tags(_ts_log.get("tags"))
-            if _ts_saved > 0:
-                tool_schema_tokens += _ts_saved
-                tool_schema_requests += 1
-        agent_usage = _build_agent_usage_summary(
-            recent_request_logs,
-            requests_by_provider=dict(m.requests_by_provider),
-            requests_by_model=dict(m.requests_by_model),
-            global_before_tokens=proxy_total_before_compression,
-            global_after_tokens=m.tokens_input_total,
-            global_tokens_saved=proxy_compression_tokens,
-            global_output_tokens=m.tokens_output_total,
-        )
-
-        # Output-side reduction (counterfactual estimate from the shaper's
-        # ledger). Distinct from input compression above: these are OUTPUT
-        # tokens the model didn't emit because we steered verbosity / routed
-        # effort down. Always labelled estimated-vs-measured + a CI so it's
-        # never mistaken for an exact count. Best-effort — never break /stats.
-        output_reduction: dict[str, Any] = {"available": False}
-        try:
-            from headroom.proxy.output_savings import get_recorder
-
-            _oest = get_recorder().estimate()
-            if _oest.n_requests > 0:
-                output_reduction = {
-                    "available": True,
-                    "method": _oest.kind,  # "measured" | "estimated"
-                    "tokens_saved": round(_oest.tokens_saved),
-                    "baseline_tokens": round(_oest.baseline_tokens),
-                    "reduction_percent": round(_oest.pct, 1),
-                    "ci_low_percent": round(_oest.ci_low_pct, 1),
-                    "ci_high_percent": round(_oest.ci_high_pct, 1),
-                    "requests": _oest.n_requests,
-                }
-        except Exception:  # pragma: no cover - defensive
-            pass
-
-        return {
-            "summary": summary,
-            "agent_usage": agent_usage,
-            "savings": {
-                "total_tokens": total_tokens_all_layers,
-                "per_project": persistent_savings.get("projects", {}),
-                "by_layer": {
-                    "cli_filtering": {
-                        "tool": cli_filtering_tool,
-                        "label": cli_filtering_label,
-                        "available": cli_filtering_available,
-                        "tokens": cli_tokens_avoided,
-                        "tokens_saved": cli_tokens_avoided,
-                        "session": cli_filtering_session,
-                        "lifetime": cli_filtering_lifetime,
-                        "session_savings_pct": (
-                            cli_filtering_stats.get("session_savings_pct")
-                            if cli_filtering_stats
-                            else None
-                        ),
-                        "lifetime_savings_pct": (
-                            cli_filtering_stats.get("lifetime_avg_savings_pct")
-                            if cli_filtering_stats
-                            else None
-                        ),
-                        "refresh_interval_seconds": (
-                            cli_filtering_stats.get("refresh_interval_seconds")
-                            if cli_filtering_stats
-                            else None
-                        ),
-                        "included_in": "tokens.saved",
-                        "description": (
-                            f"Tokens avoided by CLI output filtering ({cli_filtering_label}) "
-                            "before reaching context. "
-                            "Included in dashboard token savings, but not in dollar savings."
-                        ),
-                    },
-                    "compression": {
-                        "tokens": proxy_compression_tokens,
-                        "proxy_tokens": proxy_compression_tokens,
-                        "cli_filtering_tokens": cli_tokens_avoided,
-                        "rtk_tokens": rtk_tokens_avoided,
-                        "lean_ctx_tokens": lean_ctx_tokens_avoided,
-                        "all_layers_tokens": all_layers_tokens_saved,
-                        "description": (
-                            "Tokens removed by Headroom proxy compression. "
-                            "Dashboard token savings also includes CLI context-tool filtering."
-                        ),
-                    },
-                    "prefix_cache": {
-                        "discount_usd": round(cache_net_usd, 4),
-                        "description": (
-                            "Cost discount from provider prefix caching. "
-                            "Headroom's CacheAligner improves hit rates; "
-                            "baseline caching is provider-native."
-                        ),
-                    },
-                    "output_shaping": {
-                        **output_reduction,
-                        "description": (
-                            "OUTPUT tokens the model didn't emit because the shaper "
-                            "steered verbosity / routed effort down. Counterfactual — "
-                            "shown as an estimate (vs a learned baseline) or measured "
-                            "(A/B holdout), always with a confidence band."
-                        ),
-                    },
-                    "tool_search": {
-                        "tokens": tool_schema_tokens,
-                        "tokens_saved": tool_schema_tokens,
-                        "requests": tool_schema_requests,
-                        "window": len(recent_request_logs),
-                        "description": (
-                            "Tool-definition tokens kept out of the model's context "
-                            "by deferring heavy tool schemas until they're searched "
-                            "for. Counted only when Headroom performed the deferral — "
-                            "not when the client (e.g. Claude Code / Codex) already "
-                            "had tool search enabled. Aggregated over the recent "
-                            "request window."
-                        ),
-                    },
-                },
-            },
-            "requests": {
-                "total": m.requests_total,
-                "cached": m.requests_cached,
-                "rate_limited": m.requests_rate_limited,
-                "failed": m.requests_failed,
-                "by_provider": dict(m.requests_by_provider),
-                "by_model": dict(m.requests_by_model),
-                "by_stack": dict(m.requests_by_stack),
-            },
-            "tokens": {
-                "input": m.tokens_input_total,
-                "output": m.tokens_output_total,
-                "output_saved": output_reduction.get("tokens_saved", 0),
-                "output_reduction_percent": output_reduction.get("reduction_percent", 0),
-                "output_reduction": output_reduction,
-                "saved": all_layers_tokens_saved,
-                "proxy_compression_saved": proxy_compression_tokens,
-                "cli_filtering_saved": cli_tokens_avoided,
-                "rtk_saved": rtk_tokens_avoided,
-                "lean_ctx_saved": lean_ctx_tokens_avoided,
-                "cli_tokens_avoided": cli_tokens_avoided,
-                "proxy_total_before_compression": proxy_total_before_compression,
-                "total_before_compression": total_tokens_before,
-                "all_layers_saved": all_layers_tokens_saved,
-                # Compressible-only denominator: tokens we extracted as
-                # candidates + tool-schema tokens we compacted. Excludes
-                # frozen-prefix content (user msgs, system prompt, prior
-                # turns) that we deliberately don't touch. Already
-                # pre-compression — do NOT add `tokens_saved` again.
-                "proxy_attempted_tokens": attempted_input_tokens,
-                # Active compression: savings as a fraction of what we
-                # *tried* to compress. The number the dashboard headline
-                # should show — it answers "are we doing well *when we
-                # have something to compress?*" rather than diluting the
-                # win by frozen-prefix bytes we never touched.
-                "active_savings_percent": round(
-                    (proxy_compression_tokens / attempted_input_tokens * 100)
-                    if attempted_input_tokens > 0
-                    else 0,
-                    2,
-                ),
-                # Whole-request ratio kept for transparency. Heavily
-                # diluted by frozen prefix on Codex-style requests
-                # where most input is non-compressible by design.
-                "proxy_savings_percent": round(
-                    (proxy_compression_tokens / proxy_total_before_compression * 100)
-                    if proxy_total_before_compression > 0
-                    else 0,
-                    2,
-                ),
-                # New-content-relative rate: savings as a fraction of the
-                # input that would have newly entered context (provider-
-                # billed uncached + cache-write tokens, plus the tokens
-                # compression removed before they could be billed). The
-                # whole-request ratios above recount the FULL transcript
-                # every turn, so a 200-turn session counts its history
-                # 200x into the denominator and long-running sessions
-                # (1M-context models never compact) read as ~0% no
-                # matter how well compression performs on new content.
-                # Guarded on new_input_tokens > 0 (not the full sum): the
-                # cache accumulators only see requests with cache
-                # activity, so a deployment with no cache metrics (e.g.
-                # Bedrock) would otherwise divide savings by themselves
-                # and report ~100%. No usage data -> report 0, not a lie.
-                "new_input_tokens": new_input_tokens,
-                "new_input_savings_percent": round(
-                    (proxy_compression_tokens / (new_input_tokens + proxy_compression_tokens) * 100)
-                    if new_input_tokens > 0
-                    else 0,
-                    2,
-                ),
-                "savings_percent": round(
-                    (all_layers_tokens_saved / total_tokens_before * 100)
-                    if total_tokens_before > 0
-                    else 0,
-                    2,
-                ),
-                "all_layers_savings_percent": round(
-                    (all_layers_tokens_saved / total_tokens_before * 100)
-                    if total_tokens_before > 0
-                    else 0,
-                    2,
-                ),
-            },
-            "latency": {
-                "average_ms": avg_latency_ms,
-                "min_ms": min_latency_ms,
-                "max_ms": max_latency_ms,
-                "total_requests": m.latency_count,
-            },
-            "overhead": {
-                "average_ms": avg_overhead_ms,
-                "min_ms": min_overhead_ms,
-                "max_ms": max_overhead_ms,
-            },
-            "ttfb": {
-                "average_ms": avg_ttfb_ms,
-                "min_ms": min_ttfb_ms,
-                "max_ms": max_ttfb_ms,
-            },
-            "pipeline_timing": {
-                name: {
-                    "average_ms": round(
-                        m.transform_timing_sum[name] / m.transform_timing_count[name], 2
-                    ),
-                    "max_ms": round(m.transform_timing_max[name], 2),
-                    "count": m.transform_timing_count[name],
-                }
-                for name in sorted(m.transform_timing_sum.keys())
-            }
-            if m.transform_timing_sum
-            else {},
-            "compressions_by_strategy": dict(m.compressions_by_strategy),
-            "tokens_saved_by_strategy": dict(m.tokens_saved_by_strategy),
-            "codex_ws": {
-                "units_total": m.codex_ws_units_total,
-                "units_modified_total": m.codex_ws_units_modified_total,
-                "units_by_strategy": dict(m.codex_ws_units_by_strategy),
-                "units_by_category": dict(m.codex_ws_units_by_category),
-                "units_by_content_type": dict(m.codex_ws_units_by_content_type),
-                "units_by_text_shape": dict(m.codex_ws_units_by_text_shape),
-                "units_to_kompress_total": m.codex_ws_units_to_kompress_total,
-                "units_kompress_attempted_total": m.codex_ws_units_kompress_attempted_total,
-                "units_to_kompress_percent": _pct(
-                    m.codex_ws_units_to_kompress_total,
-                    m.codex_ws_units_total,
-                ),
-                "units_kompress_attempted_percent": _pct(
-                    m.codex_ws_units_kompress_attempted_total,
-                    m.codex_ws_units_total,
-                ),
-                "unit_elapsed_ms": {
-                    "average": round(
-                        m.codex_ws_unit_elapsed_ms_sum / m.codex_ws_units_total,
-                        2,
-                    )
-                    if m.codex_ws_units_total
-                    else 0.0,
-                    "max": round(m.codex_ws_unit_elapsed_ms_max, 2),
-                },
-                "unit_bytes_sum": m.codex_ws_unit_bytes_sum,
-                "unit_tokens_before_sum": m.codex_ws_unit_tokens_before_sum,
-                "unit_tokens_after_sum": m.codex_ws_unit_tokens_after_sum,
-                "unit_tokens_saved_sum": m.codex_ws_unit_tokens_saved_sum,
-                "frames_attempted_total": m.codex_ws_frames_attempted_total,
-                "frames_compressed_total": m.codex_ws_frames_compressed_total,
-                "frames_failed_total": m.codex_ws_frames_failed_total,
-                "frames_to_kompress_total": m.codex_ws_frames_to_kompress_total,
-                "frames_kompress_attempted_total": (m.codex_ws_frames_kompress_attempted_total),
-                "frames_to_kompress_percent": _pct(
-                    m.codex_ws_frames_to_kompress_total,
-                    m.codex_ws_frames_attempted_total,
-                ),
-                "frames_kompress_attempted_percent": _pct(
-                    m.codex_ws_frames_kompress_attempted_total,
-                    m.codex_ws_frames_attempted_total,
-                ),
-                "frame_elapsed_ms": {
-                    "average": round(
-                        m.codex_ws_frame_elapsed_ms_sum / m.codex_ws_frames_attempted_total,
-                        2,
-                    )
-                    if m.codex_ws_frames_attempted_total
-                    else 0.0,
-                    "max": round(m.codex_ws_frame_elapsed_ms_max, 2),
-                },
-                "frame_bytes_before_sum": m.codex_ws_frame_bytes_before_sum,
-                "frame_bytes_after_sum": m.codex_ws_frame_bytes_after_sum,
-                "frame_attempted_tokens_sum": m.codex_ws_frame_attempted_tokens_sum,
-                "frame_tokens_saved_sum": m.codex_ws_frame_tokens_saved_sum,
-            },
-            "waste_signals": dict(m.waste_signals_total) if m.waste_signals_total else {},
-            # ContentRouter protection categories aggregated across the
-            # session. Lets operators see, e.g., that 80% of messages
-            # were `user_msg` (protected) and only 5% reached the
-            # compressor — explains why compression rate is low and
-            # whether `--compress-user-messages` would help (#454).
-            "router": {
-                "route_counts": dict(m.router_route_counts) if m.router_route_counts else {},
-            },
-            "savings_history": m.savings_history[-100:],  # Last 100 data points
-            "display_session": display_session,
-            # Whether LiteLLM is importable. Pricing (the "$ Saved" tile) is
-            # derived entirely from LiteLLM's cost tables, and LiteLLM is gated
-            # off on Python >=3.14 in pyproject — so when this is False the
-            # dashboard tells the user to reinstall on 3.13 instead of just
-            # showing $0.00 forever.
-            "litellm_available": LITELLM_AVAILABLE,
-            "persistent_savings": persistent_savings,
-            "prefix_cache": prefix_cache_stats,
-            "cost": _merge_cost_stats(
-                proxy.cost_tracker.stats() if proxy.cost_tracker else None,
-                prefix_cache_stats,
-                cli_tokens_avoided=cli_tokens_avoided,
-            ),
-            "compression": {
-                "ccr_entries": compression_stats.get("entry_count", 0),
-                "ccr_max_entries": compression_stats.get("max_entries", 0),
-                "original_tokens_cached": compression_stats.get("total_original_tokens", 0),
-                "compressed_tokens_cached": compression_stats.get("total_compressed_tokens", 0),
-                "ccr_retrievals": compression_stats.get("total_retrievals", 0),
-            },
-            "compression_cache": compression_cache_stats,
-            # Always False: the anonymous telemetry beacon was removed, so no
-            # telemetry is ever shipped externally (local collection only).
-            "anon_telemetry_shipping": False,
-            "telemetry": {
-                "enabled": telemetry_stats.get("enabled", False),
-                "total_compressions": telemetry_stats.get("total_compressions", 0),
-                "total_retrievals": telemetry_stats.get("total_retrievals", 0),
-                "global_retrieval_rate": round(telemetry_stats.get("global_retrieval_rate", 0), 4),
-                "tool_signatures_tracked": telemetry_stats.get("tool_signatures_tracked", 0),
-                "avg_compression_ratio": round(telemetry_stats.get("avg_compression_ratio", 0), 4),
-                "avg_token_reduction": round(telemetry_stats.get("avg_token_reduction", 0), 4),
-            },
-            "otel": get_otel_metrics_status(),
-            "langfuse": get_langfuse_tracing_status(),
-            "feedback_loop": {
-                "tools_tracked": feedback_stats.get("tools_tracked", 0),
-                "total_compressions": feedback_stats.get("total_compressions", 0),
-                "total_retrievals": feedback_stats.get("total_retrievals", 0),
-                "global_retrieval_rate": round(feedback_stats.get("global_retrieval_rate", 0), 4),
-                "tools_with_high_retrieval": sum(
-                    1
-                    for p in feedback_stats.get("tool_patterns", {}).values()
-                    if p.get("retrieval_rate", 0) > 0.3
-                ),
-            },
-            "toin": get_toin().get_stats(),
-            "context_tool": {
-                "configured": cli_filtering_tool,
-                "label": cli_filtering_label,
-                "available": cli_filtering_available,
-                "stats": cli_filtering_stats,
-            },
-            "cli_filtering": cli_filtering_stats,
-            "proxy_inbound": proxy.metrics.inbound_snapshot(),
-            "cache": await proxy.cache.stats() if proxy.cache else None,
-            "rate_limiter": await proxy.rate_limiter.stats() if proxy.rate_limiter else None,
-            **recent_request_payload,
-            "log_full_messages": proxy.config.log_full_messages if proxy else False,
-            **get_quota_registry().get_all_stats(),
-            "throughput": throughput,
-        }
-
-    def _dashboard_config_payload() -> dict[str, Any]:
-        profile_kwargs = proxy_pipeline_kwargs(config)
-        target_ratio = profile_kwargs.get("target_ratio", config.target_ratio)
-        target_savings_percent = None
-        if isinstance(target_ratio, int | float):
-            target_savings_percent = round(max(0.0, min(1.0, 1.0 - float(target_ratio))) * 100, 1)
-        return {
-            "savings_profile": config.savings_profile,
-            "target_ratio": target_ratio,
-            "target_savings_percent": target_savings_percent,
-            "compress_user_messages": bool(
-                profile_kwargs.get("compress_user_messages", config.compress_user_messages)
-            ),
-            "compress_system_messages": bool(
-                profile_kwargs.get("compress_system_messages", config.compress_system_messages)
-            ),
-            "protect_recent": profile_kwargs.get("read_protection_window", config.protect_recent),
-            "protect_analysis_context": config.protect_analysis_context,
-            "min_tokens_to_crush": profile_kwargs.get(
-                "min_tokens_to_compress", config.min_tokens_to_crush
-            ),
-            "max_items_after_crush": profile_kwargs.get(
-                "max_items_after_crush", config.max_items_after_crush
-            ),
-            "smart_crusher_with_compaction": profile_kwargs.get(
-                "smart_crusher_with_compaction",
-                config.smart_crusher_with_compaction,
-            ),
-            "force_kompress": bool(profile_kwargs.get("force_kompress", False)),
-            "accuracy_guard": config.accuracy_guard,
-        }
-
-    async def _get_cached_stats_payload() -> dict[str, Any]:
-        """Return a short-TTL cached `/stats` snapshot for dashboard polling."""
-        now = time.monotonic()
-        cached_payload = cast(dict[str, Any] | None, _stats_snapshot.get("value"))
-        if cached_payload is not None and now < float(_stats_snapshot["expires_at"]):
-            return cached_payload
-
-        async with _stats_snapshot_lock:
-            now = time.monotonic()
-            cached_payload = cast(dict[str, Any] | None, _stats_snapshot.get("value"))
-            if cached_payload is not None and now < float(_stats_snapshot["expires_at"]):
-                return cached_payload
-
-            payload = await _build_stats_payload()
-            _stats_snapshot["value"] = payload
-            _stats_snapshot["expires_at"] = time.monotonic() + DASHBOARD_STATS_CACHE_TTL_SECONDS
-            return payload
-
-    @app.get("/stats")
-    async def stats(request: Request, cached: bool = False):
-        """Get comprehensive proxy statistics.
-
-        This is the main stats endpoint - it aggregates data from all subsystems:
-        - Request metrics (total, cached, failed, by model/provider)
-        - Token usage and savings
-        - Cost tracking
-        - Canonical persisted display_session metrics for downstream dashboards
-        - Compression (CCR) statistics
-        - Telemetry/TOIN (data flywheel) statistics
-        - Cache and rate limiter stats
-
-        Use ``?cached=1`` for the dashboard fast path. That returns a short-TTL
-        snapshot to avoid rebuilding the full payload on every UI poll.
-
-        ``recent_requests`` / ``request_logs`` (per-request ids, providers,
-        models, errors) and ``config`` (backend + savings profile) are embedded
-        only for loopback callers — the local dashboard. Network callers still
-        get the aggregate counters but never the per-request metadata.
-        """
-        include_sensitive = _request_is_loopback(request)
-        if cached:
-            payload = dict(await _get_cached_stats_payload())
-            if include_sensitive:
-                # Refresh the per-request tail on top of the cached snapshot.
-                payload.update(_build_recent_request_payload())
-                payload["config"] = _dashboard_config_payload()
-        else:
-            payload = await _build_stats_payload()
-            if include_sensitive:
-                payload["config"] = _dashboard_config_payload()
-        if not include_sensitive:
-            # _build_stats_payload bakes these in; strip for network callers.
-            payload.pop("recent_requests", None)
-            payload.pop("request_logs", None)
-        return payload
-
-    @app.post("/stats/reset", dependencies=[Depends(_require_loopback)])
-    async def stats_reset():
-        """Reset in-memory proxy stats for local test/debug isolation."""
-        await proxy.metrics.reset_runtime()
-        if proxy.cost_tracker:
-            proxy.cost_tracker.reset_runtime()
-        await initialize_context_tool_session_baseline()
-        async with _stats_snapshot_lock:
-            _stats_snapshot["value"] = None
-            _stats_snapshot["expires_at"] = 0.0
-        return JSONResponse(status_code=200, content={"status": "reset"})
-
-    @app.get("/stats-history")
-    async def stats_history(
-        format: Literal["json", "csv"] = "json",
-        series: Literal["history", "hourly", "daily", "weekly", "monthly"] = "history",
-        history_mode: Literal["compact", "full", "none"] = "compact",
-    ):
-        """Get durable proxy compression history plus display-session state.
-
-        The JSON payload also carries a ``cli_filtering`` key with live RTK
-        stats. This is a curated subset (``tool``, ``label``, ``available``,
-        ``lifetime``, ``session``) tailored to the Historical tab, not the
-        full ``_get_context_tool_stats()`` payload that ``/stats`` exposes.
-        It is ``None`` only when the stats read hard-fails; when the tool is
-        merely absent, ``cli_filtering`` stays populated with
-        ``available: False`` and zeroed counters so the tab can distinguish
-        "not installed" from "installed, no data yet."
-        """
-        if format == "csv":
-            filename = f"headroom-stats-history-{series}.csv"
-            return Response(
-                content=proxy.metrics.savings_tracker.export_csv(series=series),
-                media_type="text/csv; charset=utf-8",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-            )
-
-        history = proxy.metrics.savings_tracker.history_response(history_mode=history_mode)
-
-        # Augment with live RTK/cli-filtering lifetime stats so the Historical
-        # tab can display them.  These live in the context-tool's own stats file
-        # and survive proxy restarts — exactly what the Historical tab needs.
-        # Best-effort: if the RTK stats file can't be read (missing, parse error,
-        # IO), fall back to None so the Historical tab stays available instead of
-        # 500ing. The tab hides the card when cli_filtering is None.
-        try:
-            cli_stats = await asyncio.to_thread(_get_context_tool_stats)
-        except Exception:
-            logger.debug("stats-history: RTK stats unavailable", exc_info=True)
-            cli_stats = None
-        if cli_stats:
-            history["cli_filtering"] = {
-                "tool": str(cli_stats.get("tool", "rtk")),
-                "label": str(cli_stats.get("label", "RTK")),
-                "available": bool(cli_stats.get("installed", False)),
-                "lifetime": cli_stats.get("lifetime", {}),
-                "session": cli_stats.get("session", {}),
-            }
-        else:
-            history["cli_filtering"] = None
-
-        return history
-
     @app.get("/transformations/feed", dependencies=[Depends(_require_loopback)])
     async def transformations_feed(limit: int = 20):
         """Get recent message transformations for the live feed.
@@ -3811,6 +3019,17 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     async def quota():
         """Unified quota/rate-limit stats for all registered providers (Anthropic, Codex, Copilot)."""
         return JSONResponse(content=get_quota_registry().get_all_stats())
+
+    @app.get("/doctor", dependencies=[Depends(_require_loopback)])
+    async def doctor():
+        """Run the same diagnostics as ``headroom doctor`` and return them as JSON.
+
+        Reuses ``headroom.cli.doctor`` check functions (no duplicated logic) so
+        the dashboard's status panel and the CLI never drift apart.
+        """
+        from headroom.cli.doctor import build_report
+
+        return JSONResponse(content=await asyncio.to_thread(build_report, config.port))
 
     @app.get("/metrics")
     async def metrics():
@@ -3907,95 +3126,6 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 store.get_entry_status(hash_key, clean_expired=True)
             ),
         )
-
-    @app.get("/v1/retrieve/stats", dependencies=[Depends(_require_loopback)])
-    async def ccr_stats():
-        """Get CCR compression store statistics."""
-        store = get_compression_store()
-        stats = store.get_stats()
-        events = store.get_retrieval_events(limit=20)
-        return {
-            "store": stats,
-            "recent_retrievals": [
-                {
-                    "hash": e.hash,
-                    "query": e.query,
-                    "items_retrieved": e.items_retrieved,
-                    "total_items": e.total_items,
-                    "tool_name": e.tool_name,
-                    "retrieval_type": e.retrieval_type,
-                }
-                for e in events
-            ],
-        }
-
-    @app.get("/v1/feedback")
-    async def ccr_feedback():
-        """Get CCR feedback loop statistics and learned patterns.
-
-        This endpoint exposes the feedback loop's learned patterns for monitoring
-        and debugging. It shows:
-        - Per-tool retrieval rates (high = compress less aggressively)
-        - Common search queries per tool
-        - Queried fields (suggest what to preserve)
-
-        Use this to understand how well compression is working and whether
-        the feedback loop is adjusting appropriately.
-        """
-        feedback = get_compression_feedback()
-        stats = feedback.get_stats()
-        return {
-            "feedback": stats,
-            "hints_example": {
-                tool_name: {
-                    "hints": {
-                        "max_items": hints.max_items
-                        if (hints := feedback.get_compression_hints(tool_name))
-                        else 15,
-                        "suggested_items": hints.suggested_items if hints else None,
-                        "skip_compression": hints.skip_compression if hints else False,
-                        "preserve_fields": hints.preserve_fields if hints else [],
-                        "reason": hints.reason if hints else "",
-                    }
-                }
-                for tool_name in list(stats.get("tool_patterns", {}).keys())[:5]
-            },
-        }
-
-    @app.get("/v1/feedback/{tool_name}")
-    async def ccr_feedback_for_tool(tool_name: str):
-        """Get compression hints for a specific tool.
-
-        Returns feedback-based hints that would be used for compressing
-        this tool's output.
-        """
-        feedback = get_compression_feedback()
-        hints = feedback.get_compression_hints(tool_name)
-        patterns = feedback.get_all_patterns().get(tool_name)
-
-        return {
-            "tool_name": tool_name,
-            "hints": {
-                "max_items": hints.max_items,
-                "min_items": hints.min_items,
-                "suggested_items": hints.suggested_items,
-                "aggressiveness": hints.aggressiveness,
-                "skip_compression": hints.skip_compression,
-                "preserve_fields": hints.preserve_fields,
-                "reason": hints.reason,
-            },
-            "pattern": {
-                "total_compressions": patterns.total_compressions if patterns else 0,
-                "total_retrievals": patterns.total_retrievals if patterns else 0,
-                "retrieval_rate": patterns.retrieval_rate if patterns else 0.0,
-                "full_retrieval_rate": patterns.full_retrieval_rate if patterns else 0.0,
-                "search_rate": patterns.search_rate if patterns else 0.0,
-                "common_queries": list(patterns.common_queries.keys())[:10] if patterns else [],
-                "queried_fields": list(patterns.queried_fields.keys())[:10] if patterns else [],
-            }
-            if patterns
-            else None,
-        }
 
     # Telemetry endpoints (Data Flywheel)
     @app.get("/v1/telemetry")
@@ -4333,6 +3463,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     async def compress_messages(request: Request):
         return await proxy.handle_compress(request)
 
+    # Provider catch-all ("/{path:path}") must be registered last so the
+    # explicit routes above take precedence.
     register_provider_routes(app, proxy)
 
     return app

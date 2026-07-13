@@ -224,6 +224,7 @@ def learn(
 
     total_projects = 0
     total_failures = 0
+    total_calls = 0
     total_recommendations = 0
     matched_projects = 0
     available_projects: list[tuple[str, Path]] = []
@@ -292,6 +293,7 @@ def learn(
             result_data = analyzer.analyze(proj, sessions)
             total_projects += 1
             total_failures += result_data.total_failures
+            total_calls += getattr(result_data, "total_calls", 0) or 0
 
             click.echo(
                 f"\n  Sessions: {result_data.total_sessions}  |  "
@@ -349,6 +351,26 @@ def learn(
             f"Total: {total_projects} projects, {total_failures} failures, "
             f"{total_recommendations} recommendations"
         )
+
+    # Record this run for the dashboard history. Best-effort: never break the
+    # CLI if telemetry fails.
+    try:
+        from datetime import datetime, timezone
+
+        from .learn_history import record_learn_run
+
+        record_learn_run(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "agent": agent,
+                "project": str(project.resolve()) if project else str(Path.cwd()),
+                "failure_rate": (total_failures / total_calls) if total_calls else None,
+                "recommendations_count": total_recommendations,
+                "applied": bool(apply),
+            }
+        )
+    except Exception:
+        pass
 
 
 def _make_llm_judge(model: str) -> Any:

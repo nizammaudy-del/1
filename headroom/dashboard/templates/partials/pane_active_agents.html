@@ -1,0 +1,45 @@
+
+        <!-- Pane: Active Agents -->
+        <section x-show="paneVisible('activeAgents')" class="mb-6" :class="panes.activeAgents ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('activeAgents')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="{{help.active_agents.active_agents.title}}" data-help="{{help.active_agents.active_agents.body}}">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Active Agents</span>
+            </button>
+            <div x-show="!panes.activeAgents">
+                <div class="bg-surface rounded-lg border border-border overflow-hidden">
+                    <template x-if="(activeAgents.agents || []).length > 0">
+                        <div class="divide-y divide-border">
+                            <template x-for="a in activeAgents.agents" :key="a.agent + '|' + a.project">
+                                <div class="flex items-center justify-between gap-3 px-4 py-3">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <span class="h-2.5 w-2.5 rounded-full" :class="agentDotClass(a.agent)"></span>
+                                            <span class="text-sm font-medium text-gray-200 truncate" x-text="a.label"></span>
+                                        </div>
+                                        <div class="mt-1 text-xs text-gray-500 truncate" data-help-title="{{help.active_agents.project.title}}" data-help="{{help.active_agents.project.body}}">
+                                            <span x-text="a.project || 'no project tag'"></span>
+                                        </div>
+                                    </div>
+                                    <div class="text-right shrink-0 text-xs text-gray-400">
+                                        <div data-help-title="{{help.active_agents.last_active.title}}" data-help="{{help.active_agents.last_active.body}}">
+                                            <span x-text="'active ' + Math.round(a.seconds_since_last) + 's ago'"></span>
+                                        </div>
+                                        <div class="mt-0.5 text-gray-500" data-help-title="{{help.active_agents.requests_tokens_saved.title}}" data-help="{{help.active_agents.requests_tokens_saved.body}}">
+                                            <span x-text="formatNum(a.request_count || 0) + ' req'"></span>
+                                            <span class="mx-1 text-gray-700">/</span>
+                                            <span class="text-accent" x-text="formatNum(a.tokens_saved || 0) + ' saved'"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <template x-if="(activeAgents.agents || []).length === 0">
+                        <div class="p-6 text-center text-sm text-gray-500">
+                            No agents active in the last minute — traffic through the proxy shows up here.
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </section>

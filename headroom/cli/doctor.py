@@ -316,7 +316,7 @@ def check_savings(stats: dict[str, Any] | None, savings_file: Path) -> CheckResu
             return CheckResult(
                 name=name, status=WARN, summary=f"could not read savings file {savings_file}"
             )
-    if payload is None:
+    if not isinstance(payload, dict):
         return CheckResult(
             name=name,
             status=WARN,
@@ -324,7 +324,8 @@ def check_savings(stats: dict[str, Any] | None, savings_file: Path) -> CheckResu
             hint="route a client through the proxy and make a request",
         )
 
-    lifetime = payload.get("lifetime") or {}
+    lifetime = payload.get("lifetime")
+    lifetime = lifetime if isinstance(lifetime, dict) else {}
     tokens = lifetime.get("tokens_saved", 0) or 0
     usd = lifetime.get("compression_savings_usd", 0.0) or 0.0
     cache_reads = lifetime.get("cache_read_tokens", 0) or 0
@@ -336,7 +337,8 @@ def check_savings(stats: dict[str, Any] | None, savings_file: Path) -> CheckResu
             hint="route a client through the proxy and make a request",
         )
 
-    session = payload.get("display_session") or {}
+    session = payload.get("display_session")
+    session = session if isinstance(session, dict) else {}
     freshness = None
     last_activity = session.get("last_activity_at")
     if isinstance(last_activity, str):
@@ -401,6 +403,56 @@ def check_deployments(manifests: list[Any], probe: Any = probe_json) -> CheckRes
     )
 
 
+def run_checks(port: int, installed: str) -> list[CheckResult]:
+    """Run every doctor check against the proxy on ``port``.
+
+    Extracted so both the CLI and the dashboard ``/doctor`` endpoint share
+    one source of truth for the diagnostic logic.
+    """
+    base_url = f"http://127.0.0.1:{port}"
+    livez = probe_json(f"{base_url}/livez")
+    stats = probe_json(f"{base_url}/stats", timeout=5.0) if livez else None
+
+    checks = [
+        check_proxy_liveness(livez, base_url),
+        check_version_drift(livez, installed),
+        check_claude_routing(claude_settings_path(), port),
+        check_wrap_marker_staleness(Path.cwd() / ".claude" / "settings.local.json"),
+        check_codex_routing(codex_config_path(), port),
+        check_shell_env(os.environ, port),
+        check_savings(stats, savings_path()),
+        check_budget(stats),
+    ]
+    remote_control_gate_check = check_claude_remote_control_gate(claude_settings_path(), os.environ)
+    if remote_control_gate_check is not None:
+        checks.append(remote_control_gate_check)
+    deployments = check_deployments(list_manifests())
+    if deployments is not None:
+        checks.append(deployments)
+    return checks
+
+
+def exit_code_for(checks: list[CheckResult]) -> int:
+    """Map check statuses to the documented exit code (0 / 1 / 2)."""
+    if any(c.status == FAIL for c in checks):
+        return 2
+    if any(c.status == WARN for c in checks):
+        return 1
+    return 0
+
+
+def build_report(port: int) -> dict[str, Any]:
+    """Structured doctor report — the JSON body for CLI and dashboard alike."""
+    installed = get_version()
+    checks = run_checks(port, installed)
+    return {
+        "port": port,
+        "installed_version": installed,
+        "exit_code": exit_code_for(checks),
+        "checks": [asdict(c) for c in checks],
+    }
+
+
 _STATUS_STYLE = {PASS: "green", WARN: "yellow", FAIL: "red", SKIP: "dim"}
 _STATUS_GLYPH = {PASS: "✓", WARN: "⚠", FAIL: "✗", SKIP: "·"}
 
@@ -458,34 +510,9 @@ def doctor(port: int, emit_json: bool) -> None:
         1  warnings only (working, but not optimally wired)
         2  at least one failure (proxy down / deployment down)
     """
-    base_url = f"http://127.0.0.1:{port}"
-    livez = probe_json(f"{base_url}/livez")
-    stats = probe_json(f"{base_url}/stats", timeout=5.0) if livez else None
     installed = get_version()
-
-    checks = [
-        check_proxy_liveness(livez, base_url),
-        check_version_drift(livez, installed),
-        check_claude_routing(claude_settings_path(), port),
-        check_wrap_marker_staleness(Path.cwd() / ".claude" / "settings.local.json"),
-        check_codex_routing(codex_config_path(), port),
-        check_shell_env(os.environ, port),
-        check_savings(stats, savings_path()),
-        check_budget(stats),
-    ]
-    remote_control_gate_check = check_claude_remote_control_gate(claude_settings_path(), os.environ)
-    if remote_control_gate_check is not None:
-        checks.append(remote_control_gate_check)
-    deployments = check_deployments(list_manifests())
-    if deployments is not None:
-        checks.append(deployments)
-
-    if any(c.status == FAIL for c in checks):
-        exit_code = 2
-    elif any(c.status == WARN for c in checks):
-        exit_code = 1
-    else:
-        exit_code = 0
+    checks = run_checks(port, installed)
+    exit_code = exit_code_for(checks)
 
     if emit_json:
         click.echo(

@@ -1,0 +1,39 @@
+    <!-- Floating help control: glued to the bottom-right corner. Rests as a
+         small toggle button (the same one that used to live in the header);
+         expands into the tooltip card whenever a data-help hint is active and
+         help isn't collapsed. Clicking the card's X collapses it straight
+         back down into the button. -->
+    <div id="help-float" x-cloak>
+        <template x-if="!helpCollapsed">
+            <div class="help-float-card"
+                 x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0"
+                 x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+                <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Help</span>
+                    <button @click="toggleHelp()" class="text-gray-500 hover:text-gray-200 transition-colors p-0.5" title="Hide help">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="text-sm font-semibold text-gray-200 mb-1" x-text="helpTitle || 'Help'"></div>
+                <div class="text-xs leading-relaxed text-gray-400" x-text="helpBody || 'Hover any metric for an explanation.'"></div>
+                <div class="mt-2 pt-2 border-t border-border flex flex-wrap gap-x-3 gap-y-1" data-testid="color-legend">
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>Savings</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-amber-400 inline-block"></span>Warning</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span>Danger</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-cyan-400 inline-block"></span>Cache</span>
+                    <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 rounded-full bg-violet-400 inline-block"></span>Unlimited</span>
+                </div>
+            </div>
+        </template>
+        <template x-if="helpCollapsed">
+            <button @click="toggleHelp()" title="Toggle help tooltip" aria-label="Toggle help tooltip"
+                    class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors shadow-lg">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+            </button>
+        </template>
+    </div>

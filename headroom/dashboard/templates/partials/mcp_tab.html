@@ -1,0 +1,239 @@
+        <template x-if="viewMode === 'mcp'">
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <div data-help-title="{{help.mcp.mcp_usage.title}}" data-help="{{help.mcp.mcp_usage.body}}">
+                        <div class="text-lg font-medium text-gray-200">MCP Usage</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Per-server tool-call activity by Claude and other agents.</div>
+                    </div>
+                    <span class="text-xs px-2 py-0.5 rounded font-mono"
+                          :class="mcpUsage.log_full_messages ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'"
+                          :data-help-title="mcpUsage.log_full_messages ? helpText.mcp.logging_on.title : helpText.mcp.logging_off.title"
+                          :data-help="mcpUsage.log_full_messages ? helpText.mcp.logging_on.body : helpText.mcp.logging_off.body"
+                          x-text="mcpUsage.log_full_messages ? 'logging on' : 'log-messages off'"></span>
+                </div>
+
+                <template x-if="(mcpUsage.servers || []).length > 0">
+                    <div class="bg-surface rounded-lg border border-border overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-xs text-gray-500 text-left border-b border-border">
+                                        <th class="py-2 px-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('mcp', 'server', 'asc')">Server<span x-text="sortIcon('mcp', 'server')"></span></th>
+                                        <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('mcp', 'calls')">Calls<span x-text="sortIcon('mcp', 'calls')"></span></th>
+                                        <th class="py-2 px-4 font-medium"></th>
+                                    </tr>
+                                </thead>
+                                <template x-for="row in mcpServerRows" :key="row.server">
+                                    <tbody>
+                                        <tr class="border-t border-border cursor-pointer hover:bg-card-alt focus:ring-2 focus:ring-accent focus:outline-none"
+                                            role="button" tabindex="0"
+                                            :aria-expanded="mcpExpandedServer === row.server"
+                                            @click="toggleMcpServer(row.server)"
+                                            @keydown.enter="toggleMcpServer(row.server)"
+                                            @keydown.space.prevent="toggleMcpServer(row.server)"
+                                            :data-help-title="helpText.mcp.server_row.title + ': ' + row.server"
+                                            :data-help="helpText.mcp.server_row.body.replace('{value}', formatNumber(row.calls))">
+                                            <td class="py-2 px-4 font-mono text-xs text-gray-300" x-text="row.server"></td>
+                                            <td class="py-2 px-4 text-right tabular-nums text-accent" x-text="formatNumber(row.calls)"></td>
+                                            <td class="py-2 px-4 text-right text-gray-500">
+                                                <svg class="w-3.5 h-3.5 inline-block transition-transform" :class="mcpExpandedServer === row.server ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                            </td>
+                                        </tr>
+                                        <tr x-show="mcpExpandedServer === row.server" class="border-t border-border bg-card-alt">
+                                            <td colspan="3" class="px-4 py-3">
+                                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2" data-help-title="{{help.mcp.calls_by_tool.title}}" data-help="{{help.mcp.calls_by_tool.body}}">calls by tool</div>
+                                                <div class="space-y-1 max-h-48 overflow-y-auto pr-2">
+                                                    <template x-for="t in row.tools" :key="t.tool">
+                                                        <div class="flex justify-between text-sm">
+                                                            <span class="text-gray-400 font-mono truncate mr-2" x-text="t.tool"></span>
+                                                            <span class="text-gray-300 tabular-nums" x-text="formatNumber(t.calls)"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </template>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="(mcpUsage.servers || []).length === 0">
+                    <div class="bg-surface rounded-lg p-4 border border-border">
+                        <div class="text-sm text-gray-500 py-8 text-center space-y-1">
+                            <div class="text-gray-400">No MCP tool calls seen yet.</div>
+                            <div>This tab counts <span class="font-mono">mcp__&lt;server&gt;__&lt;tool&gt;</span> calls
+                            from requests that flowed through the proxy.</div>
+                            <div class="text-gray-600" x-show="!mcpUsage.log_full_messages">
+                                Full-message logging is off, so tool calls can't be counted.
+                                Start the proxy with <span class="font-mono">--log-messages</span> and make a request.
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <div class="text-xs text-gray-600 mt-4" x-text="mcpUsage.note"></div>
+
+                <!-- Pane: CCR Feedback -->
+                <section x-show="paneVisible('ccr')" class="mt-6" :class="panes.ccr ? 'pane-collapsed' : ''">
+                    <button type="button" @click="togglePane('ccr')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                            data-help-title="{{help.mcp.ccr_feedback.title}}" data-help="{{help.mcp.ccr_feedback.body}}">
+                        <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">CCR Feedback</span>
+                    </button>
+                    <div x-show="!panes.ccr">
+                        <div class="bg-surface rounded-lg border border-border overflow-hidden">
+                            <template x-if="ccrToolRows.length > 0">
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-sm">
+                                        <thead>
+                                            <tr class="text-xs text-gray-500 text-left border-b border-border">
+                                                <th class="py-2 px-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'name', 'asc')" data-help-title="{{help.mcp.tool.title}}" data-help="{{help.mcp.tool.body}}">Tool<span x-text="sortIcon('ccr', 'name')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'compressions')" data-help-title="{{help.mcp.compressions.title}}" data-help="{{help.mcp.compressions.body}}">Compressions<span x-text="sortIcon('ccr', 'compressions')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrievals')" data-help-title="{{help.mcp.retrievals.title}}" data-help="{{help.mcp.retrievals.body}}">Retrievals<span x-text="sortIcon('ccr', 'retrievals')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrieval_rate')" data-help-title="{{help.mcp.retrieval_rate.title}}" data-help="{{help.mcp.retrieval_rate.body}}">Retrieval rate<span x-text="sortIcon('ccr', 'retrieval_rate')"></span></th>
+                                                <th class="py-2 px-4 font-medium"></th>
+                                            </tr>
+                                        </thead>
+                                        <template x-for="row in ccrToolRows" :key="row.name">
+                                            <tbody>
+                                                <tr class="border-t border-border cursor-pointer hover:bg-card-alt focus:ring-2 focus:ring-accent focus:outline-none"
+                                                    role="button" tabindex="0"
+                                                    :aria-expanded="ccrExpandedTool === row.name"
+                                                    @click="toggleCcrTool(row.name)"
+                                                    @keydown.enter="toggleCcrTool(row.name)"
+                                                    @keydown.space.prevent="toggleCcrTool(row.name)">
+                                                    <td class="py-2 px-4 font-mono text-xs text-gray-300" x-text="row.name"></td>
+                                                    <td class="py-2 px-4 text-right tabular-nums" x-text="formatNum(row.compressions)"></td>
+                                                    <td class="py-2 px-4 text-right tabular-nums" x-text="formatNum(row.retrievals)"></td>
+                                                    <td class="py-2 px-4 text-right tabular-nums"
+                                                        :class="row.retrieval_rate > 0.2 ? 'text-amber-400' : 'text-gray-300'"
+                                                        x-text="(row.retrieval_rate * 100).toFixed(1) + '%'"></td>
+                                                    <td class="py-2 px-4 text-right text-xs" x-show="row.retrieval_rate > 0.2">
+                                                        <span class="text-amber-400">compression may be too lossy</span>
+                                                    </td>
+                                                </tr>
+                                                <tr x-show="ccrExpandedTool === row.name" class="border-t border-border bg-card-alt">
+                                                    <td colspan="5" class="px-4 py-3 text-xs text-gray-400">
+                                                        <template x-if="ccrDetails[row.name]">
+                                                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                                                <div><span class="text-gray-500" data-help-title="{{help.mcp.full_retrieval_rate.title}}" data-help="{{help.mcp.full_retrieval_rate.body}}">Full retrieval rate:</span> <span x-text="((ccrDetails[row.name].pattern?.full_retrieval_rate || 0) * 100).toFixed(1) + '%'"></span></div>
+                                                                <div><span class="text-gray-500" data-help-title="{{help.mcp.total_compressions.title}}" data-help="{{help.mcp.total_compressions.body}}">Total compressions:</span> <span x-text="formatNumber(ccrDetails[row.name].pattern?.total_compressions || 0)"></span></div>
+                                                                <div><span class="text-gray-500" data-help-title="{{help.mcp.total_retrievals.title}}" data-help="{{help.mcp.total_retrievals.body}}">Total retrievals:</span> <span x-text="formatNumber(ccrDetails[row.name].pattern?.total_retrievals || 0)"></span></div>
+                                                                <div class="col-span-2 md:col-span-4"><span class="text-gray-500" data-help-title="{{help.mcp.common_queries.title}}" data-help="{{help.mcp.common_queries.body}}">Common queries:</span> <span x-text="(ccrDetails[row.name].pattern?.common_queries || []).join(', ') || 'none'"></span></div>
+                                                            </div>
+                                                        </template>
+                                                        <template x-if="!ccrDetails[row.name]">
+                                                            <span class="text-gray-500">Loading detail…</span>
+                                                        </template>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </template>
+                                    </table>
+                                </div>
+                            </template>
+                            <template x-if="ccrToolRows.length === 0">
+                                <div class="p-6 text-center text-sm text-gray-500">
+                                    No compression tool patterns recorded yet — the feedback loop learns as tool results are compressed and later retrieved.
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Section: Embedded MCP Dashboards -->
+                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="{{help.mcp.mcp_dashboards.title}}"
+                     data-help="{{help.mcp.mcp_dashboards.body}}">
+                    <div class="text-sm font-medium text-gray-300 mb-3">MCP Dashboards</div>
+                    <template x-if="mcpDashboards.length === 0">
+                        <div class="text-xs text-gray-500 py-4 text-center">No MCP dashboards detected.</div>
+                    </template>
+                    <div class="space-y-2">
+                        <template x-for="d in mcpDashboards" :key="d.name">
+                            <div class="border border-border/60 rounded-md">
+                                <button type="button" @click="toggleMcpDashboard(d)"
+                                        class="w-full flex items-center gap-2 px-3 py-2 text-left">
+                                    <svg class="w-3.5 h-3.5 text-gray-500 transition-transform shrink-0" :class="mcpDashboardExpanded[d.name] ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                    <span class="text-sm text-gray-300" x-text="d.label"></span>
+                                    <span class="w-2 h-2 rounded-full"
+                                          :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
+                                          :data-help-title="d.label"
+                                          :data-help="d.available ? helpText.header.mcp_dashboard_available.body : helpText.header.mcp_dashboard_unavailable.body"></span>
+                                </button>
+                                <div x-show="mcpDashboardExpanded[d.name]" class="px-3 pb-3">
+                                    <template x-if="d.name === 'serena'">
+                                        <div>
+                                            <div x-show="mcpDashboardStatus[d.name] === 'loading' || mcpDashboardStatus[d.name] === 'loaded'"
+                                                 class="relative border border-border/40 rounded" style="height:480px">
+                                                <div x-show="mcpDashboardStatus[d.name] === 'loading'"
+                                                     class="absolute inset-0 flex items-center justify-center bg-black/10">
+                                                    <svg class="animate-spin w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>
+                                                </div>
+                                                <iframe :src="d.url" sandbox="allow-scripts allow-same-origin allow-forms" loading="lazy"
+                                                        class="w-full h-full rounded"
+                                                        @load="onMcpIframeLoad(d.name)" @error="onMcpIframeError(d.name)"></iframe>
+                                            </div>
+                                            <template x-if="mcpDashboardStatus[d.name] === 'fallback'">
+                                                <div class="border border-border/40 rounded p-3">
+                                                    <template x-if="mcpDashboardSummary[d.name]?.available">
+                                                        <div class="text-xs text-gray-400 space-y-2">
+                                                            <div><span class="text-gray-500">Active project:</span> <span x-text="mcpDashboardSummary[d.name].active_project || 'none'"></span></div>
+                                                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                                                <template x-for="(v, k) in (mcpDashboardSummary[d.name].tool_stats || {})" :key="k">
+                                                                    <div><span class="text-gray-500" x-text="k"></span>: <span class="tabular-nums" x-text="formatNum(v)"></span></div>
+                                                                </template>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="!mcpDashboardSummary[d.name]?.available">
+                                                        <div class="text-xs text-gray-500">The embedded dashboard didn't load and no native summary is available.</div>
+                                                    </template>
+                                                    <a :href="d.url" target="_blank" rel="noopener" class="text-xs text-accent hover:underline mt-2 inline-block">Open dashboard ↗</a>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <template x-if="d.name !== 'serena'">
+                                        <div class="text-xs text-gray-500">
+                                            No embedded preview available for this MCP.
+                                            <a :href="d.url" target="_blank" rel="noopener" class="text-accent hover:underline">Open dashboard ↗</a>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Card: Diagnostics (Prometheus + Export) -->
+                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="{{help.mcp.diagnostics.title}}"
+                     data-help="{{help.mcp.diagnostics.body}}">
+                    <div class="text-sm font-medium text-gray-300 mb-3">Diagnostics</div>
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div class="text-xs text-gray-500">
+                            <a href="/metrics" target="_blank" class="text-accent hover:underline font-mono">/metrics</a>
+                            — Prometheus scrape endpoint. Point a Grafana Prometheus datasource at this proxy to chart savings over time.
+                        </div>
+                        <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors shrink-0"
+                                @click="copyMetricsUrl()">
+                            Copy /metrics URL
+                        </button>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-border/40 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div class="text-xs text-gray-500">Export last 30 days of daily savings history.</div>
+                        <div class="flex items-center gap-2">
+                            <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
+                                    @click="downloadHistory('csv', 'daily')">
+                                Export CSV (30d)
+                            </button>
+                            <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
+                                    @click="downloadHistory('json', 'daily')">
+                                Export JSON (30d)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>

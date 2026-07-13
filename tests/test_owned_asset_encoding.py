@@ -11,14 +11,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from headroom.dashboard import TEMPLATES_DIR, get_dashboard_html
+from headroom.dashboard import get_dashboard_html
 from headroom.memory.sync import _load_sync_state, _save_sync_state
 
 
 def test_dashboard_template_contains_non_ascii() -> None:
-    """The bundled template has non-ASCII bytes, so the bug is reproducible."""
-    raw = (TEMPLATES_DIR / "dashboard.html").read_bytes()
-    assert any(byte > 0x7F for byte in raw), "template expected to contain non-ASCII bytes"
+    """The assembled dashboard has non-ASCII bytes, so the bug is reproducible.
+
+    The template is assembled from a shell (headroom/dashboard/templates/
+    dashboard.html) plus partial files (templates/partials/*) — the
+    non-ASCII content isn't necessarily in the shell itself anymore, so this
+    checks the fully assembled output the browser actually receives.
+    """
+    raw = get_dashboard_html().encode("utf-8")
+    assert any(byte > 0x7F for byte in raw), "dashboard expected to contain non-ASCII bytes"
 
 
 def test_get_dashboard_html_reads_as_utf8(monkeypatch) -> None:
@@ -29,22 +35,25 @@ def test_get_dashboard_html_reads_as_utf8(monkeypatch) -> None:
     is passed so the regression cannot silently return (a utf-8 CI host would
     otherwise mask it).
     """
-    captured: dict[str, object] = {}
+    calls: list[object] = []
     original = Path.read_text
 
     def _spy(self: Path, *args: object, **kwargs: object) -> str:
-        captured["encoding"] = kwargs.get("encoding")
+        calls.append(kwargs.get("encoding"))
         return original(self, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(Path, "read_text", _spy)
 
     html = get_dashboard_html()
 
-    assert captured["encoding"] == "utf-8"
+    # get_dashboard_html() now assembles the shell + partial files (see
+    # headroom/dashboard/__init__.py), so it makes several read_text() calls,
+    # not just one — every single one must use utf-8.
+    assert calls
+    assert all(c == "utf-8" for c in calls)
     assert html  # non-empty
-    # Content must equal an explicit UTF-8 decode of the raw template.
-    expected = (TEMPLATES_DIR / "dashboard.html").read_bytes().decode("utf-8")
-    assert html == expected
+    # Assembly must have actually substituted every INCLUDE marker.
+    assert "<!-- INCLUDE:" not in html
 
 
 def test_sync_state_round_trips_non_ascii(tmp_path) -> None:

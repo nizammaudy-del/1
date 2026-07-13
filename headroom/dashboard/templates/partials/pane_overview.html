@@ -1,0 +1,339 @@
+        <!-- System Health lives only in the header status hover popover now (see doctor.checks
+             usage near the top of the header) — this used to be a duplicate standalone pane. -->
+        <!-- Pane: Overview -->
+        <section x-show="paneVisible('overview')" class="mb-6" :class="panes.overview ? 'pane-collapsed' : ''">
+            <button type="button" @click="togglePane('overview')" class="w-full flex items-center gap-2 mb-3 text-left group"
+                    data-help-title="{{help.overview.overview.title}}" data-help="{{help.overview.overview.body}}">
+                <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Overview</span>
+            </button>
+            <div x-show="!panes.overview">
+        <!-- First-run onboarding: shown instead of scattered per-card empty states when there's truly zero traffic -->
+        <template x-if="(stats.requests?.total || 0) === 0">
+            <div class="mb-6 rounded-lg border border-accent/30 bg-surface p-6" data-help-title="{{help.overview.get_started.title}}" data-help="{{help.overview.get_started.body}}">
+                <div class="text-sm font-semibold uppercase tracking-wide text-accent mb-2">Get Started</div>
+                <p class="text-sm text-gray-300 mb-3">No requests yet. Point your client at the proxy, or run a learn pass, to start seeing savings here.</p>
+                <div class="space-y-2 text-sm">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-gray-500">1. Route your CLI through the proxy:</span>
+                        <code class="font-mono text-gray-300 bg-card-alt px-2 py-0.5 rounded">ANTHROPIC_BASE_URL=http://127.0.0.1:8787</code>
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-gray-500">2. Or measure an existing session:</span>
+                        <code class="font-mono text-gray-300 bg-card-alt px-2 py-0.5 rounded">headroom learn --verbosity --apply</code>
+                    </div>
+                </div>
+            </div>
+        </template>
+        <!-- Hero Metrics: Savings $ -> Token Savings -> Throughput. (Output Tokens
+             Saved moved to Savings Breakdown below; Overhead moved to the header,
+             next to the other compact status badges.) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            <!-- Savings ($) - proxy compression only, priced at model list rate -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1 flex items-center justify-between" data-help-title="{{help.overview.proxy_saved.title}}" data-help="{{help.overview.proxy_saved.body}}">
+                    <span>Proxy $ Saved <span class="text-gray-600">&#9432;</span></span>
+                    <button type="button" @click="showMethodology = true"
+                            class="normal-case tracking-normal text-gray-500 hover:text-accent underline decoration-dotted text-[10px] focus:ring-2 focus:ring-accent focus:outline-none rounded">
+                        How is this calculated?
+                    </button>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.persistent_savings?.lifetime?.compression_savings_usd || 0)"></span>
+                    <span class="text-[10px] uppercase tracking-wide text-gray-500 self-start mt-1" title="Priced from a pricing table (LiteLLM or your Settings override) — can be $0.00 or stale for unlisted models. Token counts nearby are directly measured.">estimated</span>
+                </div>
+                <div class="mt-2 text-xs text-gray-500">
+                    <span x-show="(stats.persistent_savings?.lifetime?.compression_savings_usd || 0) > 0"
+                          x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' proxy tokens only; ' + cliFilteringLabel + ' excluded from $'"></span>
+                    <span x-show="!((stats.persistent_savings?.lifetime?.compression_savings_usd || 0) > 0) && stats.litellm_available !== false"
+                          x-text="formatNumber(stats.requests?.total || 0) + ' requests processed'"></span>
+                    <!-- Pricing is LiteLLM-only. LiteLLM currently can't install on
+                         newer Python (e.g. 3.14+); state the fact, not the version,
+                         so the hint stays correct if that changes. -->
+                    <span x-show="!((stats.persistent_savings?.lifetime?.compression_savings_usd || 0) > 0) && stats.litellm_available === false">
+                        Cost pricing needs LiteLLM, which isn't installed in this environment. If you're on a Python version LiteLLM doesn't support yet, reinstall Headroom on Python 3.13:
+                        <code class="text-gray-400">pipx reinstall headroom-ai --python python3.13</code>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Token Savings (%) -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.overview.token_savings.title}}" data-help="{{help.overview.token_savings.body}}">Token Savings <span class="text-gray-600">&#9432;</span></div>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-light tabular-nums text-accent" x-text="formatNumber(stats.tokens?.saved || 0)"></span>
+                    <!-- Active compression ratio: savings as a fraction of tokens we
+                         *attempted* to compress (extracted units + tool schema). When
+                         the attempted denominator is missing (backend-routed paths
+                         that don't yet wire per-message live-zone tracking), fall back
+                         to the whole-request ratio so the headline doesn't collapse to
+                         0% while compression is happening (issue #455). -->
+                    <span class="text-sm text-accent" x-text="headlineSavingsPercent.toFixed(1) + '%'" data-help-title="{{help.overview.compression_ratio.title}}" :data-help="headlineSavingsTitle"></span>
+                </div>
+                <div class="mt-1 text-xs text-gray-500 leading-relaxed">
+                    <span x-text="'Proxy ' + formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' (' + proxyShareOfTotal.toFixed(1) + '%)'"></span>
+                    <span class="mx-1 text-gray-600">/</span>
+                    <span x-text="cliFilteringLabel + ' ' + formatNumber(cliFilteringSaved) + ' (' + cliFilteringShareOfTotal.toFixed(1) + '%)'"></span>
+                </div>
+                <div class="mt-1 text-xs text-gray-600 leading-relaxed">
+                    <span x-text="'Of total wire: ' + (stats.tokens?.savings_percent || 0).toFixed(2) + '%'" data-help-title="{{help.overview.of_total_wire.title}}" data-help="{{help.overview.of_total_wire.body}}"></span>
+                </div>
+                <div class="mt-2 h-8">
+                    <svg class="w-full h-full" viewBox="0 0 100 32" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="sparkline-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:0.3"/>
+                                <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0"/>
+                            </linearGradient>
+                        </defs>
+                        <path class="sparkline-area" :d="getSparklineArea(savingsHistory)"></path>
+                        <path class="sparkline" :d="getSparkline(savingsHistory)"></path>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Token Throughput -->
+            <div class="bg-surface rounded-lg p-4 border border-border flex flex-col justify-between">
+                <div>
+                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1.5" data-help-title="{{help.overview.throughput.title}}" data-help="{{help.overview.throughput.body}}">Throughput</div>
+                    <div class="flex flex-col gap-1 text-[11px] text-gray-300">
+                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5"
+                             data-help-title="{{help.overview.input_throughput.title}}" data-help="{{help.overview.input_throughput.body}}">
+                            <span class="text-gray-500">Input (wall / active p50)</span>
+                            <span class="font-mono text-accent">
+                                <span x-text="formatNum(stats.throughput?.rolling?.input_wall_clock || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.input_active_p50 || 0)"></span> tok/s
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5" x-show="(stats.throughput?.rolling?.compression_p50 || 0) > 0"
+                             data-help-title="{{help.overview.compression_throughput.title}}" data-help="{{help.overview.compression_throughput.body}}">
+                            <span class="text-gray-500">Compression (p50 / p95)</span>
+                            <span class="font-mono text-emerald-400">
+                                <span x-text="formatNum(stats.throughput?.rolling?.compression_p50 || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.compression_p95 || 0)"></span> tok/s
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-baseline border-b border-border/40 pb-0.5"
+                             data-help-title="{{help.overview.forward_throughput.title}}" data-help="{{help.overview.forward_throughput.body}}">
+                            <span class="text-gray-500">Forward (p50 / p95)</span>
+                            <span class="font-mono text-cyan-400">
+                                <span x-text="formatNum(stats.throughput?.rolling?.forward_p50 || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.forward_p95 || 0)"></span> tok/s
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-baseline" x-show="(stats.throughput?.rolling?.generation_p50 || 0) > 0"
+                             data-help-title="{{help.overview.generation_throughput.title}}" data-help="{{help.overview.generation_throughput.body}}">
+                            <span class="text-gray-500">Generation (p50 / p95)</span>
+                            <span class="font-mono text-yellow-400">
+                                <span x-text="formatNum(stats.throughput?.rolling?.generation_p50 || 0)"></span> /
+                                <span x-text="formatNum(stats.throughput?.rolling?.generation_p95 || 0)"></span> tok/s
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-2 pt-1.5 border-t border-border/40 text-[10px] text-gray-500 flex justify-between items-center"
+                     data-help-title="{{help.overview.current_5m_active_p50.title}}" data-help="{{help.overview.current_5m_active_p50.body}}">
+                    <span>Current 5m (active p50):</span>
+                    <span class="font-mono text-gray-400">
+                        In: <span x-text="formatNum(stats.throughput?.current?.input_active_p50 || 0, 0)"></span> ·
+                        Fwd: <span x-text="formatNum(stats.throughput?.current?.forward_p50 || 0, 0)"></span> tok/s
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Budget -->
+        <div class="bg-surface rounded-lg p-4 border border-border mb-6" data-help-title="{{help.overview.budget.title}}"
+             data-help="{{help.overview.budget.body}}">
+            <template x-if="stats.cost?.budget_limit_usd">
+                <div>
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="text-sm font-medium text-gray-300">
+                            Budget <span class="text-xs text-gray-500 font-mono" x-text="'(' + (stats.cost?.budget_period || 'period') + ')'"></span>
+                        </div>
+                        <div class="text-xs text-gray-400">
+                            <span class="font-mono" x-text="'$' + formatCurrency(stats.cost?.period_spend_usd || 0)"></span>
+                            <span class="text-gray-600"> / </span>
+                            <span class="font-mono" x-text="'$' + formatCurrency(stats.cost?.budget_limit_usd || 0)"></span>
+                            <span class="text-gray-500 ml-1" x-text="budgetPercentUsed.toFixed(0) + '%'"></span>
+                        </div>
+                    </div>
+                    <div class="h-2.5 w-full rounded-full bg-border overflow-hidden">
+                        <div class="h-full transition-all duration-500"
+                             :class="budgetPercentUsed > 95 ? 'bg-red-500' : (budgetPercentUsed > 80 ? 'bg-amber-500' : 'bg-emerald-500')"
+                             :style="'width:' + Math.min(100, budgetPercentUsed) + '%'"></div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500">
+                        <span x-text="'$' + formatCurrency(stats.cost?.budget_remaining_usd || 0) + ' remaining this ' + (stats.cost?.budget_period || 'period')"></span>
+                    </div>
+                </div>
+            </template>
+            <template x-if="!stats.cost?.budget_limit_usd">
+                <div class="text-xs text-gray-500">No budget set — configure in Settings.</div>
+            </template>
+        </div>
+
+        <!-- Agent Usage -->
+        <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
+            <div class="px-4 py-3 border-b border-border flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div data-help-title="{{help.overview.agent_usage.title}}" data-help="{{help.overview.agent_usage.body}}">
+                    <div class="text-sm font-medium text-gray-300">Agent Usage</div>
+                    <div class="text-xs text-gray-500">Before and after token usage by detected client</div>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                    <span class="text-gray-500" x-text="'Coverage: ' + agentCoverageLabel"
+                          data-help-title="{{help.overview.coverage.title}}" data-help="{{help.overview.coverage.body}}"></span>
+                    <span class="px-2 py-0.5 rounded border border-border bg-card-alt font-mono text-gray-400"
+                          x-text="formatNumber(stats.agent_usage?.totals?.requests || 0) + ' requests'"></span>
+                </div>
+            </div>
+
+            <div class="p-4">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="{{help.overview.before.title}}" data-help="{{help.overview.before.body}}">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Before</div>
+                        <div class="text-2xl font-light tabular-nums" x-text="formatNumber(stats.agent_usage?.totals?.before_tokens || 0)"></div>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="{{help.overview.after.title}}" data-help="{{help.overview.after.body}}">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">After</div>
+                        <div class="text-2xl font-light tabular-nums text-gray-200" x-text="formatNumber(stats.agent_usage?.totals?.after_tokens || 0)"></div>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="{{help.overview.saved.title}}" data-help="{{help.overview.saved.body}}">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Saved</div>
+                        <div class="text-2xl font-light tabular-nums text-accent" x-text="formatNumber(stats.agent_usage?.totals?.tokens_saved || 0)"></div>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card-alt p-3" data-help-title="{{help.overview.savings.title}}" data-help="{{help.overview.savings.body}}">
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Savings</div>
+                        <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="(stats.agent_usage?.totals?.savings_percent || 0).toFixed(1) + '%'"></div>
+                    </div>
+                </div>
+
+                <template x-if="agentRows.length > 0">
+                    <div class="space-y-3">
+                        <template x-for="agent in agentRows" :key="agent.agent">
+                            <div class="rounded-lg border border-border bg-card-alt p-3">
+                                <div class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(160px,0.9fr)_minmax(260px,1.5fr)_minmax(260px,1.2fr)] lg:items-center">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <span class="h-2.5 w-2.5 rounded-full" :class="agentDotClass(agent.agent)"></span>
+                                            <span class="text-sm font-medium text-gray-200 truncate" x-text="agent.label"></span>
+                                        </div>
+                                        <div class="mt-1 text-xs text-gray-500">
+                                            <span x-text="formatNumber(agent.requests || 0) + ' requests'"></span>
+                                            <span class="mx-1 text-gray-700">/</span>
+                                            <span x-text="agent.source"></span>
+                                        </div>
+                                    </div>
+
+                                    <div data-help-title="{{help.overview.token_flow.title}}" data-help="{{help.overview.token_flow.body}}">
+                                        <div class="flex items-center justify-between text-xs mb-1">
+                                            <span class="text-gray-500">Token flow</span>
+                                            <span class="font-mono text-emerald-400" x-text="(agent.savings_percent || 0).toFixed(1) + '% saved'"></span>
+                                        </div>
+                                        <div class="h-3 w-full rounded-full bg-border overflow-hidden flex">
+                                            <div class="h-full bg-emerald-500 transition-all duration-500"
+                                                 :style="'width:' + agentSavedWidth(agent) + '%'"></div>
+                                            <div class="h-full bg-accent/60 transition-all duration-500"
+                                                 :style="'width:' + agentAfterWidth(agent) + '%'"></div>
+                                        </div>
+                                        <div class="mt-1 flex flex-wrap gap-3 text-xs text-gray-500">
+                                            <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-emerald-500"></span>Saved</span>
+                                            <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-accent/60"></span>Sent</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-right">
+                                        <div data-help-title="{{help.overview.before_2.title}}" data-help="{{help.overview.before_2.body}}">
+                                            <div class="text-[11px] uppercase tracking-wide text-gray-500">Before</div>
+                                            <div class="font-mono text-sm" x-text="formatNumber(agent.before_tokens || 0)"></div>
+                                        </div>
+                                        <div data-help-title="{{help.overview.after_2.title}}" data-help="{{help.overview.after_2.body}}">
+                                            <div class="text-[11px] uppercase tracking-wide text-gray-500">After</div>
+                                            <div class="font-mono text-sm" x-text="formatNumber(agent.after_tokens || 0)"></div>
+                                        </div>
+                                        <div data-help-title="{{help.overview.saved_2.title}}" data-help="{{help.overview.saved_2.body}}">
+                                            <div class="text-[11px] uppercase tracking-wide text-gray-500">Saved</div>
+                                            <div class="font-mono text-sm text-accent" x-text="formatNumber(agent.tokens_saved || 0)"></div>
+                                        </div>
+                                        <div data-help-title="{{help.overview.share.title}}" data-help="{{help.overview.share.body}}">
+                                            <div class="text-[11px] uppercase tracking-wide text-gray-500">Share</div>
+                                            <div class="font-mono text-sm text-gray-300" x-text="(agent.share_of_saved_percent || 0).toFixed(1) + '%'"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <template x-if="agentRows.length === 0">
+                    <div class="rounded-lg border border-dashed border-border p-6 text-center text-sm text-gray-500">
+                        Agent usage appears after Cursor, Claude, Codex, or another client sends traffic through this proxy.
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Savings Breakdown: 3 equal-width cards. Compression is the primary
+             metric and always shows; Prefix Cache Discount keeps its own gate
+             (only meaningful once there's cache-discount $); Output Tokens Saved
+             is a token count (not a $ figure) so it always shows regardless of
+             $ savings state -- it must not be gated behind a $-savings check. -->
+        <div class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2"
+             data-help-title="{{help.overview.savings_breakdown.title}}" data-help="{{help.overview.savings_breakdown.body}}">
+            Savings Breakdown <span class="text-[10px] uppercase tracking-wide text-gray-500" title="Priced from a pricing table (LiteLLM or your Settings override) — can be stale or $0.00 for unlisted models.">estimated</span>
+        </div>
+        <div class="grid grid-cols-1 gap-4 mb-6"
+             :class="(stats.cost?.cache_savings_usd || 0) > 0 ? 'md:grid-cols-3' : 'md:grid-cols-2'">
+            <!-- Compression -->
+            <div class="bg-surface rounded-lg p-4 border border-border" data-help-title="{{help.overview.compression.title}}" data-help="{{help.overview.compression.body}}">
+                <div class="text-xs text-gray-500 mb-1">Compression</div>
+                <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="'$' + formatCurrency(stats.cost?.compression_savings_usd || 0)"></div>
+                <div class="text-xs text-gray-500" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0) + ' proxy tokens removed (measured)'"></div>
+            </div>
+
+            <!-- Prefix Cache Discount: only meaningful once there's a cache discount -->
+            <template x-if="(stats.cost?.cache_savings_usd || 0) > 0">
+                <div class="bg-surface rounded-lg p-4 border border-border" data-help-title="{{help.overview.prefix_cache_discount.title}}" data-help="{{help.overview.prefix_cache_discount.body}}">
+                    <div class="text-xs text-gray-500 mb-1">Prefix Cache Discount</div>
+                    <div class="text-2xl font-light tabular-nums text-cyan-400" x-text="'$' + formatCurrency(stats.cost?.cache_savings_usd || 0)"></div>
+                    <div class="text-xs text-gray-500">Provider-native caching</div>
+                </div>
+            </template>
+
+            <!-- Output Tokens Saved (counterfactual), relocated from the hero row -->
+            <div class="bg-surface rounded-lg p-4 border border-border">
+                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.overview.output_tokens_saved.title}}" data-help="{{help.overview.output_tokens_saved.body}}">Output Tokens Saved <span class="text-gray-600">&#9432;</span></div>
+                <template x-if="stats.tokens?.output_reduction?.available">
+                    <div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl font-light tabular-nums text-accent" x-text="formatNumber(stats.tokens?.output_saved || 0)"></span>
+                            <span class="text-sm text-accent" x-text="(stats.tokens?.output_reduction_percent || 0).toFixed(1) + '%'"></span>
+                        </div>
+                        <div class="mt-1 text-xs text-gray-500 leading-relaxed">
+                            <!-- "measured" = A/B holdout (unbiased); "estimated" = vs learned baseline -->
+                            <span class="uppercase tracking-wide"
+                                  :class="stats.tokens?.output_reduction?.method === 'measured' ? 'text-emerald-400' : 'text-gray-400'"
+                                  x-text="stats.tokens?.output_reduction?.method || ''"
+                                  :data-help-title="stats.tokens?.output_reduction?.method === 'measured' ? helpText.overview.output_reduction_measured.title : helpText.overview.output_reduction_estimated.title"
+                                  :data-help="stats.tokens?.output_reduction?.method === 'measured' ? helpText.overview.output_reduction_measured.body : helpText.overview.output_reduction_estimated.body"></span>
+                            <span x-text="'· 95% CI ' + (stats.tokens?.output_reduction?.ci_low_percent || 0).toFixed(1) + '–' + (stats.tokens?.output_reduction?.ci_high_percent || 0).toFixed(1) + '%'"
+                                  data-help-title="{{help.overview.95_confidence_interval.title}}" data-help="{{help.overview.95_confidence_interval.body}}"></span>
+                        </div>
+                        <div class="mt-1 text-xs text-gray-600 leading-relaxed"
+                             x-text="formatNumber(stats.tokens?.output_reduction?.requests || 0) + ' shaped responses · counterfactual'">
+                        </div>
+                    </div>
+                </template>
+                <template x-if="!stats.tokens?.output_reduction?.available">
+                    <div class="mt-1 text-xs text-gray-500 leading-relaxed">
+                        <span class="text-2xl font-light tabular-nums text-gray-600">—</span>
+                        <div class="mt-1">Enable the output shaper (HEADROOM_OUTPUT_SHAPER=1) and run
+                            <code class="text-gray-400">headroom learn --verbosity --apply</code> to start measuring.</div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+            </div>
+        </section>
