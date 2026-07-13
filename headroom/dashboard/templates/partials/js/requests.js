@@ -154,8 +154,13 @@ function dashboardRequestsMixin() {
                             ` : '';
 
                     const diffBody = isUnchanged ? `
-                            <div class="rounded border border-gray-600/30 bg-card-alt px-2 py-1.5 text-center" style="height: 115px; display: flex; align-items: center; justify-content: center;">
-                                <span class="inline-flex items-center gap-1.5 text-[11px] text-gray-400 bg-gray-700/30 px-2 py-1 rounded-full uppercase tracking-wide font-semibold">unchanged</span>
+                            <div class="rounded border border-gray-600/30 overflow-hidden flex flex-col" style="height: 115px;">
+                                <div class="px-2 py-1 border-b border-gray-600/30 shrink-0 bg-card-alt flex items-center gap-1.5"
+                                     data-help-title="{{help.requests.unchanged.title}}" data-help="{{help.requests.unchanged.body}}">
+                                    <span class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Unchanged</span>
+                                    <span class="inline-flex items-center text-[9px] text-gray-500 bg-gray-700/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">not compressed</span>
+                                </div>
+                                <div class="p-2 font-mono text-[11px] text-gray-300 overflow-auto flex-1">${beforeContent}</div>
                             </div>
                     ` : `
                             <div class="grid grid-cols-2 gap-2" style="height: 115px;">

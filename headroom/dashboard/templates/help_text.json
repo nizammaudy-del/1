@@ -601,6 +601,10 @@
     "transforms_applied_2": {
       "title": "Transforms applied",
       "body": "The compression transforms Headroom ran on this request, in order."
+    },
+    "unchanged": {
+      "title": "Unchanged",
+      "body": "This request passed through Headroom byte-identical -- the input and output are the same, nothing was compressed. Click the card for the full content."
     }
   },
   "project": {
