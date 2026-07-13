@@ -2,14 +2,14 @@
         <!-- Pane: Diagnostics -->
         <section x-show="paneVisible('diagnostics')" class="mb-6" :class="panes.diagnostics ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('diagnostics')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                    data-help-title="Diagnostics" data-help="Local install profiles on this host, recent headroom learn runs, and memory-sync dedup stats — useful when debugging a specific deployment.">
+                    data-help-title="{{help.diagnostics.diagnostics.title}}" data-help="{{help.diagnostics.diagnostics.body}}">
                 <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Diagnostics</span>
             </button>
             <div x-show="!panes.diagnostics">
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <!-- Deployments -->
-                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="Local install profiles" data-help="Install profiles recorded by `headroom install` on this host. Not a multi-host fleet or remote deployments — local only.">
+                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="{{help.diagnostics.local_install_profiles.title}}" data-help="{{help.diagnostics.local_install_profiles.body}}">
                         <div class="text-sm font-medium text-gray-300 mb-1">Local install profiles (this host)</div>
                         <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/admin/deployments</span></div>
                         <template x-if="diagnosticsDeployments.length > 0">
@@ -31,7 +31,7 @@
                     </div>
 
                     <!-- Learn history -->
-                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="Learn history" data-help="Recent `headroom learn` runs recorded on this host: when they ran, which agent/project, how many recommendations, and whether they were applied.">
+                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="{{help.diagnostics.learn_history.title}}" data-help="{{help.diagnostics.learn_history.body}}">
                         <div class="text-sm font-medium text-gray-300 mb-1">Learn history</div>
                         <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/learn/history</span></div>
                         <template x-if="diagnosticsLearnHistory.length > 0">
@@ -59,7 +59,7 @@
                     </div>
 
                     <!-- Memory sync -->
-                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="Memory sync" data-help="Per-agent memory import/export counts and dedup rate from the last sync, sourced from /debug/memory/sync.">
+                    <div class="bg-surface rounded-lg border border-border p-4" data-help-title="{{help.diagnostics.memory_sync.title}}" data-help="{{help.diagnostics.memory_sync.body}}">
                         <div class="text-sm font-medium text-gray-300 mb-1">Memory sync</div>
                         <div class="text-xs text-gray-500 mb-3">From <span class="font-mono">/debug/memory/sync</span></div>
                         <template x-if="(diagnosticsMemorySync.agents || []).length > 0">

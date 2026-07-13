@@ -137,21 +137,21 @@ function dashboardRequestsMixin() {
 
                     return `
                         <div class="transformation-card border-b border-border p-3 cursor-pointer hover:bg-card-alt transition-colors" data-idx="${idx}" style="height: ${this.feedItemHeight}px; box-sizing: border-box;"
-                             data-help-title="Transformation detail" data-help="Click this card to open a larger, unclipped view of the before/after content.">
+                             data-help-title="{{help.requests.transformation_detail.title}}" data-help="{{help.requests.transformation_detail.body}}">
                             <div class="flex items-center justify-between mb-2">
                                 <div class="flex items-center gap-2 min-w-0"
-                                     data-help-title="Request" data-help="The model this request was routed to, tokens Headroom removed, and the resulting savings percentage.">
+                                     data-help-title="{{help.requests.request.title}}" data-help="{{help.requests.request.body}}">
                                     <span class="text-xs font-mono text-gray-400 truncate">${this.escapeHtml(model)}</span>
                                     <span class="text-xs text-gray-600 shrink-0">·</span>
                                     <span class="text-xs text-emerald-400 shrink-0">${tokensSaved} tok</span>
                                     <span class="text-xs text-gray-600 shrink-0">(${savingsPct}%)</span>
                                 </div>
-                                <span class="text-xs text-gray-600 shrink-0" data-help-title="Time" data-help="When the proxy handled this request.">${time}</span>
+                                <span class="text-xs text-gray-600 shrink-0" data-help-title="{{help.requests.time_2.title}}" data-help="{{help.requests.time_2.body}}">${time}</span>
                             </div>
                             <div class="grid grid-cols-2 gap-2" style="height: 115px;">
                                 <div class="rounded border border-red-900/30 overflow-hidden flex flex-col">
                                     <div class="diff-before-header px-2 py-1 border-b border-red-900/30 shrink-0"
-                                         data-help-title="Before" data-help="The original prompt exactly as sent to Headroom, before any compression.">
+                                         data-help-title="{{help.requests.before.title}}" data-help="{{help.requests.before.body}}">
                                         <span class="text-[10px] text-red-400 uppercase tracking-wide font-semibold">Before</span>
                                     </div>
                                     <div class="diff-before p-2 font-mono text-[11px] text-gray-300 overflow-auto flex-1"
@@ -159,7 +159,7 @@ function dashboardRequestsMixin() {
                                 </div>
                                 <div class="rounded border border-emerald-900/30 overflow-hidden flex flex-col">
                                     <div class="diff-after-header px-2 py-1 border-b border-emerald-900/30 shrink-0"
-                                         data-help-title="After" data-help="What Headroom actually sent upstream to the provider after compression.">
+                                         data-help-title="{{help.requests.after.title}}" data-help="{{help.requests.after.body}}">
                                         <span class="text-[10px] text-emerald-400 uppercase tracking-wide font-semibold">After</span>
                                     </div>
                                     <div class="diff-after p-2 font-mono text-[11px] text-gray-300 overflow-auto flex-1"
@@ -168,7 +168,7 @@ function dashboardRequestsMixin() {
                             </div>
                             ${(t.transforms_applied || []).length > 0 ? `
                                 <div class="flex flex-wrap gap-1 mt-1.5"
-                                     data-help-title="Transforms applied" data-help="The compression transforms Headroom ran on this request, in order.">
+                                     data-help-title="{{help.requests.transforms_applied_2.title}}" data-help="{{help.requests.transforms_applied_2.body}}">
                                     ${t.transforms_applied.slice(0, 4).map(tr => `<span class="text-[9px] px-1.5 py-0.5 bg-border rounded font-mono text-gray-500">${this.escapeHtml(tr)}</span>`).join('')}
                                     ${t.transforms_applied.length > 4 ? `<span class="text-[9px] text-gray-600">+${t.transforms_applied.length - 4}</span>` : ''}
                                 </div>

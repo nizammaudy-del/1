@@ -1,12 +1,14 @@
         <template x-if="viewMode === 'mcp'">
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <div data-help-title="MCP Usage" data-help="Counts of mcp__<server>__<tool> calls seen in requests that flowed through the proxy. Requires full-message logging to be enabled.">
+                    <div data-help-title="{{help.mcp.mcp_usage.title}}" data-help="{{help.mcp.mcp_usage.body}}">
                         <div class="text-lg font-medium text-gray-200">MCP Usage</div>
                         <div class="text-xs text-gray-500 mt-0.5">Per-server tool-call activity by Claude and other agents.</div>
                     </div>
                     <span class="text-xs px-2 py-0.5 rounded font-mono"
                           :class="mcpUsage.log_full_messages ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'"
+                          :data-help-title="mcpUsage.log_full_messages ? helpText.mcp.logging_on.title : helpText.mcp.logging_off.title"
+                          :data-help="mcpUsage.log_full_messages ? helpText.mcp.logging_on.body : helpText.mcp.logging_off.body"
                           x-text="mcpUsage.log_full_messages ? 'logging on' : 'log-messages off'"></span>
                 </div>
 
@@ -29,8 +31,8 @@
                                             @click="toggleMcpServer(row.server)"
                                             @keydown.enter="toggleMcpServer(row.server)"
                                             @keydown.space.prevent="toggleMcpServer(row.server)"
-                                            :data-help-title="'MCP server: ' + row.server"
-                                            :data-help="formatNumber(row.calls) + ' total tool calls through this MCP server. Click to see the per-tool breakdown.'">
+                                            :data-help-title="helpText.mcp.server_row.title + ': ' + row.server"
+                                            :data-help="helpText.mcp.server_row.body.replace('{value}', formatNumber(row.calls))">
                                             <td class="py-2 px-4 font-mono text-xs text-gray-300" x-text="row.server"></td>
                                             <td class="py-2 px-4 text-right tabular-nums text-accent" x-text="formatNumber(row.calls)"></td>
                                             <td class="py-2 px-4 text-right text-gray-500">
@@ -39,7 +41,7 @@
                                         </tr>
                                         <tr x-show="mcpExpandedServer === row.server" class="border-t border-border bg-card-alt">
                                             <td colspan="3" class="px-4 py-3">
-                                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2" data-help-title="Calls by tool" data-help="Number of invocations of each individual tool exposed by this MCP server.">calls by tool</div>
+                                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2" data-help-title="{{help.mcp.calls_by_tool.title}}" data-help="{{help.mcp.calls_by_tool.body}}">calls by tool</div>
                                                 <div class="space-y-1 max-h-48 overflow-y-auto pr-2">
                                                     <template x-for="t in row.tools" :key="t.tool">
                                                         <div class="flex justify-between text-sm">
@@ -76,7 +78,7 @@
                 <!-- Pane: CCR Feedback -->
                 <section x-show="paneVisible('ccr')" class="mt-6" :class="panes.ccr ? 'pane-collapsed' : ''">
                     <button type="button" @click="togglePane('ccr')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                            data-help-title="CCR Feedback" data-help="The reversible-compression trust signal: how often a compressed tool result later needed to be retrieved in full. A high retrieval rate for a tool means compression may be too lossy for it — the feedback loop should ease off.">
+                            data-help-title="{{help.mcp.ccr_feedback.title}}" data-help="{{help.mcp.ccr_feedback.body}}">
                         <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                         <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">CCR Feedback</span>
                     </button>
@@ -87,10 +89,10 @@
                                     <table class="w-full text-sm">
                                         <thead>
                                             <tr class="text-xs text-gray-500 text-left border-b border-border">
-                                                <th class="py-2 px-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'name', 'asc')">Tool<span x-text="sortIcon('ccr', 'name')"></span></th>
-                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'compressions')">Compressions<span x-text="sortIcon('ccr', 'compressions')"></span></th>
-                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrievals')">Retrievals<span x-text="sortIcon('ccr', 'retrievals')"></span></th>
-                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrieval_rate')">Retrieval rate<span x-text="sortIcon('ccr', 'retrieval_rate')"></span></th>
+                                                <th class="py-2 px-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'name', 'asc')" data-help-title="{{help.mcp.tool.title}}" data-help="{{help.mcp.tool.body}}">Tool<span x-text="sortIcon('ccr', 'name')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'compressions')" data-help-title="{{help.mcp.compressions.title}}" data-help="{{help.mcp.compressions.body}}">Compressions<span x-text="sortIcon('ccr', 'compressions')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrievals')" data-help-title="{{help.mcp.retrievals.title}}" data-help="{{help.mcp.retrievals.body}}">Retrievals<span x-text="sortIcon('ccr', 'retrievals')"></span></th>
+                                                <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('ccr', 'retrieval_rate')" data-help-title="{{help.mcp.retrieval_rate.title}}" data-help="{{help.mcp.retrieval_rate.body}}">Retrieval rate<span x-text="sortIcon('ccr', 'retrieval_rate')"></span></th>
                                                 <th class="py-2 px-4 font-medium"></th>
                                             </tr>
                                         </thead>
@@ -116,10 +118,10 @@
                                                     <td colspan="5" class="px-4 py-3 text-xs text-gray-400">
                                                         <template x-if="ccrDetails[row.name]">
                                                             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                                                <div><span class="text-gray-500">Full retrieval rate:</span> <span x-text="((ccrDetails[row.name].pattern?.full_retrieval_rate || 0) * 100).toFixed(1) + '%'"></span></div>
-                                                                <div><span class="text-gray-500">Total compressions:</span> <span x-text="formatNumber(ccrDetails[row.name].pattern?.total_compressions || 0)"></span></div>
-                                                                <div><span class="text-gray-500">Total retrievals:</span> <span x-text="formatNumber(ccrDetails[row.name].pattern?.total_retrievals || 0)"></span></div>
-                                                                <div class="col-span-2 md:col-span-4"><span class="text-gray-500">Common queries:</span> <span x-text="(ccrDetails[row.name].pattern?.common_queries || []).join(', ') || 'none'"></span></div>
+                                                                <div><span class="text-gray-500" data-help-title="{{help.mcp.full_retrieval_rate.title}}" data-help="{{help.mcp.full_retrieval_rate.body}}">Full retrieval rate:</span> <span x-text="((ccrDetails[row.name].pattern?.full_retrieval_rate || 0) * 100).toFixed(1) + '%'"></span></div>
+                                                                <div><span class="text-gray-500" data-help-title="{{help.mcp.total_compressions.title}}" data-help="{{help.mcp.total_compressions.body}}">Total compressions:</span> <span x-text="formatNumber(ccrDetails[row.name].pattern?.total_compressions || 0)"></span></div>
+                                                                <div><span class="text-gray-500" data-help-title="{{help.mcp.total_retrievals.title}}" data-help="{{help.mcp.total_retrievals.body}}">Total retrievals:</span> <span x-text="formatNumber(ccrDetails[row.name].pattern?.total_retrievals || 0)"></span></div>
+                                                                <div class="col-span-2 md:col-span-4"><span class="text-gray-500" data-help-title="{{help.mcp.common_queries.title}}" data-help="{{help.mcp.common_queries.body}}">Common queries:</span> <span x-text="(ccrDetails[row.name].pattern?.common_queries || []).join(', ') || 'none'"></span></div>
                                                             </div>
                                                         </template>
                                                         <template x-if="!ccrDetails[row.name]">
@@ -142,8 +144,8 @@
                 </section>
 
                 <!-- Section: Embedded MCP Dashboards -->
-                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="MCP Dashboards"
-                     data-help="Expand a dashboard to try loading its live UI in an embedded frame (lazy — nothing loads until you expand). If it can't be embedded (blocked, slow, or no native fallback exists for that MCP), a link to open it in a new tab is shown instead.">
+                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="{{help.mcp.mcp_dashboards.title}}"
+                     data-help="{{help.mcp.mcp_dashboards.body}}">
                     <div class="text-sm font-medium text-gray-300 mb-3">MCP Dashboards</div>
                     <template x-if="mcpDashboards.length === 0">
                         <div class="text-xs text-gray-500 py-4 text-center">No MCP dashboards detected.</div>
@@ -158,7 +160,7 @@
                                     <span class="w-2 h-2 rounded-full"
                                           :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
                                           :data-help-title="d.label"
-                                          :data-help="d.available ? 'This MCP server is reachable.' : 'This MCP server is not reachable — is it running?'"></span>
+                                          :data-help="d.available ? helpText.header.mcp_dashboard_available.body : helpText.header.mcp_dashboard_unavailable.body"></span>
                                 </button>
                                 <div x-show="mcpDashboardExpanded[d.name]" class="px-3 pb-3">
                                     <template x-if="d.name === 'serena'">
@@ -206,8 +208,8 @@
                 </div>
 
                 <!-- Card: Diagnostics (Prometheus + Export) -->
-                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="Diagnostics"
-                     data-help="Raw endpoints for scraping Headroom metrics into your own tooling, plus quick exports of the last 30 days of savings history.">
+                <div class="bg-surface rounded-lg p-4 border border-border mt-6" data-help-title="{{help.mcp.diagnostics.title}}"
+                     data-help="{{help.mcp.diagnostics.body}}">
                     <div class="text-sm font-medium text-gray-300 mb-3">Diagnostics</div>
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div class="text-xs text-gray-500">

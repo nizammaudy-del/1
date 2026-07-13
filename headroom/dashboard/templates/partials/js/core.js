@@ -30,6 +30,20 @@ function dashboardCore() {
 
                 // Collapsible panes: true == collapsed.
                 async init() {
+                    // Single source of truth for all hover-help copy: the same
+                    // headroom/dashboard/templates/help_text.json that static
+                    // data-help-title/data-help attributes are already
+                    // substituted from server-side. Alpine dynamic bindings and
+                    // raw JS template strings (Live Feed cards, MCP rows, ...)
+                    // read it from here instead of hardcoding duplicate copies.
+                    try {
+                        const helpTextEl = document.getElementById('help-text-data');
+                        this.helpText = helpTextEl ? JSON.parse(helpTextEl.textContent) : {};
+                    } catch (e) {
+                        console.error('Failed to parse help text data:', e);
+                        this.helpText = {};
+                    }
+
                     this.loadUiPrefs();
                     await this.fetchStats();
                     this.fetchMcpDashboards();

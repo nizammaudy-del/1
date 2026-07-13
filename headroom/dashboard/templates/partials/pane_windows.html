@@ -2,7 +2,7 @@
         <!-- Pane: Provider Windows & Cache -->
         <section x-show="paneVisible('windows')" class="mb-6" :class="panes.windows ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('windows')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                    data-help-title="Provider Windows & Cache" data-help="Subscription/rate-limit windows for Anthropic, Codex, and Copilot, plus prefix-cache impact. Only cards with data appear.">
+                    data-help-title="{{help.windows.provider_windows_cache.title}}" data-help="{{help.windows.provider_windows_cache.body}}">
                 <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Provider Windows &amp; Cache</span>
             </button>
@@ -10,8 +10,8 @@
         <!-- Empty state: this pane's cards are all data-gated, so show guidance when none are present -->
         <template x-if="!(stats.subscription_window && stats.subscription_window.latest) && !(stats.codex_rate_limits && stats.codex_rate_limits.primary) && !(stats.copilot_quota && stats.copilot_quota.latest) && !((stats.prefix_cache?.totals?.requests || 0) > 0)">
             <div class="bg-surface rounded-lg p-6 border border-border mb-6 text-center"
-                 data-help-title="Provider Windows & Cache"
-                 data-help="Subscription/quota windows (Anthropic 5h/7d, Codex rate limits, Copilot quota) and prefix-cache efficiency appear here once that provider's traffic flows through the proxy.">
+                 data-help-title="{{help.windows.provider_windows_cache_2.title}}"
+                 data-help="{{help.windows.provider_windows_cache_2.body}}">
                 <p class="text-sm text-gray-500">No provider windows or prefix-cache activity yet.</p>
                 <p class="text-xs text-gray-600 mt-1">Anthropic 5h/7d windows, Codex rate limits, Copilot quota, and prefix-cache stats appear here once you route that provider's traffic through the proxy.</p>
             </div>
@@ -20,8 +20,10 @@
         <template x-if="stats.subscription_window && stats.subscription_window.latest">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
                 <div class="flex justify-between items-center mb-4">
-                    <div class="text-sm font-medium text-gray-300">Anthropic Subscription Window</div>
-                    <div class="flex items-center gap-2">
+                    <div class="text-sm font-medium text-gray-300"
+                         data-help-title="{{help.windows.anthropic_subscription_window.title}}" data-help="{{help.windows.anthropic_subscription_window.body}}">Anthropic Subscription Window</div>
+                    <div class="flex items-center gap-2"
+                         data-help-title="{{help.windows.window_activity.title}}" data-help="{{help.windows.window_activity.body}}">
                         <span class="w-2 h-2 rounded-full pulse-live"
                               :class="stats.subscription_window.last_active_at ? 'bg-emerald-400' : 'bg-gray-600'"></span>
                         <span class="text-xs text-gray-500" x-text="stats.subscription_window.last_active_at ? 'Active' : 'Idle'"></span>
@@ -32,7 +34,7 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <!-- 5-hour window -->
                     <template x-if="stats.subscription_window.latest.five_hour">
-                        <div>
+                        <div data-help-title="{{help.windows.5_hour_window.title}}" data-help="{{help.windows.5_hour_window.body}}">
                             <div class="flex justify-between text-xs mb-1">
                                 <span class="text-gray-400 uppercase tracking-wide">5-Hour Window</span>
                                 <span class="tabular-nums font-mono"
@@ -51,7 +53,7 @@
 
                     <!-- 7-day window -->
                     <template x-if="stats.subscription_window.latest.seven_day">
-                        <div>
+                        <div data-help-title="{{help.windows.7_day_window.title}}" data-help="{{help.windows.7_day_window.body}}">
                             <div class="flex justify-between text-xs mb-1">
                                 <span class="text-gray-400 uppercase tracking-wide">7-Day Window</span>
                                 <span class="tabular-nums font-mono"
@@ -71,7 +73,8 @@
 
                 <!-- Overage / extra usage -->
                 <template x-if="stats.subscription_window.latest.extra_usage && stats.subscription_window.latest.extra_usage.is_enabled">
-                    <div class="border-t border-border pt-3 mb-3">
+                    <div class="border-t border-border pt-3 mb-3"
+                         data-help-title="{{help.windows.extra_usage_overage.title}}" data-help="{{help.windows.extra_usage_overage.body}}">
                         <div class="flex justify-between text-xs mb-1">
                             <span class="text-gray-400 uppercase tracking-wide">Extra Usage (Overage)</span>
                             <span class="text-amber-400 tabular-nums font-mono"
@@ -89,24 +92,25 @@
                 <!-- Headroom contribution row -->
                 <template x-if="stats.subscription_window.contribution && stats.subscription_window.contribution.tokens_submitted > 0">
                     <div class="border-t border-border pt-3">
-                        <div class="text-xs text-gray-400 uppercase tracking-wide mb-2">Headroom Contribution This Window</div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mb-2"
+                             data-help-title="{{help.windows.headroom_contribution_this_window.title}}" data-help="{{help.windows.headroom_contribution_this_window.body}}">Headroom Contribution This Window</div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div>
+                            <div data-help-title="{{help.windows.efficiency.title}}" data-help="{{help.windows.efficiency.body}}">
                                 <div class="text-xs text-gray-500 mb-0.5">Efficiency</div>
                                 <div class="text-lg font-light tabular-nums text-accent"
                                      x-text="(stats.subscription_window.contribution.efficiency_pct || 0).toFixed(1) + '%'"></div>
                             </div>
-                            <div>
+                            <div data-help-title="{{help.windows.tokens_saved.title}}" data-help="{{help.windows.tokens_saved.body}}">
                                 <div class="text-xs text-gray-500 mb-0.5">Tokens Saved</div>
                                 <div class="text-lg font-light tabular-nums text-emerald-400"
                                      x-text="formatNumber(stats.subscription_window.contribution.tokens_saved?.total || 0)"></div>
                             </div>
-                            <div>
+                            <div data-help-title="{{help.windows.compression.title}}" data-help="{{help.windows.compression.body}}">
                                 <div class="text-xs text-gray-500 mb-0.5">Compression</div>
                                 <div class="text-sm tabular-nums text-gray-300"
                                      x-text="formatNumber(stats.subscription_window.contribution.tokens_saved?.compression || 0) + ' tok'"></div>
                             </div>
-                            <div>
+                            <div data-help-title="{{help.windows.cache_reads.title}}" data-help="{{help.windows.cache_reads.body}}">
                                 <div class="text-xs text-gray-500 mb-0.5">Cache Reads</div>
                                 <div class="text-sm tabular-nums text-cyan-400"
                                      x-text="formatNumber(stats.subscription_window.contribution.tokens_saved?.cache_reads || 0) + ' tok'"></div>
@@ -115,7 +119,7 @@
 
                         <!-- Efficiency bar: tokens submitted vs what would have been sent without headroom -->
                         <template x-if="stats.subscription_window.contribution.raw_without_headroom > 0">
-                            <div class="mt-3">
+                            <div class="mt-3" data-help-title="{{help.windows.raw_vs_submitted.title}}" data-help="{{help.windows.raw_vs_submitted.body}}">
                                 <div class="flex justify-between text-xs text-gray-500 mb-1">
                                     <span>Raw vs Submitted</span>
                                     <span x-text="formatNumber(stats.subscription_window.contribution.tokens_submitted) + ' / ' + formatNumber(stats.subscription_window.contribution.raw_without_headroom) + ' tokens forwarded'"></span>
@@ -135,7 +139,8 @@
 
                 <!-- Discrepancies -->
                 <template x-if="stats.subscription_window.discrepancies && stats.subscription_window.discrepancies.length > 0">
-                    <div class="border-t border-border pt-3 mt-3">
+                    <div class="border-t border-border pt-3 mt-3"
+                         data-help-title="{{help.windows.anomalies_detected.title}}" data-help="{{help.windows.anomalies_detected.body}}">
                         <div class="text-xs text-amber-400 uppercase tracking-wide mb-2">⚠ Anomalies Detected</div>
                         <template x-for="d in stats.subscription_window.discrepancies" :key="d.kind + d.description">
                             <div class="text-xs mb-1"
@@ -150,7 +155,8 @@
         <template x-if="stats.codex_rate_limits && stats.codex_rate_limits.primary">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
                 <div class="flex justify-between items-center mb-4">
-                    <div class="text-sm font-medium text-gray-300">OpenAI Codex Rate-Limit Window</div>
+                    <div class="text-sm font-medium text-gray-300"
+                         data-help-title="{{help.windows.openai_codex_rate_limit_window.title}}" data-help="{{help.windows.openai_codex_rate_limit_window.body}}">OpenAI Codex Rate-Limit Window</div>
                     <template x-if="stats.codex_rate_limits.limit_name">
                         <span class="text-xs text-gray-500 font-mono" x-text="stats.codex_rate_limits.limit_name"></span>
                     </template>
@@ -159,7 +165,7 @@
                 <!-- Primary / Secondary window grid (mirrors Anthropic 5h/7d layout) -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <!-- Primary window -->
-                    <div>
+                    <div data-help-title="{{help.windows.primary_window.title}}" data-help="{{help.windows.primary_window.body}}">
                         <div class="flex justify-between text-xs mb-1">
                             <span class="text-gray-400 uppercase tracking-wide">Primary
                                 <template x-if="stats.codex_rate_limits.primary.window_label">
@@ -183,7 +189,7 @@
                     </div>
                     <!-- Secondary window -->
                     <template x-if="stats.codex_rate_limits.secondary">
-                        <div>
+                        <div data-help-title="{{help.windows.secondary_window.title}}" data-help="{{help.windows.secondary_window.body}}">
                             <div class="flex justify-between text-xs mb-1">
                                 <span class="text-gray-400 uppercase tracking-wide">Secondary
                                     <template x-if="stats.codex_rate_limits.secondary.window_label">
@@ -210,7 +216,8 @@
 
                 <!-- Credits section (mirrors Anthropic extra-usage section) -->
                 <template x-if="stats.codex_rate_limits.credits">
-                    <div class="border-t border-border pt-3 mb-3">
+                    <div class="border-t border-border pt-3 mb-3"
+                         data-help-title="{{help.windows.credits.title}}" data-help="{{help.windows.credits.body}}">
                         <div class="flex justify-between items-center">
                             <span class="text-xs text-gray-400 uppercase tracking-wide">Credits</span>
                             <span class="text-sm font-mono font-medium"
@@ -235,7 +242,8 @@
         <template x-if="stats.copilot_quota && stats.copilot_quota.latest">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
                 <div class="flex justify-between items-center mb-4">
-                    <div class="text-sm font-medium text-gray-300">GitHub Copilot Quota</div>
+                    <div class="text-sm font-medium text-gray-300"
+                         data-help-title="{{help.windows.github_copilot_quota.title}}" data-help="{{help.windows.github_copilot_quota.body}}">GitHub Copilot Quota</div>
                     <div class="flex items-center gap-2">
                         <template x-if="stats.copilot_quota.latest.copilot_plan">
                             <span class="text-xs text-gray-500 font-mono capitalize" x-text="stats.copilot_quota.latest.copilot_plan + ' plan'"></span>
@@ -250,7 +258,7 @@
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <template x-for="[catKey, catLabel] in [['chat','Chat'],['completions','Completions'],['premium_interactions','Premium']]" :key="catKey">
                         <template x-if="stats.copilot_quota.latest.categories[catKey]">
-                            <div>
+                            <div :data-help-title="catLabel" :data-help="helpText.windows.copilot_category.body.replace('{value}', catLabel)">
                                 <div class="flex justify-between text-xs mb-1">
                                     <span class="text-gray-400 uppercase tracking-wide" x-text="catLabel"></span>
                                     <template x-if="stats.copilot_quota.latest.categories[catKey].unlimited">
@@ -301,7 +309,8 @@
                 </div>
 
                 <!-- Monthly reset section (mirrors Anthropic extra-usage border section) -->
-                <div class="border-t border-border pt-3">
+                <div class="border-t border-border pt-3"
+                     data-help-title="{{help.windows.monthly_reset.title}}" data-help="{{help.windows.monthly_reset.body}}">
                     <div class="flex justify-between text-xs mb-2">
                         <span class="text-gray-400 uppercase tracking-wide">Monthly Reset</span>
                         <template x-if="stats.copilot_quota.latest.quota_reset_date_utc">
@@ -329,39 +338,40 @@
         <template x-if="(stats.prefix_cache?.totals?.requests || 0) > 0">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
                 <div class="flex justify-between items-center mb-3">
-                    <div class="text-sm font-medium text-gray-300">Prefix Cache Impact</div>
+                    <div class="text-sm font-medium text-gray-300"
+                         data-help-title="{{help.windows.prefix_cache_impact.title}}" data-help="{{help.windows.prefix_cache_impact.body}}">Prefix Cache Impact</div>
                     <div class="text-xs text-emerald-400 font-mono" x-text="'Net savings: $' + formatCurrency(stats.prefix_cache?.totals?.net_savings_usd || 0)"></div>
                 </div>
                 <!-- Totals row -->
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
-                    <div>
+                    <div data-help-title="{{help.windows.cache_reads_2.title}}" data-help="{{help.windows.cache_reads_2.body}}">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Reads</div>
                         <div class="text-2xl font-light tabular-nums text-emerald-400" x-text="formatNumber(stats.prefix_cache?.totals?.cache_read_tokens || 0)"></div>
                         <div class="text-xs text-emerald-400/70" x-text="'$' + formatCurrency(stats.prefix_cache?.totals?.savings_usd || 0) + ' saved'"></div>
                     </div>
-                    <div>
+                    <div data-help-title="{{help.windows.cache_writes.title}}" data-help="{{help.windows.cache_writes.body}}">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Writes</div>
                         <div class="text-2xl font-light tabular-nums text-amber-400" x-text="formatNumber(stats.prefix_cache?.totals?.cache_write_tokens || 0)"></div>
                         <div class="text-xs text-amber-400/70" x-text="'$' + formatCurrency(stats.prefix_cache?.totals?.write_premium_usd || 0) + ' write premium'"></div>
                     </div>
-                    <div>
+                    <div data-help-title="{{help.windows.hit_rate.title}}" data-help="{{help.windows.hit_rate.body}}">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Hit Rate</div>
                         <div class="text-2xl font-light tabular-nums" :class="(stats.prefix_cache?.totals?.hit_rate || 0) > 80 ? 'text-emerald-400' : (stats.prefix_cache?.totals?.hit_rate || 0) > 50 ? 'text-amber-400' : 'text-red-400'" x-text="(stats.prefix_cache?.totals?.hit_rate || 0).toFixed(0) + '%'"></div>
                         <div class="text-xs text-gray-500" x-text="(stats.prefix_cache?.totals?.hit_requests || 0) + ' / ' + (stats.prefix_cache?.totals?.requests || 0) + ' requests'"></div>
                     </div>
-                    <div>
+                    <div data-help-title="{{help.windows.cache_busts.title}}" data-help="{{help.windows.cache_busts.body}}">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Busts</div>
                         <div class="text-2xl font-light tabular-nums" :class="(stats.prefix_cache?.totals?.bust_count || 0) > 5 ? 'text-red-400' : (stats.prefix_cache?.totals?.bust_count || 0) > 0 ? 'text-amber-400' : 'text-emerald-400'" x-text="stats.prefix_cache?.totals?.bust_count || 0"></div>
                         <div class="text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.bust_write_tokens || 0) + ' tokens re-written'"></div>
                     </div>
-                    <div>
+                    <div data-help-title="{{help.windows.providers.title}}" data-help="{{help.windows.providers.body}}">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Providers</div>
                         <div class="text-2xl font-light tabular-nums text-gray-300" x-text="Object.keys(stats.prefix_cache?.by_provider || {}).length"></div>
                         <div class="text-xs text-gray-500">with cache data</div>
                     </div>
                 </div>
                 <!-- Cache efficiency bar -->
-                <div>
+                <div data-help-title="{{help.windows.cache_efficiency.title}}" data-help="{{help.windows.cache_efficiency.body}}">
                     <div class="flex justify-between text-xs text-gray-500 mb-1">
                         <span>Cache Efficiency</span>
                         <span x-text="cacheSavingsPercent + '% of input served from cache'"></span>
@@ -379,7 +389,8 @@
                     </div>
                 </div>
                 <template x-if="hasObservedTtlBuckets">
-                    <div class="mt-5 border-t border-border pt-4">
+                    <div class="mt-5 border-t border-border pt-4"
+                         data-help-title="{{help.windows.observed_ttl_buckets.title}}" data-help="{{help.windows.observed_ttl_buckets.body}}">
                         <div class="flex items-center justify-between mb-3">
                             <div>
                                 <div class="text-xs text-gray-500 uppercase tracking-[0.22em]">Observed TTL Buckets</div>
@@ -392,6 +403,7 @@
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <div class="text-[11px] uppercase tracking-[0.22em] text-cyan-300/75">Bucket Mix</div>
+                                <div class="text-[10px] text-cyan-300/50">1h vs 5m cache-write TTL tokens</div>
                                 <div class="mt-1 text-2xl font-light text-cyan-50">
                                     <span data-testid="ttl-bucket-mix-1h-total" x-text="formatNumber(stats.prefix_cache?.totals?.cache_write_1h_tokens || 0)"></span>
                                     <span class="text-sm text-cyan-300/70">1h</span>
@@ -418,12 +430,14 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-                                <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="bg-surface rounded-lg p-4 border border-border"
+                                     data-help-title="{{help.windows.1h_cache_writes.title}}" data-help="{{help.windows.1h_cache_writes.body}}">
                                     <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">1h Cache Writes</div>
                                     <div data-testid="ttl-bucket-1h-value" class="mt-2 text-3xl font-light text-cyan-50" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['1h']?.tokens || 0)"></div>
                                     <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['1h']?.requests || 0) + ' requests observed'"></div>
                                 </div>
-                                <div class="bg-surface rounded-lg p-4 border border-border">
+                                <div class="bg-surface rounded-lg p-4 border border-border"
+                                     data-help-title="{{help.windows.5m_cache_writes.title}}" data-help="{{help.windows.5m_cache_writes.body}}">
                                     <div class="text-[11px] uppercase tracking-[0.18em] text-violet-300/75">5m Cache Writes</div>
                                     <div data-testid="ttl-bucket-5m-value" class="mt-2 text-3xl font-light text-violet-50" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['5m']?.tokens || 0)"></div>
                                     <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.totals?.observed_ttl_buckets?.['5m']?.requests || 0) + ' requests observed'"></div>
@@ -443,22 +457,26 @@
                             <div data-testid="cvc-net-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]" :class="compressionVsCacheNet >= 0 ? 'border-emerald-400/20 text-emerald-300/90' : 'border-red-400/25 text-red-300/90'" x-text="compressionVsCacheNet >= 0 ? 'Net positive' : 'Net negative'"></div>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.saved_by_compression.title}}" data-help="{{help.windows.saved_by_compression.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-emerald-300/75">Saved by Compression</div>
                                 <div data-testid="cvc-saved-value" class="mt-2 text-3xl font-light text-emerald-50" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.tokens_saved_by_compression || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500">tokens removed before send</div>
                             </div>
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.lost_to_cache_busts.title}}" data-help="{{help.windows.lost_to_cache_busts.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-red-300/75">Lost to Cache Busts</div>
                                 <div data-testid="cvc-bust-value" class="mt-2 text-3xl font-light text-red-50" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.tokens_lost_to_cache_bust || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.compression_vs_cache?.cache_bust_count || 0) + ' busts observed'"></div>
                             </div>
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.net.title}}" data-help="{{help.windows.net.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Net</div>
                                 <div data-testid="cvc-net-value" class="mt-2 text-3xl font-light" :class="compressionVsCacheNet >= 0 ? 'text-emerald-400' : 'text-red-400'" x-text="(compressionVsCacheNet >= 0 ? '+' : '-') + formatNumber(Math.abs(compressionVsCacheNet))"></div>
                                 <div class="mt-1 text-xs text-gray-500">saved minus bust losses</div>
                             </div>
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.prefix_freeze_net.title}}" data-help="{{help.windows.prefix_freeze_net.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">Prefix Freeze Net</div>
                                 <div data-testid="freeze-net-value" class="mt-2 text-3xl font-light" :class="prefixFreezeNet >= 0 ? 'text-cyan-50' : 'text-red-400'" x-text="(prefixFreezeNet >= 0 ? '+' : '-') + formatNumber(Math.abs(prefixFreezeNet))"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(stats.prefix_cache?.prefix_freeze?.busts_avoided || 0) + ' busts avoided, ' + formatNumber(stats.prefix_cache?.prefix_freeze?.compression_foregone_tokens || 0) + ' foregone'"></div>
@@ -479,22 +497,26 @@
                                  x-text="(missAttribution.ttl_expiry_pct || 0) >= (missAttribution.prefix_change_pct || 0) ? 'Mostly TTL lapse' : 'Mostly prefix change'"></div>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.ttl_expiry.title}}" data-help="{{help.windows.ttl_expiry.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-violet-300/75">TTL Expiry</div>
                                 <div data-testid="miss-attr-ttl-value" class="mt-2 text-3xl font-light text-violet-50" x-text="formatNumber(missAttribution.ttl_expiry || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="(missAttribution.ttl_expiry_pct || 0).toFixed(1) + '% of attributed — idle past cache TTL'"></div>
                             </div>
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.prefix_change.title}}" data-help="{{help.windows.prefix_change.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-amber-300/75">Prefix Change</div>
                                 <div data-testid="miss-attr-prefix-value" class="mt-2 text-3xl font-light text-amber-50" x-text="formatNumber(missAttribution.prefix_change || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500" x-text="(missAttribution.prefix_change_pct || 0).toFixed(1) + '% of attributed — cached prefix shifted'"></div>
                             </div>
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.unknown.title}}" data-help="{{help.windows.unknown.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Unknown</div>
                                 <div data-testid="miss-attr-unknown-value" class="mt-2 text-3xl font-light text-gray-300" x-text="formatNumber(missAttribution.unknown || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500">stable prefix, within TTL</div>
                             </div>
-                            <div class="bg-surface rounded-lg p-4 border border-border">
+                            <div class="bg-surface rounded-lg p-4 border border-border"
+                                 data-help-title="{{help.windows.total_misses.title}}" data-help="{{help.windows.total_misses.body}}">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Total Misses</div>
                                 <div data-testid="miss-attr-total-value" class="mt-2 text-3xl font-light text-gray-100" x-text="formatNumber(missAttribution.total || 0)"></div>
                                 <div class="mt-1 text-xs text-gray-500">expected a cache hit, got none</div>
@@ -504,11 +526,13 @@
                 </template>
                 <!-- Per-provider breakdown -->
                 <template x-if="Object.keys(stats.prefix_cache?.by_provider || {}).length > 0">
-                    <div class="mt-4 border-t border-border pt-3">
+                    <div class="mt-4 border-t border-border pt-3"
+                         data-help-title="{{help.windows.per_provider_breakdown.title}}" data-help="{{help.windows.per_provider_breakdown.body}}">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Per-Provider Breakdown</div>
                         <div class="space-y-3">
                             <template x-for="[prov, pc] in Object.entries(stats.prefix_cache?.by_provider || {})" :key="prov">
-                                <div class="flex items-center justify-between">
+                                <div class="flex items-center justify-between"
+                                     :data-help-title="pc.label" :data-help="helpText.windows.prefix_cache_provider.body.replace('{label}', pc.label).replace('{read_discount}', pc.read_discount).replace('{write_suffix}', pc.write_premium !== 'none' ? ', writes at a +' + pc.write_premium + ' premium' : '')">
                                     <div class="flex items-center gap-3">
                                         <span class="px-2 py-0.5 bg-border rounded text-xs font-mono" x-text="prov"></span>
                                         <span class="text-xs text-gray-500" x-text="pc.label"></span>

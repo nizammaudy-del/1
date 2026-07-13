@@ -1,7 +1,7 @@
         <!-- Pane: Waste & Trends -->
         <section x-show="paneVisible('insights')" class="mb-6" :class="panes.insights ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('insights')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                    data-help-title="Waste & Trends" data-help="What kinds of prompt waste the proxy removed, and cumulative token savings over time.">
+                    data-help-title="{{help.waste_trends.waste_trends.title}}" data-help="{{help.waste_trends.waste_trends.body}}">
                 <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Waste &amp; Trends</span>
             </button>
@@ -10,7 +10,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
             <!-- What Headroom Removed -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="What Headroom Removed" data-help="Breakdown of which kinds of prompt waste the proxy compressed away (verbose tool output, redundant file listings, minifiable JSON, etc.), by tokens removed.">What Headroom Removed <span class="text-gray-600">&#9432;</span></div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.waste_trends.what_headroom_removed.title}}" data-help="{{help.waste_trends.what_headroom_removed.body}}">What Headroom Removed <span class="text-gray-600">&#9432;</span></div>
                 <template x-if="Object.keys(stats.waste_signals || {}).length > 0">
                     <div class="space-y-3">
                         <template x-for="[signal, tokens] in sortedWasteSignals" :key="signal">
@@ -42,7 +42,7 @@
 
             <!-- Cumulative Savings Trend -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="flex justify-between items-center mb-4">
+                <div class="flex justify-between items-center mb-4" data-help-title="{{help.waste_trends.savings_over_time.title}}" data-help="{{help.waste_trends.savings_over_time.body}}">
                     <span class="text-sm font-medium text-gray-300">Savings Over Time</span>
                     <span class="text-xs text-gray-500 font-mono" x-text="formatNumber(stats.tokens?.saved || 0) + ' tokens total'"></span>
                 </div>

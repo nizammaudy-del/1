@@ -2,17 +2,17 @@
     <header class="border-b border-border px-6 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div class="flex items-center gap-3 flex-wrap">
             <h1 class="text-xl font-semibold tracking-tight"
-                data-help-title="Headroom" data-help="Headroom is a local proxy that compresses prompts before they reach the model, cutting token cost and context bloat. This dashboard reports what it saved.">HEADROOM</h1>
+                data-help-title="{{help.header.headroom.title}}" data-help="{{help.header.headroom.body}}">HEADROOM</h1>
             <span class="text-xs text-gray-500 font-mono" x-text="'v' + version"
-                  data-help-title="Version" data-help="The running Headroom proxy version, reported by the /health endpoint."></span>
+                  data-help-title="{{help.header.version.title}}" data-help="{{help.header.version.body}}"></span>
             <!-- Status cluster: health · updated · uptime (top-left) -->
             <template x-if="showStatusCluster">
                 <div class="flex items-center gap-2 text-xs text-gray-500" aria-live="polite">
                     <span class="text-gray-700">|</span>
                     <span class="relative" x-data="{ hcOpen: false }" @mouseenter="hcOpen = true" @mouseleave="hcOpen = false">
                         <span class="flex items-center gap-1.5"
-                              :data-help-title="healthy ? 'Proxy healthy' : 'Proxy error'"
-                              :data-help="healthy ? 'The proxy answered /health and /stats normally on the last poll.' : (healthErrorReason || 'The last poll to the proxy failed.')">
+                              :data-help-title="healthy ? helpText.header.proxy_healthy.title : helpText.header.proxy_error.title"
+                              :data-help="healthy ? helpText.header.proxy_healthy.body : (healthErrorReason || helpText.header.proxy_error.body)">
                             <span class="w-2 h-2 rounded-full pulse-live"
                                   :class="healthy ? 'bg-emerald-400' : 'bg-red-400'"></span>
                             <span class="text-sm" :class="healthy ? 'text-gray-300' : 'text-red-400'"
@@ -42,11 +42,11 @@
                         </div>
                     </span>
                     <span class="text-gray-700">·</span>
-                    <span data-help-title="Last update" data-help="Wall-clock time of the last successful stats poll from your browser.">Updated <span x-text="lastUpdate"></span></span>
+                    <span data-help-title="{{help.header.last_update.title}}" data-help="{{help.header.last_update.body}}">Updated <span x-text="lastUpdate"></span></span>
                     <template x-if="uptimeSeconds > 0">
                         <span class="flex items-center gap-2">
                             <span class="text-gray-700">·</span>
-                            <span data-help-title="Proxy uptime" data-help="How long the Headroom proxy process has been running, ticking live between /health polls.">Up <span class="text-gray-300 font-mono" x-text="uptimeText"></span></span>
+                            <span data-help-title="{{help.header.proxy_uptime.title}}" data-help="{{help.header.proxy_uptime.body}}">Up <span class="text-gray-300 font-mono" x-text="uptimeText"></span></span>
                         </span>
                     </template>
                 </div>
@@ -57,25 +57,25 @@
                 <button x-show="tabVisible('session')" class="px-3 py-1.5 text-sm rounded-md transition-colors"
                         :class="viewMode === 'session' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
                         @click="setViewMode('session')"
-                        data-help-title="Session view" data-help="Live stats for the current proxy process: savings, throughput, agents, and recent requests since it started.">
+                        data-help-title="{{help.header.session_view.title}}" data-help="{{help.header.session_view.body}}">
                     Session
                 </button>
                 <button x-show="tabVisible('history')" class="px-3 py-1.5 text-sm rounded-md transition-colors"
                         :class="viewMode === 'history' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
                         @click="setViewMode('history')"
-                        data-help-title="Historical view" data-help="Persisted savings across restarts, rolled up daily, weekly, and monthly.">
+                        data-help-title="{{help.header.historical_view.title}}" data-help="{{help.header.historical_view.body}}">
                     Historical
                 </button>
                 <button x-show="tabVisible('mcp')" class="px-3 py-1.5 text-sm rounded-md transition-colors"
                         :class="viewMode === 'mcp' ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
                         @click="setViewMode('mcp')"
-                        data-help-title="MCP view" data-help="Usage stats for MCP tool calls proxied through Headroom.">
+                        data-help-title="{{help.header.mcp_view.title}}" data-help="{{help.header.mcp_view.body}}">
                     MCP
                 </button>
             </div>
             <template x-if="stats.anon_telemetry_shipping">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1"
-                     data-help-title="Anonymous telemetry" data-help="Anonymous aggregate telemetry is enabled. Disable with HEADROOM_TELEMETRY=off or --no-telemetry.">
+                     data-help-title="{{help.header.anonymous_telemetry.title}}" data-help="{{help.header.anonymous_telemetry.body}}">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
                          class="w-3 h-3 text-amber-400 shrink-0">
                         <path fill-rule="evenodd"
@@ -87,7 +87,7 @@
             </template>
             <template x-if="stats.config && stats.config.savings_profile">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1"
-                     data-help-title="Active profile" :data-help="'Current proxy savings profile: ' + stats.config.savings_profile + '. Sets how aggressively prompts are compressed.'">
+                     data-help-title="{{help.header.active_profile.title}}" :data-help="helpText.header.active_profile.body.replace('{value}', stats.config.savings_profile)">
                     <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
                     <span class="text-xs text-cyan-100">
                         <span x-text="stats.config.savings_profile"></span>
@@ -102,7 +102,7 @@
                 <a href="https://github.com/headroomlabs-ai/headroom" target="_blank" rel="noopener"
                    class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
                    aria-label="View Headroom on GitHub"
-                   data-help-title="GitHub" data-help="Open the Headroom source repository on GitHub in a new tab.">
+                   data-help-title="{{help.header.github.title}}" data-help="{{help.header.github.body}}">
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M12 .5C5.73.5.5 5.73.5 12a11.5 11.5 0 007.86 10.92c.575.106.785-.25.785-.556 0-.274-.01-1-.015-1.965-3.196.695-3.87-1.54-3.87-1.54-.523-1.33-1.276-1.684-1.276-1.684-1.043-.713.08-.699.08-.699 1.153.081 1.76 1.184 1.76 1.184 1.026 1.758 2.69 1.25 3.346.956.104-.744.402-1.25.73-1.538-2.552-.29-5.236-1.276-5.236-5.68 0-1.255.448-2.28 1.183-3.084-.119-.29-.513-1.46.112-3.045 0 0 .965-.309 3.163 1.178a10.98 10.98 0 015.76 0c2.196-1.487 3.16-1.178 3.16-1.178.626 1.585.232 2.755.114 3.045.737.804 1.182 1.83 1.182 3.084 0 4.415-2.688 5.386-5.248 5.67.413.356.78 1.057.78 2.13 0 1.54-.014 2.78-.014 3.158 0 .308.207.667.79.554A11.5 11.5 0 0023.5 12C23.5 5.73 18.27.5 12 .5z"/>
                     </svg>
@@ -110,7 +110,7 @@
                 <a href="https://github.com/headroomlabs-ai/headroom/issues/new" target="_blank" rel="noopener"
                    class="px-2 py-1.5 rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
                    aria-label="Report an issue on GitHub"
-                   data-help-title="Report an issue" data-help="Open a new GitHub issue to report a bug or request a feature.">
+                   data-help-title="{{help.header.report_an_issue.title}}" data-help="{{help.header.report_an_issue.body}}">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                     </svg>
@@ -119,7 +119,7 @@
                      x-show="showMcpButton && mcpDashboards.length > 0">
                     <button @click="open = !open" id="mcp-dashboards-toggle"
                             class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-gray-100 transition-colors flex items-center gap-1"
-                            data-help-title="MCP Dashboards" data-help="Open the web dashboards of installed MCP servers Headroom detected. The dot shows whether each server is currently reachable.">
+                            data-help-title="{{help.header.mcp_dashboards.title}}" data-help="{{help.header.mcp_dashboards.body}}">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                         </svg>
@@ -134,7 +134,7 @@
                                 <span class="w-2 h-2 rounded-full"
                                       :class="d.available ? 'bg-emerald-400' : 'bg-gray-500'"
                                       :data-help-title="d.label"
-                                      :data-help="d.available ? 'This MCP server is reachable.' : 'This MCP server is not reachable — is it running?'"></span>
+                                      :data-help="d.available ? helpText.header.mcp_dashboard_available.body : helpText.header.mcp_dashboard_unavailable.body"></span>
                             </a>
                         </template>
                     </div>
@@ -144,14 +144,14 @@
                         @click="toggleFeed()"
                         :class="feedOpen ? 'bg-accent text-black' : ''"
                         :data-help="log_full_messages
-                            ? 'Open the live drawer of message transformations to inspect what the proxy rewrote per request.'
-                            : 'Open the live drawer of transformation events. Start the proxy with --log-messages (or HEADROOM_LOG_MESSAGES=true) to also see full request/response bodies here.'"
-                        data-help-title="Live Feed">
+                            ? helpText.header.live_feed_toggle_on.body
+                            : helpText.header.live_feed_toggle_off.body"
+                        data-help-title="{{help.header.live_feed_toggle_on.title}}">
                     Live Feed
                 </button>
                 <button @click="openSettings()" id="settings-toggle"
                         class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-                        data-help-title="Settings" data-help="Configure poll intervals, savings profile and budget, token pricing overrides, and which panes/tabs are shown.">
+                        data-help-title="{{help.header.settings.title}}" data-help="{{help.header.settings.body}}">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -159,7 +159,7 @@
                 </button>
                 <button onclick="toggleTheme()" id="theme-toggle"
                         class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-400 hover:text-gray-200 transition-colors"
-                        data-help-title="Theme" data-help="Toggle light/dark mode. Your choice is remembered in this browser.">
+                        data-help-title="{{help.header.theme.title}}" data-help="{{help.header.theme.body}}">
                     <svg class="w-4 h-4 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
                     </svg>

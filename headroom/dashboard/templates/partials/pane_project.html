@@ -1,7 +1,7 @@
         <!-- Pane: Per-Project -->
         <section x-show="paneVisible('project')" class="mb-6" :class="panes.project ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('project')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                    data-help-title="Per-Project" data-help="Lifetime savings attributed to each project, for clients routed through /p/<project-name>.">
+                    data-help-title="{{help.project.per_project.title}}" data-help="{{help.project.per_project.body}}">
                 <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Per-Project</span>
             </button>
@@ -42,12 +42,12 @@
                         </colgroup>
                         <thead>
                             <tr class="text-xs text-gray-500 uppercase tracking-wide">
-                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'project', 'asc')" data-help-title="Project" data-help="Project name from the /p/<project-name> route the client used.">Project<span x-text="sortIcon('perProject', 'project')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'requests')" data-help-title="Requests" data-help="Attributed requests routed for this project.">Requests<span x-text="sortIcon('perProject', 'requests')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'tokens_saved')" data-help-title="Tokens Saved" data-help="Lifetime input tokens the proxy compressed away for this project.">Tokens Saved<span x-text="sortIcon('perProject', 'tokens_saved')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'compression_savings_usd')" data-help-title="Saved $" data-help="Estimated dollars saved from compression for this project, at the model's list input rate.">Saved $<span x-text="sortIcon('perProject', 'compression_savings_usd')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'savings_percent')" data-help-title="Savings %" data-help="Tokens saved as a percentage of this project's before-compression input.">Savings %<span x-text="sortIcon('perProject', 'savings_percent')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'last_activity_at')" data-help-title="Last Active" data-help="Timestamp of the most recent request attributed to this project.">Last Active<span x-text="sortIcon('perProject', 'last_activity_at')"></span></th>
+                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'project', 'asc')" data-help-title="{{help.project.project.title}}" data-help="{{help.project.project.body}}">Project<span x-text="sortIcon('perProject', 'project')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'requests')" data-help-title="{{help.project.requests.title}}" data-help="{{help.project.requests.body}}">Requests<span x-text="sortIcon('perProject', 'requests')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'tokens_saved')" data-help-title="{{help.project.tokens_saved.title}}" data-help="{{help.project.tokens_saved.body}}">Tokens Saved<span x-text="sortIcon('perProject', 'tokens_saved')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'compression_savings_usd')" data-help-title="{{help.project.saved.title}}" data-help="{{help.project.saved.body}}">Saved $<span x-text="sortIcon('perProject', 'compression_savings_usd')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'savings_percent')" data-help-title="{{help.project.savings.title}}" data-help="{{help.project.savings.body}}">Savings %<span x-text="sortIcon('perProject', 'savings_percent')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right hidden md:table-cell cursor-pointer select-none hover:text-gray-300" @click="setSort('perProject', 'last_activity_at')" data-help-title="{{help.project.last_active.title}}" data-help="{{help.project.last_active.body}}">Last Active<span x-text="sortIcon('perProject', 'last_activity_at')"></span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">

@@ -10,11 +10,13 @@
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <div class="flex items-center gap-2">
                             <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
-                                    @click="downloadHistory('json')">
+                                    @click="downloadHistory('json')"
+                                    data-help-title="{{help.history.export_json.title}}" data-help="{{help.history.export_json.body}}">
                                 Export JSON
                             </button>
                             <button class="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-gray-300 hover:text-white transition-colors"
-                                    @click="downloadHistory('csv')">
+                                    @click="downloadHistory('csv')"
+                                    data-help-title="{{help.history.export_csv.title}}" data-help="{{help.history.export_csv.body}}">
                                 Export CSV
                             </button>
                         </div>
@@ -23,14 +25,14 @@
 
                 <section x-show="paneVisible('historyOverview')" class="mb-6" :class="panes.historyOverview ? 'pane-collapsed' : ''">
                     <button type="button" @click="togglePane('historyOverview')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                            data-help-title="Overview" data-help="Headline historical totals: lifetime savings, average tokens saved per day/week.">
+                            data-help-title="{{help.history.overview.title}}" data-help="{{help.history.overview.body}}">
                         <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                         <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Overview</span>
                     </button>
                     <div x-show="!panes.historyOverview">
                 <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Lifetime Compression Savings" data-help="Total money saved by compression across every session since Headroom was installed, persisted to disk.">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.lifetime_compression_savings.title}}" data-help="{{help.history.lifetime_compression_savings.body}}">Lifetime Compression Savings <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums text-emerald-400"
                                   x-text="'$' + formatCurrency(historyStats.lifetime?.compression_savings_usd || 0)"></span>
@@ -41,7 +43,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Lifetime Tokens Saved" data-help="Total input tokens removed by compression across all sessions since install.">Lifetime Tokens Saved <span class="text-gray-600">&#9432;</span></div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.lifetime_tokens_saved.title}}" data-help="{{help.history.lifetime_tokens_saved.body}}">Lifetime Tokens Saved <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums text-accent"
                                   x-text="formatNumber(historyStats.lifetime?.tokens_saved || 0)"></span>
@@ -51,7 +53,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="Active Days" data-help="Number of distinct days on which at least one request flowed through the proxy.">Active Days <span class="text-gray-600">&#9432;</span></div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.active_days.title}}" data-help="{{help.history.active_days.body}}">Active Days <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums"
                                   x-text="formatNumber((historyStats.series?.daily || []).length)"></span>
@@ -60,7 +62,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Average Saved / Day</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.average_saved_day.title}}" data-help="{{help.history.average_saved_day.body}}">Average Saved / Day <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums"
                                   x-text="formatNumber(historyAverageTokensPerDay)"></span>
@@ -69,7 +71,7 @@
                     </div>
 
                     <div class="bg-surface rounded-lg p-4 border border-border">
-                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Average Saved / Week</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" data-help-title="{{help.history.average_saved_week.title}}" data-help="{{help.history.average_saved_week.body}}">Average Saved / Week <span class="text-gray-600">&#9432;</span></div>
                         <div class="flex items-baseline gap-2">
                             <span class="text-3xl font-light tabular-nums"
                                   x-text="formatNumber(historyAverageTokensPerWeek)"></span>
@@ -82,7 +84,7 @@
 
                 <section x-show="paneVisible('historyTrends')" class="mb-6" :class="panes.historyTrends ? 'pane-collapsed' : ''">
                     <button type="button" @click="togglePane('historyTrends')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                            data-help-title="Trends" data-help="Historical savings trend chart, per-model breakdown, daily/weekly/monthly rollups, and recent checkpoints.">
+                            data-help-title="{{help.history.trends.title}}" data-help="{{help.history.trends.body}}">
                         <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                         <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Trends</span>
                     </button>
@@ -97,7 +99,8 @@
                                         <span class="text-xs text-gray-500 font-mono" x-text="historyTrendLabel"></span>
                                     </div>
                                     <div class="flex flex-wrap gap-2 self-start lg:self-auto">
-                                        <div class="inline-flex rounded-lg border border-border p-1" style="background: var(--card-alt-bg);">
+                                        <div class="inline-flex rounded-lg border border-border p-1" style="background: var(--card-alt-bg);"
+                                             data-help-title="{{help.history.granularity.title}}" data-help="{{help.history.granularity.body}}">
                                             <template x-for="[label, key] in historyGranularityOptions" :key="key">
                                                 <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
                                                         :class="historyGranularity === key ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
@@ -105,7 +108,8 @@
                                                 x-text="label"></button>
                                             </template>
                                         </div>
-                                        <div class="inline-flex rounded-lg border border-border p-1" style="background: var(--card-alt-bg);">
+                                        <div class="inline-flex rounded-lg border border-border p-1" style="background: var(--card-alt-bg);"
+                                             data-help-title="{{help.history.chart_mode.title}}" data-help="{{help.history.chart_mode.body}}">
                                             <template x-for="[label, key] in historyChartModeOptions" :key="key">
                                                 <button class="px-3 py-1.5 text-sm rounded-md transition-colors"
                                                         :class="historyChartMode === key ? 'bg-accent text-black' : 'text-gray-400 hover:text-gray-200'"
@@ -199,11 +203,11 @@
                                         <table class="w-full text-sm">
                                             <thead>
                                                 <tr class="text-xs text-gray-500 text-left">
-                                                    <th class="py-2 pr-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'model', 'asc')">Model<span x-text="sortIcon('historyModel', 'model')"></span></th>
-                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'tokens_saved')">Tokens saved<span x-text="sortIcon('historyModel', 'tokens_saved')"></span></th>
-                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'input_cost_usd')">Cost with Headroom<span x-text="sortIcon('historyModel', 'input_cost_usd')"></span></th>
-                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'expected_cost_usd')" data-help-title="Expected cost (without Headroom)" data-help="What this model's traffic would have cost at list input price if Headroom hadn't removed any tokens: actual billed cost + estimated compression savings. Assumes the same requests would have been sent uncompressed and that list pricing is current.">Expected cost without Headroom <span class="text-gray-600">&#9432;</span><span x-text="sortIcon('historyModel', 'expected_cost_usd')"></span></th>
-                                                    <th class="py-2 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'savings_usd')">Saved<span x-text="sortIcon('historyModel', 'savings_usd')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'model', 'asc')" data-help-title="{{help.history.model.title}}" data-help="{{help.history.model.body}}">Model<span x-text="sortIcon('historyModel', 'model')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'tokens_saved')" data-help-title="{{help.history.tokens_saved.title}}" data-help="{{help.history.tokens_saved.body}}">Tokens saved<span x-text="sortIcon('historyModel', 'tokens_saved')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'input_cost_usd')" data-help-title="{{help.history.cost_with_headroom.title}}" data-help="{{help.history.cost_with_headroom.body}}">Cost with Headroom<span x-text="sortIcon('historyModel', 'input_cost_usd')"></span></th>
+                                                    <th class="py-2 pr-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'expected_cost_usd')" data-help-title="{{help.history.expected_cost_without_headroom.title}}" data-help="{{help.history.expected_cost_without_headroom.body}}">Expected cost without Headroom <span class="text-gray-600">&#9432;</span><span x-text="sortIcon('historyModel', 'expected_cost_usd')"></span></th>
+                                                    <th class="py-2 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('historyModel', 'savings_usd')" data-help-title="{{help.history.saved.title}}" data-help="{{help.history.saved.body}}">Saved<span x-text="sortIcon('historyModel', 'savings_usd')"></span></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -237,27 +241,27 @@
                                 <div class="text-sm font-medium mb-4 text-gray-300">Historical Summary</div>
                                 <div class="space-y-3">
                                     <div class="flex justify-between items-center">
-                                        <span class="text-sm text-gray-400">Latest total</span>
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.latest_total.title}}" data-help="{{help.history.latest_total.body}}">Latest total</span>
                                         <span class="font-mono text-sm"
                                               x-text="formatNumber(historyStats.lifetime?.tokens_saved || 0) + ' tokens'"></span>
                                     </div>
                                     <div class="flex justify-between items-center">
-                                        <span class="text-sm text-gray-400">Selected series</span>
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.selected_series.title}}" data-help="{{help.history.selected_series.body}}">Selected series</span>
                                         <span class="font-mono text-sm"
                                               x-text="historySelectedSeriesLabel"></span>
                                     </div>
                                     <div class="flex justify-between items-center">
-                                        <span class="text-sm text-gray-400">Selected points</span>
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.selected_points.title}}" data-help="{{help.history.selected_points.body}}">Selected points</span>
                                         <span class="font-mono text-sm"
                                               x-text="formatNumber(historySelectedPointCount)"></span>
                                     </div>
                                     <div class="flex justify-between items-center">
-                                        <span class="text-sm text-gray-400">Average / month</span>
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.average_month.title}}" data-help="{{help.history.average_month.body}}">Average / month</span>
                                         <span class="font-mono text-sm"
                                               x-text="formatNumber(historyAverageTokensPerMonth) + ' tokens'"></span>
                                     </div>
                                     <div class="flex justify-between items-center">
-                                        <span class="text-sm text-gray-400">Retention</span>
+                                        <span class="text-sm text-gray-400" data-help-title="{{help.history.retention.title}}" data-help="{{help.history.retention.body}}">Retention</span>
                                         <span class="font-mono text-sm"
                                               x-text="(historyStats.retention?.max_history_age_days || 0) + 'd / ' + formatNumber(historyStats.retention?.max_history_points || 0)"></span>
                                     </div>
@@ -267,7 +271,7 @@
 
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
                             <div class="bg-surface rounded-lg p-4 border border-border">
-                                <div class="text-sm font-medium mb-4 text-gray-300">Daily Savings</div>
+                                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.daily_savings.title}}" data-help="{{help.history.daily_savings.body}}">Daily Savings</div>
                                 <template x-if="(historyStats.series?.daily || []).length > 0">
                                     <div class="space-y-3">
                                         <template x-for="point in recentDailyHistory" :key="point.timestamp">
@@ -295,7 +299,7 @@
                             </div>
 
                             <div class="bg-surface rounded-lg p-4 border border-border">
-                                <div class="text-sm font-medium mb-4 text-gray-300">Weekly Savings</div>
+                                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.weekly_savings.title}}" data-help="{{help.history.weekly_savings.body}}">Weekly Savings</div>
                                 <template x-if="(historyStats.series?.weekly || []).length > 0">
                                     <div class="space-y-3">
                                         <template x-for="point in recentWeeklyHistory" :key="point.timestamp">
@@ -323,7 +327,7 @@
                             </div>
 
                             <div class="bg-surface rounded-lg p-4 border border-border">
-                                <div class="text-sm font-medium mb-4 text-gray-300">Monthly Savings</div>
+                                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.monthly_savings.title}}" data-help="{{help.history.monthly_savings.body}}">Monthly Savings</div>
                                 <template x-if="(historyStats.series?.monthly || []).length > 0">
                                     <div class="space-y-3">
                                         <template x-for="point in recentMonthlyHistory" :key="point.timestamp">
@@ -352,7 +356,7 @@
                         </div>
 
                         <div class="bg-surface rounded-lg p-4 border border-border">
-                            <div class="text-sm font-medium mb-4 text-gray-300">Recent Historical Checkpoints</div>
+                            <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.history.recent_historical_checkpoints.title}}" data-help="{{help.history.recent_historical_checkpoints.body}}">Recent Historical Checkpoints</div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <template x-for="point in recentHistoricalPoints" :key="point.timestamp">
                                     <div class="flex items-center justify-between rounded-lg border border-border px-3 py-3">

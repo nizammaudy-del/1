@@ -21,17 +21,17 @@
                 <section>
                     <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Polling &amp; Display</h3>
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <label class="text-sm text-gray-300">Stats poll (ms)
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.stats_poll_ms.title}}" data-help="{{help.settings.stats_poll_ms.body}}">Stats poll (ms)
                             <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_stats_poll_ms"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                             <span class="mt-1 block text-xs text-gray-500">How often the hero metrics, throughput, and health refresh.</span>
                         </label>
-                        <label class="text-sm text-gray-300">History poll (ms)
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.history_poll_ms.title}}" data-help="{{help.settings.history_poll_ms.body}}">History poll (ms)
                             <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_history_poll_ms"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                             <span class="mt-1 block text-xs text-gray-500">Refresh cadence for the Historical view rollups.</span>
                         </label>
-                        <label class="text-sm text-gray-300">Feed poll (ms)
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.feed_poll_ms.title}}" data-help="{{help.settings.feed_poll_ms.body}}">Feed poll (ms)
                             <input type="number" min="250" step="250" x-model.number="settingsForm.settings.dashboard_feed_poll_ms"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                             <span class="mt-1 block text-xs text-gray-500">Refresh cadence for the Live Feed drawer when it's open.</span>
@@ -44,22 +44,22 @@
                     <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Profiles &amp; Budget</h3>
                     <p class="mb-2 text-xs text-amber-400">Changes here take effect after a proxy restart.</p>
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <label class="text-sm text-gray-300">Savings profile
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.savings_profile.title}}" data-help="{{help.settings.savings_profile.body}}">Savings profile
                             <input type="text" placeholder="(default)" x-model="settingsForm.settings.savings_profile"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                             <span class="mt-1 block text-xs text-gray-500">Named preset controlling how aggressively prompts are compressed. Blank uses the built-in default.</span>
                         </label>
-                        <label class="text-sm text-gray-300">Target ratio (0-1)
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.target_ratio_0_1.title}}" data-help="{{help.settings.target_ratio_0_1.body}}">Target ratio (0-1)
                             <input type="number" min="0" max="1" step="0.05" x-model.number="settingsForm.settings.target_ratio"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                             <span class="mt-1 block text-xs text-gray-500">Desired fraction of input kept after compression (e.g. 0.6 aims to keep ~60%). Lower is more aggressive.</span>
                         </label>
-                        <label class="text-sm text-gray-300">Budget limit (USD)
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.budget_limit_usd.title}}" data-help="{{help.settings.budget_limit_usd.body}}">Budget limit (USD)
                             <input type="number" min="0" step="0.01" x-model.number="settingsForm.settings.budget_limit_usd"
                                    class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                             <span class="mt-1 block text-xs text-gray-500">Spend ceiling per budget period. Leave 0/blank for no limit.</span>
                         </label>
-                        <label class="text-sm text-gray-300">Budget period
+                        <label class="text-sm text-gray-300" data-help-title="{{help.settings.budget_period.title}}" data-help="{{help.settings.budget_period.body}}">Budget period
                             <select x-model="settingsForm.settings.budget_period"
                                     class="mt-1 w-full rounded border border-border bg-surface px-2 py-1 text-gray-100">
                                 <option value="hourly">hourly</option>
@@ -81,11 +81,11 @@
                     <div class="space-y-2">
                         <!-- Column headers (top labels replace the cramped per-input placeholders) -->
                         <div class="grid grid-cols-12 gap-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 px-0.5">
-                            <span class="col-span-3">Model</span>
-                            <span class="col-span-2 text-right">Input</span>
-                            <span class="col-span-2 text-right">Output</span>
-                            <span class="col-span-2 text-right">C.Read</span>
-                            <span class="col-span-2 text-right">C.Write</span>
+                            <span class="col-span-3" data-help-title="{{help.settings.model.title}}" data-help="{{help.settings.model.body}}">Model</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.input.title}}" data-help="{{help.settings.input.body}}">Input</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.output.title}}" data-help="{{help.settings.output.body}}">Output</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.c_read.title}}" data-help="{{help.settings.c_read.body}}">C.Read</span>
+                            <span class="col-span-2 text-right" data-help-title="{{help.settings.c_write.title}}" data-help="{{help.settings.c_write.body}}">C.Write</span>
                             <span class="col-span-1"></span>
                         </div>
                         <template x-for="(row, idx) in settingsForm.pricingRows" :key="idx">
@@ -112,7 +112,7 @@
                     <p class="mb-3 text-xs text-gray-500">These are view preferences stored only in this browser. Hidden items stop rendering; collapse a pane from its own header.</p>
 
                     <div class="mb-4">
-                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Panes</div>
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500" data-help-title="{{help.settings.panes.title}}" data-help="{{help.settings.panes.body}}">Panes</div>
                         <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                             <template x-for="p in [
                                     {key:'overview', label:'Overview'},
@@ -138,7 +138,7 @@
                     </div>
 
                     <div class="mb-4">
-                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Tabs</div>
+                        <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500" data-help-title="{{help.settings.tabs.title}}" data-help="{{help.settings.tabs.body}}">Tabs</div>
                         <div class="flex flex-wrap gap-4">
                             <template x-for="t in [{key:'session',label:'Session'},{key:'history',label:'Historical'},{key:'mcp',label:'MCP'}]" :key="t.key">
                                 <label class="flex items-center gap-2 text-sm text-gray-300">
@@ -154,12 +154,12 @@
                     <div>
                         <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Header</div>
                         <div class="flex flex-wrap gap-4">
-                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                            <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="{{help.settings.status_uptime_cluster.title}}" data-help="{{help.settings.status_uptime_cluster.body}}">
                                 <input type="checkbox" x-model="showStatusCluster" @change="saveUiPrefs()"
                                        class="rounded border-border bg-surface">
                                 <span>Status &amp; uptime cluster</span>
                             </label>
-                            <label class="flex items-center gap-2 text-sm text-gray-300">
+                            <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="{{help.settings.mcp_dashboards_button.title}}" data-help="{{help.settings.mcp_dashboards_button.body}}">
                                 <input type="checkbox" x-model="showMcpButton" @change="saveUiPrefs()"
                                        class="rounded border-border bg-surface">
                                 <span>MCP Dashboards button</span>
@@ -169,8 +169,8 @@
 
                     <div class="mt-4">
                         <div class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Notifications</div>
-                        <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="Near-Limit Notifications"
-                               data-help="When enabled, fires a native OS notification the first time a budget or provider quota window crosses 80/90/100% utilization (same text as the in-page banner). Client-local preference, not saved to the proxy config.">
+                        <label class="flex items-center gap-2 text-sm text-gray-300" data-help-title="{{help.settings.near_limit_notifications.title}}"
+                               data-help="{{help.settings.near_limit_notifications.body}}">
                             <input type="checkbox" :checked="notifyEnabled" @change="toggleNotifyEnabled($event.target.checked)"
                                    class="rounded border-border bg-surface">
                             <span>Native OS notifications for near-limit warnings</span>

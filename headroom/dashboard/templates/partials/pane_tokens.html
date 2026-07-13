@@ -1,7 +1,7 @@
         <!-- Pane: Token Usage, Providers & Performance -->
         <section x-show="paneVisible('tokens')" class="mb-6" :class="panes.tokens ? 'pane-collapsed' : ''">
             <button type="button" @click="togglePane('tokens')" class="w-full flex items-center gap-2 mb-3 text-left group"
-                    data-help-title="Token Usage, Providers & Performance" data-help="Where tokens went (before/after compression), which providers served traffic, proxy latency, and per-model savings.">
+                    data-help-title="{{help.tokens.token_usage_providers_performance.title}}" data-help="{{help.tokens.token_usage_providers_performance.body}}">
                 <svg class="pane-chevron w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <span class="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400 group-hover:text-gray-200">Token Usage, Providers &amp; Performance</span>
             </button>
@@ -10,26 +10,26 @@
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
             <!-- Token Usage -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="Token Usage" data-help="Where input tokens went at each stage of the pipeline: what arrived, what was removed, and what was ultimately sent to the model.">Token Usage</div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.tokens.token_usage.title}}" data-help="{{help.tokens.token_usage.body}}">Token Usage</div>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center" data-help-title="Before Compression" data-help="Total input tokens as they arrived at the proxy, before any filtering or compression.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.before_compression.title}}" data-help="{{help.tokens.before_compression.body}}">
                         <span class="text-sm text-gray-400">Before Compression</span>
                         <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.total_before_compression || 0)"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="Client-side filtered" data-help="Tokens removed by client-side filtering (e.g. RTK) before the request reached the proxy. Not priced into proxy $ savings.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.client_side_filtered.title}}" data-help="{{help.tokens.client_side_filtered.body}}">
                         <span class="text-sm text-gray-400" x-text="cliFilteringLabel + ' Filtered'"></span>
                         <span class="font-mono text-sm text-emerald-400" x-text="formatNumber(cliFilteringSaved)"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="Proxy Removed" data-help="Input tokens the proxy itself compressed away — the component priced into Proxy $ Saved.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.proxy_removed.title}}" data-help="{{help.tokens.proxy_removed.body}}">
                         <span class="text-sm text-gray-400">Proxy Removed</span>
                         <span class="font-mono text-sm text-accent" x-text="formatNumber(stats.tokens?.proxy_compression_saved || 0)"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="After Compression (sent)" data-help="Input tokens actually forwarded to the provider after all filtering and compression.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.after_compression_sent.title}}" data-help="{{help.tokens.after_compression_sent.body}}">
                         <span class="text-sm text-gray-400">After Compression (sent)</span>
                         <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.input || 0)"></span>
                     </div>
                     <div class="border-t border-border my-2"></div>
-                    <div class="flex justify-between items-center" data-help-title="Output Tokens" data-help="Total tokens the model generated in responses across all requests this session.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.output_tokens.title}}" data-help="{{help.tokens.output_tokens.body}}">
                         <span class="text-sm text-gray-400">Output Tokens</span>
                         <span class="font-mono text-sm" x-text="formatNumber(stats.tokens?.output || 0)"></span>
                     </div>
@@ -38,10 +38,11 @@
 
             <!-- Providers -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="Providers" data-help="Breakdown of traffic by upstream provider (Anthropic, OpenAI, etc.) that the proxy routed requests to.">Providers</div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.tokens.providers.title}}" data-help="{{help.tokens.providers.body}}">Providers</div>
                 <div class="space-y-2">
                     <template x-for="(count, provider) in (stats.requests?.by_provider || {})" :key="provider">
-                        <div class="flex justify-between items-center">
+                        <div class="flex justify-between items-center"
+                             :data-help-title="provider" :data-help="helpText.tokens.provider_breakdown.body.replace('{value}', provider)">
                             <span class="text-sm text-gray-400" x-text="provider"></span>
                             <div class="flex items-center gap-2">
                                 <div class="w-24 h-1.5 bg-border rounded-full overflow-hidden">
@@ -60,25 +61,25 @@
 
             <!-- Performance -->
             <div class="bg-surface rounded-lg p-4 border border-border">
-                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="Performance" data-help="Latency the proxy adds and how fast upstream responds, plus failure count.">Performance</div>
+                <div class="text-sm font-medium mb-4 text-gray-300" data-help-title="{{help.tokens.performance.title}}" data-help="{{help.tokens.performance.body}}">Performance</div>
                 <div class="space-y-3">
-                    <div class="flex justify-between items-center" data-help-title="Headroom Overhead" data-help="Average extra time the proxy spends per request on compression and processing. This is the latency cost of the savings.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.headroom_overhead.title}}" data-help="{{help.tokens.headroom_overhead.body}}">
                         <span class="text-sm text-gray-400">Headroom Overhead</span>
                         <span class="font-mono text-sm" x-text="(stats.overhead?.average_ms || 0).toFixed(0) + 'ms avg'"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="Overhead Range" data-help="Minimum to maximum proxy overhead observed per request — shows how variable the added latency is.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.overhead_range.title}}" data-help="{{help.tokens.overhead_range.body}}">
                         <span class="text-sm text-gray-400">Overhead Range</span>
                         <span class="font-mono text-sm" x-text="(stats.overhead?.min_ms || 0).toFixed(0) + ' - ' + (stats.overhead?.max_ms || 0).toFixed(0) + 'ms'"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="TTFB (upstream)" data-help="Average time to first byte from the upstream provider — the model's own response latency, not the proxy's.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.ttfb_upstream.title}}" data-help="{{help.tokens.ttfb_upstream.body}}">
                         <span class="text-sm text-gray-400">TTFB (upstream)</span>
                         <span class="font-mono text-sm" x-text="((stats.ttfb?.average_ms || 0) / 1000).toFixed(2) + 's avg'"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="TTFB Range" data-help="Minimum to maximum upstream time-to-first-byte observed.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.ttfb_range.title}}" data-help="{{help.tokens.ttfb_range.body}}">
                         <span class="text-sm text-gray-400">TTFB Range</span>
                         <span class="font-mono text-sm" x-text="((stats.ttfb?.min_ms || 0) / 1000).toFixed(2) + ' - ' + ((stats.ttfb?.max_ms || 0) / 1000).toFixed(2) + 's'"></span>
                     </div>
-                    <div class="flex justify-between items-center" data-help-title="Failed Requests" data-help="Requests that errored (upstream error or proxy failure) this session.">
+                    <div class="flex justify-between items-center" data-help-title="{{help.tokens.failed_requests.title}}" data-help="{{help.tokens.failed_requests.body}}">
                         <span class="text-sm text-gray-400">Failed Requests</span>
                         <span class="font-mono text-sm" x-text="stats.requests?.failed || 0"></span>
                     </div>
@@ -86,9 +87,11 @@
                     <template x-if="Object.keys(stats.pipeline_timing || {}).length > 0">
                         <div>
                             <div class="border-t border-border my-2"></div>
-                            <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Pipeline Breakdown</div>
+                            <div class="text-xs text-gray-500 uppercase tracking-wide mb-2"
+                                 data-help-title="{{help.tokens.pipeline_breakdown.title}}" data-help="{{help.tokens.pipeline_breakdown.body}}">Pipeline Breakdown</div>
                             <template x-for="[name, t] in Object.entries(stats.pipeline_timing || {})" :key="name">
-                                <div class="flex justify-between items-center mb-1">
+                                <div class="flex justify-between items-center mb-1"
+                                     :data-help-title="name" :data-help="helpText.tokens.pipeline_stage.body.replace('{value}', name)">
                                     <span class="text-xs text-gray-400 font-mono truncate mr-2" x-text="name"></span>
                                     <span class="text-xs font-mono whitespace-nowrap"
                                           :class="t.average_ms > 100 ? 'text-amber-400' : t.average_ms > 50 ? 'text-yellow-400' : 'text-gray-400'"
@@ -104,7 +107,8 @@
         <!-- Per-Model Savings Breakdown -->
         <template x-if="Object.keys(stats.cost?.per_model || {}).length > 0">
             <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
-                <div class="px-4 py-3 border-b border-border flex justify-between items-center">
+                <div class="px-4 py-3 border-b border-border flex justify-between items-center"
+                     data-help-title="{{help.tokens.per_model_token_savings.title}}" data-help="{{help.tokens.per_model_token_savings.body}}">
                     <span class="text-sm font-medium text-gray-300">Per-Model Token Savings</span>
                     <span class="text-xs text-gray-500">Exact tokens saved per model</span>
                 </div>
@@ -119,11 +123,15 @@
                         </colgroup>
                         <thead>
                             <tr class="text-xs text-gray-500 uppercase tracking-wide">
-                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'model', 'asc')">Model<span x-text="sortIcon('perModel', 'model')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'requests')">Requests<span x-text="sortIcon('perModel', 'requests')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_saved')">Tokens Saved<span x-text="sortIcon('perModel', 'tokens_saved')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_sent')">Tokens Sent<span x-text="sortIcon('perModel', 'tokens_sent')"></span></th>
-                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'reduction_pct')" data-help-title="Reduction %" data-help="Tokens saved divided by (tokens saved + tokens sent) for this model — how much smaller compressed requests are versus what they would have been uncompressed. Assumes the same request shape would have been sent without Headroom.">Reduction<span x-text="sortIcon('perModel', 'reduction_pct')"></span></th>
+                                <th class="px-4 py-3 font-medium text-left cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'model', 'asc')"
+                                    data-help-title="{{help.tokens.model.title}}" data-help="{{help.tokens.model.body}}">Model<span x-text="sortIcon('perModel', 'model')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'requests')"
+                                    data-help-title="{{help.tokens.requests.title}}" data-help="{{help.tokens.requests.body}}">Requests<span x-text="sortIcon('perModel', 'requests')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_saved')"
+                                    data-help-title="{{help.tokens.tokens_saved.title}}" data-help="{{help.tokens.tokens_saved.body}}">Tokens Saved<span x-text="sortIcon('perModel', 'tokens_saved')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'tokens_sent')"
+                                    data-help-title="{{help.tokens.tokens_sent.title}}" data-help="{{help.tokens.tokens_sent.body}}">Tokens Sent<span x-text="sortIcon('perModel', 'tokens_sent')"></span></th>
+                                <th class="px-4 py-3 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('perModel', 'reduction_pct')" data-help-title="{{help.tokens.reduction.title}}" data-help="{{help.tokens.reduction.body}}">Reduction<span x-text="sortIcon('perModel', 'reduction_pct')"></span></th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">

@@ -94,7 +94,7 @@ function dashboardWasteTrendsMixin() {
                 },
 
                 get headlineSavingsTitle() {
-                    return 'Of total wire input tokens';
+                    return this.helpText?.overview?.compression_ratio?.body || '';
                 },
 
     };
