@@ -90,40 +90,70 @@ function dashboardRequestsMixin() {
 
                 // Word-level LCS diff (detail panel only -- the compact card list
                 // stays plain text). Tokenizes on whitespace boundaries, keeping
-                // the separators as their own tokens so reconstruction preserves
-                // original formatting. Capped: compression can remove most of a
-                // large prompt, and a full LCS table is O(n*m), so skip the diff
-                // above ~4000 combined tokens rather than lock up the tab.
+                // separators as their own tokens so reconstruction preserves
+                // original formatting.
+                //
+                // Real compressed pairs here are typically a huge, mostly-shared
+                // system prompt / tool schema dump with one changed slice in the
+                // middle (a truncated tool result, a shaped message) -- NOT two
+                // arbitrary unrelated texts. A naive O(n*m) LCS over the whole
+                // thing would be too slow (and an earlier version of this function
+                // capped out at 4000 combined words and silently fell back to
+                // plain text for anything bigger, which is most real content here
+                // -- that's why the diff looked like it "did nothing"). Trimming
+                // the common prefix/suffix first means the expensive LCS only
+                // runs over the actual differing middle, which stays small even
+                // when the surrounding document is huge.
                 computeWordDiff(before, after) {
                     const tokenize = s => (s || '').split(/(\s+)/).filter(t => t.length > 0);
                     const a = tokenize(before);
                     const b = tokenize(after);
-                    if (a.length + b.length > 4000) return null;
 
-                    const n = a.length, m = b.length;
+                    let start = 0;
+                    const maxStart = Math.min(a.length, b.length);
+                    while (start < maxStart && a[start] === b[start]) start++;
+                    let endA = a.length, endB = b.length;
+                    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+
+                    const prefix = a.slice(0, start);
+                    const suffix = a.slice(endA);
+                    const midA = a.slice(start, endA);
+                    const midB = b.slice(start, endB);
+
+                    // Even after trimming, guard against a pathological worst case
+                    // (e.g. two long texts that share almost nothing).
+                    if (midA.length * midB.length > 4_000_000) return null;
+
+                    const n = midA.length, m = midB.length;
                     const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
                     for (let i = n - 1; i >= 0; i--) {
                         for (let j = m - 1; j >= 0; j--) {
-                            lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+                            lcs[i][j] = midA[i] === midB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
                         }
                     }
 
-                    const segments = [];
+                    const midSegments = [];
                     let i = 0, j = 0;
                     while (i < n && j < m) {
-                        if (a[i] === b[j]) {
-                            segments.push({ type: 'equal', text: a[i] });
+                        if (midA[i] === midB[j]) {
+                            midSegments.push({ type: 'equal', text: midA[i] });
                             i++; j++;
                         } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-                            segments.push({ type: 'delete', text: a[i] });
+                            midSegments.push({ type: 'delete', text: midA[i] });
                             i++;
                         } else {
-                            segments.push({ type: 'insert', text: b[j] });
+                            midSegments.push({ type: 'insert', text: midB[j] });
                             j++;
                         }
                     }
-                    while (i < n) { segments.push({ type: 'delete', text: a[i] }); i++; }
-                    while (j < m) { segments.push({ type: 'insert', text: b[j] }); j++; }
+                    while (i < n) { midSegments.push({ type: 'delete', text: midA[i] }); i++; }
+                    while (j < m) { midSegments.push({ type: 'insert', text: midB[j] }); j++; }
+
+                    const segments = [
+                        ...prefix.map(text => ({ type: 'equal', text })),
+                        ...midSegments,
+                        ...suffix.map(text => ({ type: 'equal', text })),
+                    ];
 
                     // Merge adjacent same-type segments so the DOM isn't one node per word.
                     const merged = [];
