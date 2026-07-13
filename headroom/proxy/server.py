@@ -3112,6 +3112,19 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         # schema size. So the savings rate is plain `saved / attempted`
         # — adding `saved` again would double-count.
         attempted_input_tokens = getattr(m, "attempted_input_tokens_total", 0)
+        # New-content denominator: what the provider actually billed as
+        # non-cache-read input (uncached + cache-write tokens, summed
+        # across providers from response usage). Unlike
+        # `proxy_total_before_compression`, this does NOT recount the
+        # full transcript on every turn — a long session's history is
+        # served from prefix cache, not re-billed, so it doesn't belong
+        # in a denominator that claims to measure what compression had
+        # any power over. Tokens Headroom removed never reached the
+        # provider at all, so they're added back to form the baseline.
+        _pc_totals = prefix_cache_stats.get("totals", {})
+        new_input_tokens = int(_pc_totals.get("uncached_input_tokens", 0) or 0) + int(
+            _pc_totals.get("cache_write_tokens", 0) or 0
+        )
 
         # Build human-readable summary
         summary = _build_session_summary(
@@ -3337,6 +3350,27 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 "proxy_savings_percent": round(
                     (proxy_compression_tokens / proxy_total_before_compression * 100)
                     if proxy_total_before_compression > 0
+                    else 0,
+                    2,
+                ),
+                # New-content-relative rate: savings as a fraction of the
+                # input that would have newly entered context (provider-
+                # billed uncached + cache-write tokens, plus the tokens
+                # compression removed before they could be billed). The
+                # whole-request ratios above recount the FULL transcript
+                # every turn, so a 200-turn session counts its history
+                # 200x into the denominator and long-running sessions
+                # (1M-context models never compact) read as ~0% no
+                # matter how well compression performs on new content.
+                # Guarded on new_input_tokens > 0 (not the full sum): the
+                # cache accumulators only see requests with cache
+                # activity, so a deployment with no cache metrics (e.g.
+                # Bedrock) would otherwise divide savings by themselves
+                # and report ~100%. No usage data -> report 0, not a lie.
+                "new_input_tokens": new_input_tokens,
+                "new_input_savings_percent": round(
+                    (proxy_compression_tokens / (new_input_tokens + proxy_compression_tokens) * 100)
+                    if new_input_tokens > 0
                     else 0,
                     2,
                 ),
