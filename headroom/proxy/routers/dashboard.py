@@ -894,7 +894,7 @@ def build_dashboard_router(proxy: HeadroomProxy, config: ProxyConfig) -> APIRout
                 "sampled_requests": limit,
                 "note": (
                     "Call counts from mcp__ tool_use blocks in recently logged "
-                    "requests. Requires --log-full-messages; token/cost are not "
+                    "requests. Requires --log-messages; token/cost are not "
                     "attributable per tool."
                 ),
             }

@@ -97,7 +97,8 @@ function dashboardSettingsMixin() {
                             this.pollInterval = setInterval(() => { this.pollDashboard(); }, this.statsPollMs);
                         }
                         this.settingsError = false;
-                        this.settingsMessage = 'Saved. Profile/budget changes need a proxy restart to take effect.';
+                        this.settingsMessage = '';
+                        this.showToast('Saved. Profile/budget changes need a proxy restart to take effect.');
                         await this.fetchStats();
                     } catch (e) {
                         this.settingsError = true;

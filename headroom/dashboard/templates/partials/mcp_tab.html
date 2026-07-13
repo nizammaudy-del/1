@@ -7,30 +7,53 @@
                     </div>
                     <span class="text-xs px-2 py-0.5 rounded font-mono"
                           :class="mcpUsage.log_full_messages ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'"
-                          x-text="mcpUsage.log_full_messages ? 'logging on' : 'log-full-messages off'"></span>
+                          x-text="mcpUsage.log_full_messages ? 'logging on' : 'log-messages off'"></span>
                 </div>
 
                 <template x-if="(mcpUsage.servers || []).length > 0">
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <template x-for="s in mcpUsage.servers" :key="s.server">
-                            <div class="bg-surface rounded-lg p-4 border border-border"
-                                 :data-help-title="'MCP server: ' + s.server"
-                                 :data-help="formatNumber(s.calls) + ' total tool calls through this MCP server, broken down by tool below.'">
-                                <div class="flex justify-between items-baseline mb-3">
-                                    <span class="text-sm font-medium text-gray-200 font-mono" x-text="s.server"></span>
-                                    <span class="text-2xl font-light tabular-nums text-accent" x-text="formatNumber(s.calls)"></span>
-                                </div>
-                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2" data-help-title="Calls by tool" data-help="Number of invocations of each individual tool exposed by this MCP server.">calls by tool</div>
-                                <div class="space-y-1">
-                                    <template x-for="t in s.tools" :key="t.tool">
-                                        <div class="flex justify-between text-sm">
-                                            <span class="text-gray-400 font-mono truncate mr-2" x-text="t.tool"></span>
-                                            <span class="text-gray-300 tabular-nums" x-text="formatNumber(t.calls)"></span>
-                                        </div>
-                                    </template>
-                                </div>
-                            </div>
-                        </template>
+                    <div class="bg-surface rounded-lg border border-border overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-xs text-gray-500 text-left border-b border-border">
+                                        <th class="py-2 px-4 font-medium cursor-pointer select-none hover:text-gray-300" @click="setSort('mcp', 'server', 'asc')">Server<span x-text="sortIcon('mcp', 'server')"></span></th>
+                                        <th class="py-2 px-4 font-medium text-right cursor-pointer select-none hover:text-gray-300" @click="setSort('mcp', 'calls')">Calls<span x-text="sortIcon('mcp', 'calls')"></span></th>
+                                        <th class="py-2 px-4 font-medium"></th>
+                                    </tr>
+                                </thead>
+                                <template x-for="row in mcpServerRows" :key="row.server">
+                                    <tbody>
+                                        <tr class="border-t border-border cursor-pointer hover:bg-card-alt focus:ring-2 focus:ring-accent focus:outline-none"
+                                            role="button" tabindex="0"
+                                            :aria-expanded="mcpExpandedServer === row.server"
+                                            @click="toggleMcpServer(row.server)"
+                                            @keydown.enter="toggleMcpServer(row.server)"
+                                            @keydown.space.prevent="toggleMcpServer(row.server)"
+                                            :data-help-title="'MCP server: ' + row.server"
+                                            :data-help="formatNumber(row.calls) + ' total tool calls through this MCP server. Click to see the per-tool breakdown.'">
+                                            <td class="py-2 px-4 font-mono text-xs text-gray-300" x-text="row.server"></td>
+                                            <td class="py-2 px-4 text-right tabular-nums text-accent" x-text="formatNumber(row.calls)"></td>
+                                            <td class="py-2 px-4 text-right text-gray-500">
+                                                <svg class="w-3.5 h-3.5 inline-block transition-transform" :class="mcpExpandedServer === row.server ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                                            </td>
+                                        </tr>
+                                        <tr x-show="mcpExpandedServer === row.server" class="border-t border-border bg-card-alt">
+                                            <td colspan="3" class="px-4 py-3">
+                                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-2" data-help-title="Calls by tool" data-help="Number of invocations of each individual tool exposed by this MCP server.">calls by tool</div>
+                                                <div class="space-y-1 max-h-48 overflow-y-auto pr-2">
+                                                    <template x-for="t in row.tools" :key="t.tool">
+                                                        <div class="flex justify-between text-sm">
+                                                            <span class="text-gray-400 font-mono truncate mr-2" x-text="t.tool"></span>
+                                                            <span class="text-gray-300 tabular-nums" x-text="formatNumber(t.calls)"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </template>
+                            </table>
+                        </div>
                     </div>
                 </template>
 
@@ -42,7 +65,7 @@
                             from requests that flowed through the proxy.</div>
                             <div class="text-gray-600" x-show="!mcpUsage.log_full_messages">
                                 Full-message logging is off, so tool calls can't be counted.
-                                Start the proxy with <span class="font-mono">--log-full-messages</span> and make a request.
+                                Start the proxy with <span class="font-mono">--log-messages</span> and make a request.
                             </div>
                         </div>
                     </div>
@@ -73,7 +96,7 @@
                                         </thead>
                                         <template x-for="row in ccrToolRows" :key="row.name">
                                             <tbody>
-                                                <tr class="border-t border-border cursor-pointer hover-bg-surface focus:ring-2 focus:ring-accent focus:outline-none"
+                                                <tr class="border-t border-border cursor-pointer hover:bg-card-alt focus:ring-2 focus:ring-accent focus:outline-none"
                                                     role="button" tabindex="0"
                                                     :aria-expanded="ccrExpandedTool === row.name"
                                                     @click="toggleCcrTool(row.name)"

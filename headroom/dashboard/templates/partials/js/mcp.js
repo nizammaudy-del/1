@@ -6,6 +6,15 @@ function dashboardMcpMixin() {
                 mcpDashboardStatus: {},
                 mcpDashboardSummary: {},
                 mcpDashboardTimers: {},
+                mcpExpandedServer: null,
+
+                get mcpServerRows() {
+                    const rows = (this.mcpUsage.servers || []).map(s => ({ server: s.server, calls: s.calls, tools: s.tools || [] }));
+                    return this.sortRows(rows, 'mcp', 'calls', 'desc');
+                },
+                toggleMcpServer(name) {
+                    this.mcpExpandedServer = this.mcpExpandedServer === name ? null : name;
+                },
 
                 // Health error detail (populated in fetchStats catch)
                 toggleMcpDashboard(dash) {

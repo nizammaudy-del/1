@@ -14,10 +14,10 @@
             --color-surface: #1a1a1a;
             --color-border: #2a2a2a;
             --card-alt-bg: #141414;
-            --diff-before-header: #1a0808;
-            --diff-before-body: #120606;
-            --diff-after-header: #081a08;
-            --diff-after-body: #0a120a;
+            --diff-before-header: #450a0a;
+            --diff-before-body: #3f0d0d;
+            --diff-after-header: #022c22;
+            --diff-after-body: #052e1f;
             --ttl-card-bg: linear-gradient(180deg, rgba(34,211,238,0.10), rgba(12,16,22,0.88));
         }
         body { background: var(--bg); }
@@ -61,6 +61,7 @@
         html:not(.dark) .border-emerald-900\/30 { border-color: rgba(16,185,129,0.25); }
         /* Light mode: TTL card color adjustments */
         html:not(.dark) .text-cyan-50 { color: #164e63; }
+        html:not(.dark) .text-cyan-100 { color: #164e63; }
         html:not(.dark) .text-violet-50 { color: #4c1d95; }
         html:not(.dark) .text-cyan-200\/80 { color: #0e7490; }
         html:not(.dark) .text-cyan-300\/75 { color: #0891b2; }

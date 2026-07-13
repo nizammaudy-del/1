@@ -19,6 +19,15 @@ function dashboardCore() {
                 _lastPollAtMs: null,
                 uptimeBaseMs: 0,
 
+                // --- Toast: brief non-blocking confirmation for one-off actions ---
+                toast: null,
+                _toastTimer: null,
+                showToast(message, { error = false, durationMs = 3500 } = {}) {
+                    clearTimeout(this._toastTimer);
+                    this.toast = { message, error };
+                    this._toastTimer = setTimeout(() => { this.toast = null; }, durationMs);
+                },
+
                 // Collapsible panes: true == collapsed.
                 async init() {
                     this.loadUiPrefs();
@@ -59,6 +68,16 @@ function dashboardCore() {
                         if (el.contains(e.relatedTarget)) return;
                         this.helpTitle = '';
                         this.helpBody = '';
+                    });
+
+                    // Live Feed cards are rendered as raw HTML strings (virtual
+                    // scroll perf), so Alpine never binds @click on them directly
+                    // -- delegate the same way data-help does above.
+                    document.addEventListener('click', (e) => {
+                        const card = e.target.closest && e.target.closest('.transformation-card');
+                        if (!card) return;
+                        const idx = parseInt(card.getAttribute('data-idx'), 10);
+                        if (!Number.isNaN(idx)) this.openTransformDetail(idx);
                     });
 
                     // Keyboard shortcuts

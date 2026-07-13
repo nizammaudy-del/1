@@ -115,26 +115,36 @@
         <!-- Drawer Header -->
         <div class="flex items-center justify-between px-4 py-3 border-b border-border">
             <div class="flex items-center gap-3">
-                <span class="text-sm font-medium text-gray-200">Message Transformations</span>
-                <span class="text-xs text-gray-500 font-mono" x-text="transformations.length + ' msgs'"></span>
+                <span class="text-sm font-medium text-gray-200" data-help-title="Live Feed" data-help="Every request the proxy has handled recently, newest first, showing what Headroom compressed away.">Message Transformations</span>
+                <span class="text-xs text-gray-500 font-mono" data-help-title="Count" data-help="Number of recent requests currently loaded in the feed." x-text="transformations.length + ' msgs'"></span>
+                <button @click="toggleFeedFollow()" type="button"
+                        class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors"
+                        :class="feedFollow ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-border text-gray-400 hover:text-gray-200'"
+                        data-help-title="Follow"
+                        :data-help="feedFollow ? 'Follow is on: the feed auto-scrolls to the newest message as new ones arrive. Click to pause and scroll freely.' : 'Follow is off. Click to jump to the newest message and resume auto-scrolling.'">
+                    <span class="w-1.5 h-1.5 rounded-full" :class="feedFollow ? 'bg-emerald-400' : 'bg-gray-600'"></span>
+                    Follow
+                </button>
             </div>
-            <button @click="feedOpen = false" class="text-gray-500 hover:text-gray-200 transition-colors p-1">
+            <button @click="feedOpen = false" class="text-gray-500 hover:text-gray-200 transition-colors p-1"
+                    data-help-title="Close" data-help="Close the live feed drawer.">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854z"/>
                 </svg>
             </button>
         </div>
 
-        <!-- Inline notice: full message bodies are gated behind HEADROOM_LOG_FULL_MESSAGES.
+        <!-- Inline notice: full message bodies are gated behind HEADROOM_LOG_MESSAGES.
              Lighter transformation events (model, tokens saved, transforms applied) still render below. -->
         <div x-show="!log_full_messages" class="px-4 py-2 border-b border-border bg-card-alt text-xs text-gray-400">
-            Enable <code class="font-mono text-gray-300">HEADROOM_LOG_FULL_MESSAGES</code> to see full request/response bodies here. Transformation events (model, tokens saved) still show below.
+            Enable <code class="font-mono text-gray-300">HEADROOM_LOG_MESSAGES</code> to see full request/response bodies here. Transformation events (model, tokens saved) still show below.
         </div>
 
         <!-- New messages indicator -->
         <div x-show="feedScrolled_ && feedNewCount > 0"
              @click="scrollToFeedTop()"
-             class="absolute top-16 right-4 px-3 py-2 bg-accent text-black text-sm rounded-lg shadow-lg cursor-pointer z-50 font-medium">
+             class="absolute top-16 right-4 px-3 py-2 bg-accent text-black text-sm rounded-lg shadow-lg cursor-pointer z-50 font-medium"
+             data-help-title="New messages" data-help="Click to jump to the newest message and resume auto-scrolling (Follow).">
             <span x-text="feedNewCount"></span> new message<span x-show="feedNewCount > 1">s</span>
         </div>
 
@@ -183,5 +193,65 @@
     <!-- Methodology modal: plain-language explanation of how $ savings are calculated -->
     <!-- INCLUDE: methodology_modal.html -->
     <!-- INCLUDE: settings_modal.html -->
+    <!-- Toast: brief non-blocking confirmation for one-off actions (e.g. Settings save) -->
+    <div id="dashboard-toast" x-cloak>
+        <template x-if="toast">
+            <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] cursor-pointer rounded-md border px-4 py-2 text-sm shadow-lg"
+                 :class="toast.error ? 'border-red-500/30 bg-red-500/15 text-red-300' : 'border-green-500/30 bg-green-500/15 text-green-300'"
+                 @click="toast = null" x-text="toast.message"
+                 x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-2"
+                 x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"></div>
+        </template>
+    </div>
+    <!-- Transformation detail modal: full, unclipped before/after view for one Live Feed card -->
+    <div x-show="feedDetailTransform" x-cloak
+         class="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8"
+         @keydown.escape.window="closeTransformDetail()"
+         style="display: none;">
+        <template x-if="feedDetailTransform">
+            <div @click.away="closeTransformDetail()"
+                 class="w-full max-w-4xl rounded-lg border border-border bg-surface shadow-xl">
+                <div class="flex items-center justify-between border-b border-border px-6 py-4">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <h2 class="text-lg font-semibold text-gray-100 truncate" x-text="feedDetailTransform.model"></h2>
+                        <span class="text-xs text-gray-500 shrink-0" x-text="feedDetailTransform.time"></span>
+                    </div>
+                    <button type="button" @click="closeTransformDetail()" aria-label="Close" class="text-gray-500 hover:text-gray-200" title="Close">&#10005;</button>
+                </div>
+                <div class="px-6 py-4 space-y-4 max-h-[75vh] overflow-y-auto">
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-gray-400"
+                         data-help-title="Savings" data-help="Tokens Headroom removed from this request and the resulting percentage reduction.">
+                        <span class="text-emerald-400" x-text="feedDetailTransform.tokensSaved + ' tokens saved'"></span>
+                        <span x-text="'(' + feedDetailTransform.savingsPct + '%)'"></span>
+                    </div>
+                    <template x-if="feedDetailTransform.transformsApplied.length > 0">
+                        <div class="flex flex-wrap gap-1.5"
+                             data-help-title="Transforms applied" data-help="The compression transforms Headroom ran on this request, in order.">
+                            <template x-for="tr in feedDetailTransform.transformsApplied" :key="tr">
+                                <span class="text-[10px] px-1.5 py-0.5 bg-border rounded font-mono text-gray-400" x-text="tr"></span>
+                            </template>
+                        </div>
+                    </template>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="rounded border border-red-900/30 overflow-hidden flex flex-col">
+                            <div class="diff-before-header px-3 py-1.5 border-b border-red-900/30 shrink-0"
+                                 data-help-title="Before" data-help="The original prompt exactly as sent to Headroom, before any compression.">
+                                <span class="text-xs text-red-400 uppercase tracking-wide font-semibold">Before</span>
+                            </div>
+                            <pre class="diff-before p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" style="max-height: 55vh;" x-text="feedDetailTransform.before"></pre>
+                        </div>
+                        <div class="rounded border border-emerald-900/30 overflow-hidden flex flex-col">
+                            <div class="diff-after-header px-3 py-1.5 border-b border-emerald-900/30 shrink-0"
+                                 data-help-title="After" data-help="What Headroom actually sent upstream to the provider after compression.">
+                                <span class="text-xs text-emerald-400 uppercase tracking-wide font-semibold">After</span>
+                            </div>
+                            <pre class="diff-after p-3 font-mono text-xs text-gray-300 overflow-auto whitespace-pre-wrap" style="max-height: 55vh;" x-text="feedDetailTransform.after"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
 </body>
 </html>
