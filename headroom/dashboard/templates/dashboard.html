@@ -168,12 +168,15 @@
                         </div>
                     </template>
                     <template x-if="feedDetailTransform.isUnchanged">
-                        <div class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+                        <div class="rounded-lg border border-amber-500/40 bg-amber-500/10 overflow-hidden flex flex-col"
                              data-help-title="{{help.dashboard.no_changes.title}}" data-help="{{help.dashboard.no_changes.body}}">
-                            <div class="text-sm font-semibold text-amber-300">Before/After - No changes detected, the input and the output are the same and uncompressed</div>
+                            <div class="p-3 border-b border-amber-500/40 shrink-0">
+                                <div class="text-sm font-semibold text-amber-300">Before/After - No changes detected, the input and the output are the same and uncompressed</div>
+                            </div>
+                            <pre class="p-3 font-mono text-xs text-amber-100/90 overflow-auto whitespace-pre-wrap" x-text="feedDetailTransform.before"></pre>
                         </div>
                     </template>
-                    <div class="space-y-4">
+                    <div class="space-y-4" x-show="!feedDetailTransform.isUnchanged">
                         <div class="rounded border border-red-900/30 overflow-hidden flex flex-col">
                             <div class="diff-before-header px-3 py-1.5 border-b border-red-900/30 shrink-0 flex items-center justify-between cursor-pointer select-none"
                                  @click="feedDetailTransform.beforeCollapsed = !feedDetailTransform.beforeCollapsed"
