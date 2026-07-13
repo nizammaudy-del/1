@@ -422,17 +422,23 @@ headroom dashboard   # opens the live savings dashboard (proxy must be running)
 
 The dashboard is a single-page view served by the proxy itself (`/dashboard`), split into tabs and panes:
 
-- **Overview** — hero metrics (tokens saved, overhead, budget progress), a first-run onboarding panel when there's no traffic yet, and a "How savings are calculated" methodology modal covering estimated vs. measured savings.
+- **Overview** — two rows of hero metrics: Proxy $ Saved, Token Savings, and Throughput; then a Savings Breakdown row of Compression, Prefix Cache Discount, and Output Tokens Saved (each card shows independently, so the row still fills evenly if one is hidden, e.g. no cache discount yet). A first-run onboarding panel appears when there's no traffic yet, and a "How savings are calculated" methodology modal covers estimated vs. measured savings.
 - **Token Usage, Providers & Performance** — per-model and per-provider breakdowns with sortable table headers.
 - **Provider Windows & Cache** — cache hit rates and provider context-window usage.
-- **Recent Requests** — a live feed of transformations with show-more pagination.
+- **Recent Requests** — a table of recent requests with show-more pagination.
 - **Per-Project** — savings broken down by project.
 - **Waste & Trends** — historical waste patterns over time.
 - **Active Agents** — currently running agents, polled from `/stats/active_agents`.
-- **Diagnostics** — deployment health, `headroom learn` run history, and memory sync status in one place.
-- **MCP tab** — MCP tool usage, CCR (Compress-Cache-Retrieve) feedback stats, and embedded MCP dashboards (Serena) with a link-out fallback for tools that don't support embedding.
+- **Diagnostics** — deployment health, `headroom learn` run history (with a button to kick off `headroom learn --apply` as a background job — it doesn't stream progress back, refresh the history list once it's had time to run), and memory sync status in one place.
+- **MCP tab** — a sortable, expandable table of MCP tool usage per server (expand a row for the per-tool breakdown), CCR (Compress-Cache-Retrieve) feedback stats, and embedded MCP dashboards (Serena) with a link-out fallback for tools that don't support embedding.
 
-A floating help widget (bottom-right) explains whatever pane is currently focused, including a color legend for the status indicators. The header's health indicator carries a hover popover with the same checks `headroom doctor` runs, and a restart banner appears automatically if the proxy's uptime drops between polls (a crash or restart happened) instead of silently going stale.
+The header carries the health indicator (hover for the same checks `headroom doctor` runs), a compact overhead badge with a rolling sparkline, a savings-profile badge when one is active, and a notifications bell that replaces what used to be an inline warning banner — it badges with a count when any usage window (Anthropic/Codex/Copilot quotas, budget) crosses 80%, and each warning dismisses independently from the dropdown. A restart banner appears automatically if the proxy's uptime drops between polls (a crash or restart happened) instead of silently going stale. A floating help widget (bottom-right) explains whatever's hovered.
+
+### Live Feed
+
+The Live Feed (button in the header, open by default) is a drawer of recent transformations, newest first. A **Follow** toggle keeps it auto-scrolled to the newest entry, and turns itself off the moment you scroll away manually. Clicking the "N new messages" indicator (or the Follow toggle again) jumps back to the top and resumes auto-scrolling.
+
+Clicking a card widens the drawer to 3/4 of the page and opens a detail view: the original message ("Original message", collapsed by default) and the compressed one actually sent upstream ("Compressed", open by default) with the changes highlighted inline — unchanged, shared boilerplate (system prompts, tool schemas) is dimmed so the actual diff stands out. Requests that passed through byte-identical show a single "no changes detected" callout with the content inline instead of a redundant two-panel view. Transform tags that don't fit a card's fixed row show a "+N more" popover anchored to the chip.
 
 The **Settings** panel (gear icon in the header) persists to `dashboard_config.json` in the [config directory](filesystem-contract.md) and covers:
 
