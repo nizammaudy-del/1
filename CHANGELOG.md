@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+
+* **transforms/kompress:** skip Kompress (ML lossy) for `role="tool"` messages — fixes ground-truth corruption ([#1307](https://github.com/headroomlabs-ai/headroom/issues/1307)). `tool` role carries verbatim outputs from grep, ls, cat, find, etc.; applying Kompress's ML reconstruction to them fabricated plausible-but-wrong file paths, line numbers, and symbol names that agents acted on as fact. Kompress now applies only to `role="assistant"` messages. Tool outputs remain eligible for structurally-lossless passes (SmartCrusher, SearchCompressor, LogCompressor) that ContentRouter applies before Kompress in the pipeline. Anthropic-format tool results (`role="user"`, `content=[{type:"tool_result"}]`) were already safe — they are lists, not strings, so the existing `isinstance(content, str)` guard passed them through unchanged.
+
 - The dashboard's per-request metadata (the `recent_requests` / `request_logs`
   tail and the `config` block with upstream URLs) is gated to loopback callers
   via `_request_is_loopback`. When Headroom runs in a bridge-network container
