@@ -283,7 +283,8 @@
              data-help-title="{{help.overview.savings_breakdown.title}}" data-help="{{help.overview.savings_breakdown.body}}">
             Savings Breakdown <span class="text-[10px] uppercase tracking-wide text-gray-500" title="Priced from a pricing table (LiteLLM or your Settings override) — can be stale or $0.00 for unlisted models.">estimated</span>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="grid grid-cols-1 gap-4 mb-6"
+             :class="(stats.cost?.cache_savings_usd || 0) > 0 ? 'md:grid-cols-3' : 'md:grid-cols-2'">
             <!-- Compression -->
             <div class="bg-surface rounded-lg p-4 border border-border" data-help-title="{{help.overview.compression.title}}" data-help="{{help.overview.compression.body}}">
                 <div class="text-xs text-gray-500 mb-1">Compression</div>
