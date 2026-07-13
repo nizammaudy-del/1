@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+
+* **packaging:** keep `hnswlib` out of `[memory]` and `[all]` extras; native HNSW indexing is opt-in through the `[vector]` extra ([#1368](https://github.com/headroomlabs-ai/headroom/issues/1368)). `hnswlib` requires a C++ compiler to build from source and has no pre-built wheels for many targets, while the default memory path falls back to sqlite-vec when hnswlib is absent.
+
 - The dashboard's per-request metadata (the `recent_requests` / `request_logs`
   tail and the `config` block with upstream URLs) is gated to loopback callers
   via `_request_is_loopback`. When Headroom runs in a bridge-network container

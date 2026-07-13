@@ -270,7 +270,8 @@ dev = [
     "opentelemetry-exporter-otlp-proto-http>=1.24.0",
     "ollama>=0.4.0",
     "langchain-ollama>=0.2.0",
-    "hnswlib>=0.8.0",
+    # hnswlib omitted from dev: requires a C++ compiler, absent on many CI runners.
+    # Tests that need HNSW use pytest.importorskip("hnswlib").
     "sqlite-vec>=0.1.6",
     "sentence-transformers>=2.2.0,<6.0",
     "numpy>=1.24.0",
