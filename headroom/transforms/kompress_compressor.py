@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ..ccr.marker import terse_marker, terse_markers_enabled
 from ..config import TransformResult
 from ..onnx_runtime import (
     create_cpu_session_options,
@@ -1140,10 +1141,13 @@ class KompressCompressor(Transform):
                 cache_key = self._store_in_ccr(content, compressed, n_words)
                 if cache_key:
                     result.cache_key = cache_key
-                    result.compressed += (
-                        f"\n[{n_words} items compressed to {compressed_count}."
-                        f" Retrieve more: hash={cache_key}]"
-                    )
+                    if terse_markers_enabled():
+                        result.compressed += f"\n{terse_marker(cache_key)}"
+                    else:
+                        result.compressed += (
+                            f"\n[{n_words} items compressed to {compressed_count}."
+                            f" Retrieve more: hash={cache_key}]"
+                        )
 
             if inference_ms >= 1000.0:
                 logger.info(
@@ -1424,10 +1428,13 @@ class KompressCompressor(Transform):
                 cache_key = self._store_in_ccr(content, compressed, n_words)
                 if cache_key:
                     result.cache_key = cache_key
-                    result.compressed += (
-                        f"\n[{n_words} items compressed to {compressed_count}."
-                        f" Retrieve more: hash={cache_key}]"
-                    )
+                    if terse_markers_enabled():
+                        result.compressed += f"\n{terse_marker(cache_key)}"
+                    else:
+                        result.compressed += (
+                            f"\n[{n_words} items compressed to {compressed_count}."
+                            f" Retrieve more: hash={cache_key}]"
+                        )
 
             results[text_idx] = result
 
