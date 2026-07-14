@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 AnyLLMBackendType: Any = None
 LiteLLMBackendType: Any = None
+DeepseekBackendType: Any = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ def create_proxy_backend(
     openai_api_url: str | None = None,
     anyllm_backend_cls: Any | None = None,
     litellm_backend_cls: Any | None = None,
+    deepseek_backend_cls: Any | None = None,
 ) -> Backend | None:
     """Create the optional translated backend for Anthropic proxy requests."""
     if backend == "anthropic":
@@ -192,6 +194,16 @@ def create_proxy_backend(
                 exc=exc,
             )
             return None
+
+    if backend == "deepseek":
+        try:
+            backend_cls = deepseek_backend_cls or _load_deepseek_backend()
+            instance = cast("Backend", backend_cls())
+            logger.info("Deepseek backend enabled (native API)")
+            return instance
+        except ImportError as exc:
+            logger.warning("Deepseek backend not available: %s, falling back to LiteLLM", exc)
+            # Fall through to LiteLLM
 
     normalized_backend = backend if backend.startswith("litellm-") else f"litellm-{backend}"
     provider = normalized_backend.replace("litellm-", "")
@@ -228,6 +240,8 @@ def format_backend_status(*, backend: str, anyllm_provider: str, bedrock_region:
         return "ANTHROPIC (direct API)"
     if backend == "anyllm" or backend.startswith("anyllm-"):
         return f"{anyllm_provider.title()} via any-llm"
+    if backend == "deepseek":
+        return "Deepseek (native API)"
 
     from headroom.backends.litellm import get_provider_config
 
@@ -280,6 +294,25 @@ def _load_litellm_backend() -> Any:
 
         LiteLLMBackendType = LiteLLMBackend
     return LiteLLMBackendType
+
+
+def _load_deepseek_backend() -> Any:
+    global DeepseekBackendType
+    if DeepseekBackendType is None:
+        try:
+            import anthropic  # noqa: F401
+        except ImportError:
+            try:
+                import openai  # noqa: F401
+            except ImportError as err:
+                raise ImportError(
+                    "Either 'anthropic' or 'openai' SDK is required for the native Deepseek backend. "
+                    "Install with: pip install anthropic openai"
+                ) from err
+        from headroom.backends.deepseek import DeepseekBackend
+
+        DeepseekBackendType = DeepseekBackend
+    return DeepseekBackendType
 
 
 def _call_openai_transport(
