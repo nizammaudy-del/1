@@ -58,7 +58,7 @@ wheels = [
 
 [[package]]
 name = "agno"
-version = "2.4.5"
+version = "2.6.6"
 source = { registry = "https://pypi.org/simple/" }
 dependencies = [
     { name = "docstring-parser" },
@@ -75,9 +75,9 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d0/87/611d6e9c68720667e9af7be7c91b14916d151325a9bb09300b285f4ed899/agno-2.4.5.tar.gz", hash = "sha256:f8052103c761f038884c9929211cd705e32b557a1dd5457b805132f02b73beac", size = 1524156, upload-time = "2026-01-26T23:18:18.182Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/b7/17c737b7a482b204eeb287e2c1616ed4abea93d71501810c37f269d002fb/agno-2.6.6.tar.gz", hash = "sha256:c8767ff7528a4f8b7aa8c0543592c3b9cc3c2e3f5a2852555a1c493408df3acf", size = 2025094, upload-time = "2026-05-14T07:35:01.598Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/84/ac52f32c8d7b55b62d573a08c3944c5cc4a7389364dbaaf5ed2bbf0f5b36/agno-2.4.5-py3-none-any.whl", hash = "sha256:97227aa723c4e35bc44eab59ad193a6b3d6fe6ea6f12324be8b6f1e76597e80e", size = 1827725, upload-time = "2026-01-26T23:18:15.811Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/d1/1a9078840c00cd2b6a2968dd11cc107c72290424ff7dbd4baf9a87617ac3/agno-2.6.6-py3-none-any.whl", hash = "sha256:ba8795e020d2a036af312734c1a796b5064466d4c45ab6d64ea51ec5ec2b2cd7", size = 2405077, upload-time = "2026-05-14T07:34:59.063Z" },
 ]
 
 [[package]]

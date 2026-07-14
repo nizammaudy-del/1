@@ -890,6 +890,47 @@ class KompressResult:
         return (self.tokens_saved / self.original_tokens) * 100
 
 
+def store_kompress_in_ccr(original: str, compressed: str, original_tokens: int) -> str | None:
+    """Store an original->compressed mapping in the proxy-local CCR store and
+    return its retrieval hash (or None on any failure).
+
+    Module-level so both the in-process compressor and the remote client
+    (:mod:`headroom.transforms.kompress_remote`) share one CCR policy. Model-free
+    — touches only the compression store + telemetry, never the ONNX model — so
+    it works in a sandboxed proxy installed without the ``[ml]`` extra.
+    """
+    try:
+        from ..cache.compression_store import get_compression_store
+
+        signature = _kompress_content_signature(original)
+        compressed_tokens = len(compressed.split())
+        store = get_compression_store()
+        cache_key = store.store(
+            original,
+            compressed,
+            original_tokens=original_tokens,
+            compressed_tokens=compressed_tokens,
+            original_item_count=original_tokens,
+            compressed_item_count=compressed_tokens,
+            tool_signature_hash=signature.structure_hash,
+            compression_strategy="kompress",
+        )
+        with contextlib.suppress(Exception):
+            from ..telemetry import get_toin
+
+            get_toin().record_compression(
+                tool_signature=signature,
+                original_count=original_tokens,
+                compressed_count=compressed_tokens,
+                original_tokens=original_tokens,
+                compressed_tokens=compressed_tokens,
+                strategy="kompress",
+            )
+        return cache_key
+    except Exception:
+        return None
+
+
 class KompressCompressor(Transform):
     """Kompress: ModernBERT token compressor.
 
@@ -1549,33 +1590,4 @@ class KompressCompressor(Transform):
         )
 
     def _store_in_ccr(self, original: str, compressed: str, original_tokens: int) -> str | None:
-        try:
-            from ..cache.compression_store import get_compression_store
-
-            signature = _kompress_content_signature(original)
-            compressed_tokens = len(compressed.split())
-            store = get_compression_store()
-            cache_key = store.store(
-                original,
-                compressed,
-                original_tokens=original_tokens,
-                compressed_tokens=compressed_tokens,
-                original_item_count=original_tokens,
-                compressed_item_count=compressed_tokens,
-                tool_signature_hash=signature.structure_hash,
-                compression_strategy="kompress",
-            )
-            with contextlib.suppress(Exception):
-                from ..telemetry import get_toin
-
-                get_toin().record_compression(
-                    tool_signature=signature,
-                    original_count=original_tokens,
-                    compressed_count=compressed_tokens,
-                    original_tokens=original_tokens,
-                    compressed_tokens=compressed_tokens,
-                    strategy="kompress",
-                )
-            return cache_key
-        except Exception:
-            return None
+        return store_kompress_in_ccr(original, compressed, original_tokens)

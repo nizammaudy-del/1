@@ -293,6 +293,25 @@ dev = [
 all = [
     "headroom-ai[proxy,code,ml,memory,relevance,image,reports,otel,evals,voice,html,mcp,spreadsheet]",
 ]
+# Sandbox: a lean proxy with ALL torch-free capability — for running Headroom in
+# a locked-down/low-resource sandbox and offloading heavy ML elsewhere.
+#
+# = [all] MINUS:
+#   - image  (SigLIP/OCR — excluded by request)
+#   - ml     (torch — the PyTorch Kompress backend; ONNX path in [proxy] still
+#             runs Kompress locally with no torch, or offload it entirely via
+#             HEADROOM_KOMPRESS_ENDPOINT)
+#   - voice  (excluded by request)
+#   - memory + evals  (both pull sentence-transformers -> torch, i.e. the very
+#             ML weight a sandbox avoids; evals is a dev/test harness, not a
+#             runtime feature). Opt back in explicitly if you accept torch:
+#             pip install headroom-ai[sandbox,memory]
+#
+# Everything kept here is torch-free: code-aware compression (tree-sitter),
+# embedding relevance (fastembed), HTML/spreadsheet ingestion, reports, OTel.
+sandbox = [
+    "headroom-ai[proxy,code,relevance,reports,otel,html,mcp,spreadsheet]",
+]
 
 [project.scripts]
 headroom = "headroom.cli:main"
