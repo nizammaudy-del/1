@@ -704,6 +704,21 @@ class SavingsTracker:
         self._touch_state_locked(timestamp_dt)
         self._aggregate_dirty = True
 
+    def _active_display_session_locked(self, timestamp_dt: datetime) -> dict[str, Any]:
+        session = self._state["display_session"]
+        last_activity = _parse_timestamp(session.get("last_activity_at"))
+        if last_activity is None or self._is_display_session_expired(
+            last_activity,
+            reference_time=timestamp_dt,
+        ):
+            session = _empty_display_session()
+            self._state["display_session"] = session
+        iso_timestamp = _to_utc_iso(timestamp_dt)
+        if session.get("started_at") is None:
+            session["started_at"] = iso_timestamp
+        session["last_activity_at"] = iso_timestamp
+        return session
+
     def _cache_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
         return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
             "cache", _empty_scope_cache()
@@ -902,15 +917,7 @@ class SavingsTracker:
             lifetime_cache["bust_count"] += delta_cache_provider_busts
             lifetime_cache["bust_write_tokens"] += delta_cache_provider_bust_write_tokens
 
-            session = self._state["display_session"]
-            last_activity = _parse_timestamp(session.get("last_activity_at"))
-            if last_activity is None or self._is_display_session_expired(
-                last_activity,
-                reference_time=timestamp_dt,
-            ):
-                session = _empty_display_session()
-                session["started_at"] = _to_utc_iso(timestamp_dt)
-                self._state["display_session"] = session
+            session = self._active_display_session_locked(timestamp_dt)
 
             session["requests"] += 1
             session["tokens_saved"] += delta_tokens_saved
@@ -933,9 +940,6 @@ class SavingsTracker:
                 (session["tokens_saved"] / total_before * 100) if total_before > 0 else 0.0,
                 2,
             )
-            session["last_activity_at"] = _to_utc_iso(timestamp_dt)
-            if session.get("started_at") is None:
-                session["started_at"] = session["last_activity_at"]
             session_cache = self._cache_aggregate_locked(session)
             session_cache["cache_write_tokens"] += delta_cache_write_tokens
             session_cache["cache_write_5m_tokens"] += delta_cache_write_5m_tokens
@@ -994,8 +998,6 @@ class SavingsTracker:
         timestamp: datetime | str | None = None,
     ) -> bool:
         saved = max(_coerce_int(original_tokens) - _coerce_int(compressed_tokens), 0)
-        if saved <= 0:
-            return False
 
         timestamp_dt = (
             _parse_timestamp(timestamp)
@@ -1009,14 +1011,16 @@ class SavingsTracker:
 
         strategy_key = str(strategy or "unknown").strip() or "unknown"
         with self._lock:
-            for scope in (self._state["lifetime"], self._state["display_session"]):
+            session = self._active_display_session_locked(timestamp_dt)
+            for scope in (self._state["lifetime"], session):
                 compression = self._compression_aggregate_locked(scope)
                 compression["compressions_by_strategy"][strategy_key] = (
                     compression["compressions_by_strategy"].get(strategy_key, 0) + 1
                 )
-                compression["tokens_saved_by_strategy"][strategy_key] = (
-                    compression["tokens_saved_by_strategy"].get(strategy_key, 0) + saved
-                )
+                if saved > 0:
+                    compression["tokens_saved_by_strategy"][strategy_key] = (
+                        compression["tokens_saved_by_strategy"].get(strategy_key, 0) + saved
+                    )
             self._mark_aggregate_dirty_locked(timestamp_dt)
             return True
 
@@ -1041,7 +1045,8 @@ class SavingsTracker:
             timestamp_dt = _utc_now()
 
         with self._lock:
-            for scope in (self._state["lifetime"], self._state["display_session"]):
+            session = self._active_display_session_locked(timestamp_dt)
+            for scope in (self._state["lifetime"], session):
                 cache = self._cache_aggregate_locked(scope)
                 cache["cache_bust_count"] += 1
                 cache["cache_bust_tokens_lost"] += delta_tokens_lost
@@ -1081,7 +1086,8 @@ class SavingsTracker:
         chain = strategy_chain or []
 
         with self._lock:
-            for scope in (self._state["lifetime"], self._state["display_session"]):
+            session = self._active_display_session_locked(timestamp_dt)
+            for scope in (self._state["lifetime"], session):
                 codex_ws = self._codex_ws_aggregate_locked(scope)
                 codex_ws["units_total"] += 1
                 codex_ws["units_by_strategy"][strategy_key] = (
@@ -1145,7 +1151,8 @@ class SavingsTracker:
         chain = strategy_chain or []
         strategies = final_strategies or []
         with self._lock:
-            for scope in (self._state["lifetime"], self._state["display_session"]):
+            session = self._active_display_session_locked(timestamp_dt)
+            for scope in (self._state["lifetime"], session):
                 codex_ws = self._codex_ws_aggregate_locked(scope)
                 codex_ws["frames_attempted_total"] += 1
                 if modified:
@@ -1416,6 +1423,8 @@ class SavingsTracker:
         }
 
     def _load_state(self) -> dict[str, Any]:
+        if self._stateless:
+            return self._default_state()
         if not self._path.exists():
             return self._default_state()
 

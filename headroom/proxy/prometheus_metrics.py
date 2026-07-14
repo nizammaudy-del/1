@@ -465,11 +465,11 @@ class PrometheusMetrics:
         saved = original_tokens - compressed_tokens
         if saved > 0:
             self.tokens_saved_by_strategy[strategy] += saved
-            self.savings_tracker.record_compression(
-                strategy=strategy,
-                original_tokens=original_tokens,
-                compressed_tokens=compressed_tokens,
-            )
+        self.savings_tracker.record_compression(
+            strategy=strategy,
+            original_tokens=original_tokens,
+            compressed_tokens=compressed_tokens,
+        )
 
     def record_router_route_counts(self, counts: dict[str, int]) -> None:
         """Accumulate ContentRouter routing-category counts for a single
@@ -660,6 +660,11 @@ class PrometheusMetrics:
         cache_hit_requests_delta = 0
         cache_provider_bust_count_delta = 0
         cache_provider_bust_write_tokens_delta = 0
+        cache_write_5m_tokens_delta = 0
+        cache_write_1h_tokens_delta = 0
+        cache_write_5m_requests_delta = 0
+        cache_write_1h_requests_delta = 0
+        uncached_input_tokens_delta = 0
         async with self._lock:
             self.requests_total += 1
             self.requests_by_provider[provider] += 1
@@ -687,16 +692,21 @@ class PrometheusMetrics:
             # Track provider-specific prefix cache metrics
             if cache_read_tokens > 0 or cache_write_tokens > 0:
                 cache_requests_delta = 1
+                cache_write_5m_tokens_delta = cache_write_5m_tokens
+                cache_write_1h_tokens_delta = cache_write_1h_tokens
+                cache_write_5m_requests_delta = 1 if cache_write_5m_tokens > 0 else 0
+                cache_write_1h_requests_delta = 1 if cache_write_1h_tokens > 0 else 0
+                uncached_input_tokens_delta = uncached_input_tokens
                 pc = self.cache_by_provider[provider]
                 pc["cache_read_tokens"] += cache_read_tokens
                 pc["cache_write_tokens"] += cache_write_tokens
-                pc["cache_write_5m_tokens"] += cache_write_5m_tokens
-                pc["cache_write_1h_tokens"] += cache_write_1h_tokens
+                pc["cache_write_5m_tokens"] += cache_write_5m_tokens_delta
+                pc["cache_write_1h_tokens"] += cache_write_1h_tokens_delta
                 if cache_write_5m_tokens > 0:
                     pc["cache_write_5m_requests"] += 1
                 if cache_write_1h_tokens > 0:
                     pc["cache_write_1h_requests"] += 1
-                pc["uncached_input_tokens"] += uncached_input_tokens
+                pc["uncached_input_tokens"] += uncached_input_tokens_delta
                 pc["requests"] += 1
                 if cache_read_tokens > 0:
                     pc["hit_requests"] += 1
@@ -761,11 +771,11 @@ class PrometheusMetrics:
                 project=project,
                 cache_read_tokens=cache_read_tokens,
                 cache_write_tokens=cache_write_tokens,
-                cache_write_5m_tokens=cache_write_5m_tokens,
-                cache_write_1h_tokens=cache_write_1h_tokens,
-                cache_write_5m_requests=1 if cache_write_5m_tokens > 0 else 0,
-                cache_write_1h_requests=1 if cache_write_1h_tokens > 0 else 0,
-                uncached_input_tokens=uncached_input_tokens,
+                cache_write_5m_tokens=cache_write_5m_tokens_delta,
+                cache_write_1h_tokens=cache_write_1h_tokens_delta,
+                cache_write_5m_requests=cache_write_5m_requests_delta,
+                cache_write_1h_requests=cache_write_1h_requests_delta,
+                uncached_input_tokens=uncached_input_tokens_delta,
                 cache_requests_delta=cache_requests_delta,
                 cache_hit_requests_delta=cache_hit_requests_delta,
                 cache_provider_bust_count_delta=cache_provider_bust_count_delta,

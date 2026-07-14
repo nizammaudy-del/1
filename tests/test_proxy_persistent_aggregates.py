@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -223,6 +224,143 @@ def test_metric_scopes_stateless_mode_writes_nothing_and_restarts_empty(tmp_path
         assert stats["metric_scopes"]["current_process"]["requests"]["total"] == 0
         assert stats["metric_scopes"]["lifetime"]["requests"]["total"] == 0
         assert stats["metric_scopes"]["lifetime"]["compression"]["compressions_by_strategy"] == {}
+
+
+def test_metric_scopes_stateless_mode_ignores_existing_file(tmp_path, monkeypatch):
+    savings_path = tmp_path / "proxy_savings.json"
+    savings_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 5,
+                "updated_at": "2026-07-14T12:05:00Z",
+                "lifetime": {
+                    "requests": 1,
+                    "tokens_saved": 3,
+                    "compression_savings_usd": 0.01,
+                    "cache_read_tokens": 0,
+                    "cache_savings_usd": 0.0,
+                    "total_input_tokens": 9,
+                    "total_input_cost_usd": 0.02,
+                    "aggregates": {
+                        "cache": {},
+                        "compression": {"compressions_by_strategy": {"diff": 1}},
+                        "codex_ws": {},
+                    },
+                },
+                "display_session": {
+                    "requests": 1,
+                    "tokens_saved": 3,
+                    "compression_savings_usd": 0.01,
+                    "cache_read_tokens": 0,
+                    "cache_savings_usd": 0.0,
+                    "total_input_tokens": 9,
+                    "total_input_cost_usd": 0.02,
+                    "savings_percent": 25.0,
+                    "started_at": "2026-07-14T12:00:00Z",
+                    "last_activity_at": "2026-07-14T12:05:00Z",
+                    "aggregates": {
+                        "cache": {},
+                        "compression": {"compressions_by_strategy": {"diff": 1}},
+                        "codex_ws": {},
+                    },
+                },
+                "history": [],
+                "projects": {},
+                "by_model": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HEADROOM_SAVINGS_PATH", str(savings_path))
+    config = ProxyConfig(
+        cache_enabled=False,
+        rate_limit_enabled=False,
+        log_requests=False,
+        stateless=True,
+    )
+
+    with TestClient(create_app(config)) as client:
+        stats = client.get("/stats").json()
+        assert stats["metric_scopes"]["current_process"]["requests"]["total"] == 0
+        assert stats["metric_scopes"]["lifetime"]["requests"]["total"] == 0
+        assert stats["metric_scopes"]["lifetime"]["compression"]["compressions_by_strategy"] == {}
+
+
+def test_metric_scopes_cache_denominators_ignore_uncached_requests_consistently(
+    tmp_path, monkeypatch
+):
+    savings_path = tmp_path / "proxy_savings.json"
+    monkeypatch.setenv("HEADROOM_SAVINGS_PATH", str(savings_path))
+    config = ProxyConfig(cache_enabled=False, rate_limit_enabled=False, log_requests=False)
+
+    with TestClient(create_app(config)) as client:
+        proxy = client.app.state.proxy
+        _record_proxy_request(
+            proxy,
+            input_tokens=1000,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            uncached_input_tokens=1000,
+        )
+        _record_proxy_request(
+            proxy,
+            input_tokens=100,
+            cache_read_tokens=100,
+            cache_write_tokens=0,
+            uncached_input_tokens=0,
+        )
+        stats = client.get("/stats").json()
+        current_scope = stats["metric_scopes"]["current_process"]["cache"]
+        lifetime_scope = stats["metric_scopes"]["lifetime"]["cache"]
+
+        assert current_scope["uncached_input_tokens"] == 0
+        assert lifetime_scope["uncached_input_tokens"] == 0
+        assert current_scope["requests"] == 1
+        assert lifetime_scope["requests"] == 1
+        assert current_scope["hit_rate"] == 100.0
+        assert lifetime_scope["hit_rate"] == 100.0
+
+
+def test_aggregate_only_updates_survive_into_next_display_session_request(tmp_path):
+    tracker = SavingsTracker(path=str(tmp_path / "proxy_savings.json"), save_flush_every=10)
+
+    tracker.record_compression(
+        strategy="smart_crusher",
+        original_tokens=100,
+        compressed_tokens=70,
+        timestamp="2026-07-14T12:00:00Z",
+    )
+    before_request = tracker.snapshot()
+    assert before_request["display_session"]["aggregates"]["compression"][
+        "compressions_by_strategy"
+    ] == {"smart_crusher": 1}
+
+    tracker.record_request(
+        model="gpt-4o",
+        input_tokens=120,
+        tokens_saved=30,
+        timestamp="2026-07-14T12:00:01Z",
+    )
+    after_request = tracker.snapshot()
+
+    assert after_request["display_session"]["requests"] == 1
+    assert after_request["display_session"]["aggregates"]["compression"][
+        "compressions_by_strategy"
+    ] == {"smart_crusher": 1}
+
+
+def test_zero_and_negative_savings_strategy_counts_persist(tmp_path):
+    tracker = SavingsTracker(path=str(tmp_path / "proxy_savings.json"), save_flush_every=25)
+    metrics = PrometheusMetrics(savings_tracker=tracker)
+
+    metrics.record_compression("diff", 80, 80)
+    metrics.record_compression("code_aware", 50, 70)
+    tracker.flush()
+
+    persisted = json.loads(Path(tracker.storage_path).read_text(encoding="utf-8"))
+    compression = persisted["lifetime"]["aggregates"]["compression"]
+    assert compression["compressions_by_strategy"] == {"diff": 1, "code_aware": 1}
+    assert compression["tokens_saved_by_strategy"] == {}
 
 
 def test_aggregate_only_updates_stay_dirty_until_request_save(tmp_path):
