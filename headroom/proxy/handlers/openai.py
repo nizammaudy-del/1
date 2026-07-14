@@ -61,6 +61,7 @@ from headroom.providers.codex.runtime import (
     resolve_codex_routing_headers as _resolve_codex_routing_headers,
 )
 from headroom.providers.copilot import model_prefers_responses_api
+from headroom.providers.registry import UpstreamAuthUnavailable
 from headroom.proxy.auth_mode import (
     classify_auth_mode,
     classify_client,
@@ -1245,6 +1246,28 @@ class OpenAIHandlerMixin:
 
     OPENAI_RESPONSES_ROUTER_MIN_BYTES = 512
     OPENAI_RESPONSES_OUTPUT_TYPES = _RESPONSES_OUTPUT_ITEM_TYPES
+
+    def _openai_route_auth_error(self) -> Any:
+        """502 returned when a matched multi-upstream BearerAuth route has
+        no token (``UpstreamAuthUnavailable``). Fails closed before the
+        upstream is contacted; the message is generic so the env-var name
+        is never leaked to the client.
+        """
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": (
+                        "Upstream route is not configured with a valid "
+                        "credential. Please contact the proxy operator."
+                    ),
+                    "type": "server_error",
+                    "code": "upstream_auth_unavailable",
+                }
+            },
+        )
 
     def _openai_responses_unit_cache(self) -> tuple[Any, OrderedDict[str, Any]]:
         with _OPENAI_RESPONSES_UNIT_CACHE_INIT_LOCK:
@@ -3467,11 +3490,21 @@ class OpenAIHandlerMixin:
                 )
 
         # Direct OpenAI API (no backend configured)
-        url = build_copilot_upstream_url(
-            upstream_base_url or self.OPENAI_API_URL,
-            handler_path,
-        )
-        url = _append_request_query(url, request.url.query)
+        if upstream_base_url:
+            url = build_copilot_upstream_url(
+                upstream_base_url or self.OPENAI_API_URL,
+                handler_path,
+            )
+            url = _append_request_query(url, request.url.query)
+        else:
+            try:
+                base_url, headers = self.resolve_upstream(
+                    protocol="openai", model=model, headers=headers
+                )
+            except UpstreamAuthUnavailable:
+                return self._openai_route_auth_error()
+            url = build_copilot_upstream_url(base_url, handler_path)
+            url = _append_request_query(url, request.url.query)
 
         try:
             if stream:
@@ -4311,15 +4344,22 @@ class OpenAIHandlerMixin:
             url = codex_responses_http_url()
         else:
             upstream_base_url = _resolve_openai_upstream_base(request.headers)
-            handler_path = (
-                _resolve_openai_handler_path(request.headers, handler_path=_OPENAI_RESPONSES_PATH)
-                if upstream_base_url is not None
-                else "/v1/responses"
-            )
-            url = build_copilot_upstream_url(
-                upstream_base_url or self.OPENAI_API_URL,
-                handler_path,
-            )
+            if upstream_base_url is not None:
+                handler_path = _resolve_openai_handler_path(
+                    request.headers, handler_path=_OPENAI_RESPONSES_PATH
+                )
+                url = build_copilot_upstream_url(
+                    upstream_base_url or self.OPENAI_API_URL,
+                    handler_path,
+                )
+            else:
+                try:
+                    base_url, headers = self.resolve_upstream(
+                        protocol="openai", model=model, headers=headers
+                    )
+                except UpstreamAuthUnavailable:
+                    return self._openai_route_auth_error()
+                url = build_copilot_upstream_url(base_url, "/v1/responses")
             url = _append_request_query(url, request.url.query)
 
         # The standalone Rust proxy has native /v1/responses item handling,
@@ -7275,7 +7315,29 @@ class OpenAIHandlerMixin:
         if has_chatgpt_account_header(upstream_headers):
             http_url = codex_responses_http_url()
         else:
-            http_url = build_copilot_upstream_url(self.OPENAI_API_URL, "/v1/responses")
+            ws_model = body.get("model") if isinstance(body, dict) else None
+            try:
+                base_url, resolved_headers = self.resolve_upstream(
+                    protocol="openai", model=ws_model, headers=upstream_headers
+                )
+            except UpstreamAuthUnavailable:
+                # Fail closed before contacting the upstream: relay a WS
+                # error event (the HTTP-101 is already accepted on this arm,
+                # so we cannot return a 502) and stop.
+                error_event = {
+                    "type": "error",
+                    "error": {
+                        "type": "server_error",
+                        "message": (
+                            "Upstream route is not configured with a valid "
+                            "credential. Please contact the proxy operator."
+                        ),
+                    },
+                }
+                await websocket.send_text(json.dumps(error_event))
+                return
+            http_url = build_copilot_upstream_url(base_url, "/v1/responses")
+            upstream_headers = resolved_headers
 
         # Build HTTP body from the WS response.create payload.
         # WS messages use {"type": "response.create", "response": {...}} wrapper.
