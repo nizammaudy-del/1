@@ -23,6 +23,7 @@ from . import (  # noqa: F401
     mcp,
     perf,
     proxy,
+    recover,
     tools,
     update,
     wrap,

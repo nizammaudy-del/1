@@ -59,6 +59,7 @@ dependencies = [
     "opentelemetry-api>=1.24.0",  # Safe no-op OTEL API for instrumentation
     "ast-grep-cli>=0.30.0",       # AST-aware code slicing (CodeCompressor); binary wheel
     "tomli>=2.0.0; python_version < '3.11'",  # tomllib backport for helper scripts
+    "tomlkit>=0.13.0,<1.0",       # Loss-minimizing Codex config recovery
 ]
 
 [project.optional-dependencies]
