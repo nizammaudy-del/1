@@ -188,6 +188,37 @@ def _stats_with_lifetime_only_cache_scope() -> dict:
     return stats
 
 
+def _stats_without_metric_scopes_lifetime_cache_only() -> dict:
+    stats = copy.deepcopy(_sample_stats())
+    stats["persistent_savings"]["lifetime"]["cache_read_tokens"] = 3300
+    stats["persistent_savings"]["lifetime"]["cache_savings_usd"] = 1.44
+    stats["prefix_cache"]["by_provider"] = {}
+    stats["prefix_cache"]["totals"].update(
+        {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cache_write_5m_tokens": 0,
+            "cache_write_1h_tokens": 0,
+            "cache_write_5m_requests": 0,
+            "cache_write_1h_requests": 0,
+            "requests": 0,
+            "hit_requests": 0,
+            "bust_count": 0,
+            "bust_write_tokens": 0,
+            "savings_usd": 0.0,
+            "write_premium_usd": 0.0,
+            "net_savings_usd": 0.0,
+            "hit_rate": 0.0,
+            "observed_ttl_buckets": {
+                "5m": {"tokens": 0, "requests": 0},
+                "1h": {"tokens": 0, "requests": 0},
+            },
+            "observed_ttl_mix": {"5m_pct": 0.0, "1h_pct": 0.0, "active_buckets": []},
+        }
+    )
+    return stats
+
+
 def _install_dashboard_routes(page: Page, stats: dict) -> None:
     history = _sample_history()
     health = {"status": "healthy", "version": "0.3.0"}
@@ -216,6 +247,10 @@ def _open_dashboard(page: Page, stats: dict) -> None:
     _install_dashboard_routes(page, stats)
     page.goto("http://headroom.local/dashboard", wait_until="load")
     page.wait_for_load_state("networkidle")
+
+
+def _scope_cache_metric_value(page: Page, label: str):
+    return page.locator(f"//div[normalize-space()='{label}']/following-sibling::div[1]")
 
 
 def test_scope_selector_switches_aggregate_values() -> None:
@@ -248,7 +283,7 @@ def test_lifetime_selection_keeps_process_local_widgets_process_scoped() -> None
         page.get_by_test_id("scope-lifetime").click()
         expect(page.get_by_test_id("scope-cache-reads-value")).to_have_text("3.3k")
         expect(page.get_by_test_id("per-model-process-label")).to_have_text("Current process only")
-        expect(page.get_by_text("Current process", exact=True)).to_have_count(1)
+        expect(page.get_by_text("Current process", exact=True)).to_have_count(3)
 
         browser.close()
 
@@ -267,6 +302,73 @@ def test_scope_selector_preserves_historical_view() -> None:
         page.get_by_role("button", name="Session").click()
         expect(page.get_by_test_id("scope-current")).to_be_visible()
         expect(page.get_by_test_id("scope-proxy-saved-value")).to_have_text("$1.11")
+
+        browser.close()
+
+
+def test_current_scope_hides_cache_card_when_only_lifetime_has_cache() -> None:
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1800})
+        _open_dashboard(page, _stats_with_lifetime_only_cache_scope())
+
+        expect(page.get_by_text("Prefix Cache Impact", exact=True)).to_be_visible()
+        page.get_by_test_id("scope-current").click()
+        expect(page.get_by_text("Prefix Cache Impact", exact=True)).to_have_count(0)
+
+        browser.close()
+
+
+def test_missing_selected_scope_cache_fields_render_unavailable() -> None:
+    stats = _stats_with_metric_scopes()
+    stats["metric_scopes"]["current_process"]["cache"] = {
+        "cache_read_tokens": 1100,
+        "cache_write_tokens": 220,
+        "hit_rate": 66.0,
+        "bust_count": 1,
+    }
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1800})
+        _open_dashboard(page, stats)
+
+        page.get_by_test_id("scope-current").click()
+        expect(page.get_by_text("Unavailable for selected scope", exact=True)).to_be_visible()
+        expect(page.get_by_test_id("scope-cache-reads-value")).to_have_text("Unavailable")
+        expect(page.get_by_text("Cache Efficiency", exact=True)).to_have_count(0)
+        expect(page.get_by_test_id("cvc-net-headline")).to_have_text("Selected scope unavailable")
+        expect(page.get_by_test_id("cvc-saved-value")).to_have_text("Unavailable")
+        expect(page.get_by_test_id("cvc-bust-value")).to_have_text("Unavailable")
+        expect(page.get_by_test_id("cvc-net-value")).to_have_text("Unavailable")
+
+        browser.close()
+
+
+def test_lifetime_scope_keeps_process_local_cache_breakdowns_labeled() -> None:
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1800})
+        _open_dashboard(page, _stats_with_metric_scopes())
+
+        page.get_by_test_id("scope-lifetime").click()
+        expect(page.get_by_text("Current process only", exact=True)).to_have_count(3)
+
+        browser.close()
+
+
+def test_legacy_lifetime_cache_keeps_process_local_cache_metrics_unavailable() -> None:
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 1800})
+        _open_dashboard(page, _stats_without_metric_scopes_lifetime_cache_only())
+
+        expect(page.get_by_test_id("scope-cache-reads-value")).to_have_text("3.3k")
+        expect(_scope_cache_metric_value(page, "Cache Writes")).to_have_text("—")
+        expect(_scope_cache_metric_value(page, "Hit Rate")).to_have_text("—")
+        expect(_scope_cache_metric_value(page, "Cache Busts")).to_have_text("—")
+        expect(page.get_by_text("no activity since restart", exact=True)).to_be_visible()
+        expect(page.get_by_text("Cache Efficiency", exact=True)).to_have_count(0)
 
         browser.close()
 

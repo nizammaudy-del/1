@@ -805,10 +805,15 @@
         <template x-if="hasAnyScopedCacheData">
             <div class="bg-surface rounded-lg p-4 border border-border mb-6">
                 <div class="flex justify-between items-center mb-3">
-                    <div class="text-sm font-medium text-gray-300">Prefix Cache Impact</div>
+                    <div>
+                        <div class="text-sm font-medium text-gray-300">Prefix Cache Impact</div>
+                        <div class="text-[11px] text-gray-600 mt-0.5"
+                             x-show="hasMetricScopes && processLocalCacheActive"
+                             x-text="'Current process net savings: $' + formatCurrency(stats.prefix_cache?.totals?.net_savings_usd || 0)"></div>
+                    </div>
                     <div class="text-xs font-mono"
-                         :class="scopeCacheUnavailable ? 'text-gray-500' : 'text-emerald-400'"
-                         x-text="scopeCacheUnavailable ? 'Unavailable for selected scope' : scopeFreshnessBadge"></div>
+                         :class="scopeCacheStatusClass"
+                         x-text="scopeCacheStatusText"></div>
                 </div>
                 <!-- Totals row -->
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
@@ -827,39 +832,43 @@
                     </div>
                     <div>
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Writes</div>
-                        <div class="text-2xl font-light tabular-nums text-amber-400" x-text="scopeCacheUnavailable ? 'Unavailable' : formatNumber(scopeCacheWrites)"></div>
+                        <div class="text-2xl font-light tabular-nums"
+                             :class="legacyProcessCacheUnavailable ? 'text-gray-600' : 'text-amber-400'"
+                             x-text="legacyProcessCacheUnavailable ? '—' : (scopeCacheUnavailable ? 'Unavailable' : formatNumber(scopeCacheWrites))"></div>
                         <div class="text-xs text-amber-400/70" x-show="!hasMetricScopes && cacheSessionActive"
                              x-text="'$' + formatCurrency(stats.prefix_cache?.totals?.write_premium_usd || 0) + ' write premium'"></div>
+                        <div class="text-xs text-amber-400/70" x-show="hasMetricScopes && processLocalCacheActive"
+                             x-text="'$' + formatCurrency(stats.prefix_cache?.totals?.write_premium_usd || 0) + ' current-process write premium'"></div>
                         <div class="text-xs text-gray-500"
                              x-show="hasMetricScopes">selected scope</div>
                         <div class="text-xs text-gray-500"
-                             x-show="!hasMetricScopes && !cacheSessionActive">no activity since restart</div>
+                             x-show="legacyProcessCacheUnavailable">no activity since restart</div>
                     </div>
                     <div>
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Hit Rate</div>
                         <div class="text-2xl font-light tabular-nums"
-                             :class="scopeCacheUnavailable ? 'text-gray-500' : (scopeCacheHitRate > 80 ? 'text-emerald-400' : scopeCacheHitRate > 50 ? 'text-amber-400' : 'text-red-400')"
-                             x-text="scopeCacheUnavailable ? 'Unavailable' : scopeCacheHitRate.toFixed(0) + '%'"></div>
+                             :class="legacyProcessCacheUnavailable ? 'text-gray-600' : (scopeCacheUnavailable ? 'text-gray-500' : (scopeCacheHitRate > 80 ? 'text-emerald-400' : scopeCacheHitRate > 50 ? 'text-amber-400' : 'text-red-400'))"
+                             x-text="legacyProcessCacheUnavailable ? '—' : (scopeCacheUnavailable ? 'Unavailable' : scopeCacheHitRate.toFixed(0) + '%')"></div>
                         <div class="text-xs text-gray-500"
-                             x-text="scopeCacheUnavailable ? 'Unavailable for selected scope' : scopeCacheHitRequests + ' / ' + scopeCacheRequests + ' requests'"></div>
+                             x-text="legacyProcessCacheUnavailable ? 'no activity since restart' : (scopeCacheUnavailable ? 'Unavailable for selected scope' : scopeCacheHitRequests + ' / ' + scopeCacheRequests + ' requests')"></div>
                     </div>
                     <div>
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache Busts</div>
                         <div class="text-2xl font-light tabular-nums"
-                             :class="scopeCacheUnavailable ? 'text-gray-500' : (scopeCacheBustCount > 5 ? 'text-red-400' : scopeCacheBustCount > 0 ? 'text-amber-400' : 'text-emerald-400')"
-                             x-text="scopeCacheUnavailable ? 'Unavailable' : scopeCacheBustCount"></div>
+                             :class="legacyProcessCacheUnavailable ? 'text-gray-600' : (scopeCacheUnavailable ? 'text-gray-500' : (scopeCacheBustCount > 5 ? 'text-red-400' : scopeCacheBustCount > 0 ? 'text-amber-400' : 'text-emerald-400'))"
+                             x-text="legacyProcessCacheUnavailable ? '—' : (scopeCacheUnavailable ? 'Unavailable' : scopeCacheBustCount)"></div>
                         <div class="text-xs text-gray-500"
-                             x-text="scopeCacheUnavailable ? 'Unavailable for selected scope' : formatNumber(scopeCacheBustWriteTokens) + ' tokens re-written'"></div>
+                             x-text="legacyProcessCacheUnavailable ? 'no activity since restart' : (scopeCacheUnavailable ? 'Unavailable for selected scope' : formatNumber(scopeCacheBustWriteTokens) + ' tokens re-written')"></div>
                     </div>
                     <div>
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Providers</div>
                         <div class="text-2xl font-light tabular-nums text-gray-300"
-                             x-text="cacheSessionActive ? processLocalProviderCount : '—'"></div>
+                             x-text="processLocalCacheActive ? processLocalProviderCount : '—'"></div>
                         <div class="text-xs text-gray-500">Current process</div>
                     </div>
                 </div>
                 <!-- Cache efficiency bar (session-scoped; hidden until traffic arrives) -->
-                <div x-show="cacheSessionActive">
+                <div x-show="cacheSessionActive && !scopeCacheUnavailable">
                     <div class="flex justify-between text-xs text-gray-500 mb-1">
                         <span>Cache Efficiency</span>
                         <span x-text="cacheSavingsPercent + '% of input served from cache'"></span>
@@ -938,23 +947,23 @@
                                 <div class="text-xs text-gray-500 uppercase tracking-wide">Compression vs Cache</div>
                                 <div class="text-[11px] text-gray-600 mt-0.5">Tokens saved by compression against cached-prefix tokens its mutations invalidated</div>
                             </div>
-                            <div data-testid="cvc-net-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]" :class="compressionVsCacheNet >= 0 ? 'border-emerald-400/20 text-emerald-300/90' : 'border-red-400/25 text-red-300/90'" x-text="compressionVsCacheNet >= 0 ? 'Net positive' : 'Net negative'"></div>
+                            <div data-testid="cvc-net-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]" :class="scopeCacheUnavailable ? 'border-gray-500/25 text-gray-400' : (compressionVsCacheNet >= 0 ? 'border-emerald-400/20 text-emerald-300/90' : 'border-red-400/25 text-red-300/90')" x-text="scopeCacheUnavailable ? 'Selected scope unavailable' : (compressionVsCacheNet >= 0 ? 'Net positive' : 'Net negative')"></div>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-emerald-300/75">Saved by Compression</div>
-                                <div data-testid="cvc-saved-value" class="mt-2 text-3xl font-light text-emerald-50" x-text="formatNumber(scopeCompressionVsCacheSaved)"></div>
-                                <div class="mt-1 text-xs text-gray-500">tokens removed before send</div>
+                                <div data-testid="cvc-saved-value" class="mt-2 text-3xl font-light text-emerald-50" x-text="scopeCacheUnavailable ? 'Unavailable' : formatNumber(scopeCompressionVsCacheSaved)"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="scopeCacheUnavailable ? 'Unavailable for selected scope' : 'tokens removed before send'"></div>
                             </div>
                             <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-red-300/75">Lost to Cache Busts</div>
-                                <div data-testid="cvc-bust-value" class="mt-2 text-3xl font-light text-red-50" x-text="formatNumber(scopeCompressionVsCacheBustTokens)"></div>
-                                <div class="mt-1 text-xs text-gray-500" x-text="formatNumber(scopeCompressionVsCacheBustCount) + ' busts observed'"></div>
+                                <div data-testid="cvc-bust-value" class="mt-2 text-3xl font-light text-red-50" x-text="scopeCacheUnavailable ? 'Unavailable' : formatNumber(scopeCompressionVsCacheBustTokens)"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="scopeCacheUnavailable ? 'Unavailable for selected scope' : formatNumber(scopeCompressionVsCacheBustCount) + ' busts observed'"></div>
                             </div>
                             <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-gray-400">Net</div>
-                                <div data-testid="cvc-net-value" class="mt-2 text-3xl font-light" :class="compressionVsCacheNet >= 0 ? 'text-emerald-400' : 'text-red-400'" x-text="(compressionVsCacheNet >= 0 ? '+' : '-') + formatNumber(Math.abs(compressionVsCacheNet))"></div>
-                                <div class="mt-1 text-xs text-gray-500">saved minus bust losses</div>
+                                <div data-testid="cvc-net-value" class="mt-2 text-3xl font-light" :class="scopeCacheUnavailable ? 'text-gray-500' : (compressionVsCacheNet >= 0 ? 'text-emerald-400' : 'text-red-400')" x-text="scopeCacheUnavailable ? 'Unavailable' : ((compressionVsCacheNet >= 0 ? '+' : '-') + formatNumber(Math.abs(compressionVsCacheNet)))"></div>
+                                <div class="mt-1 text-xs text-gray-500" x-text="scopeCacheUnavailable ? 'Unavailable for selected scope' : 'saved minus bust losses'"></div>
                             </div>
                             <div class="rounded-2xl border border-white/8 bg-black/20 p-4">
                                 <div class="text-[11px] uppercase tracking-[0.18em] text-cyan-300/75">Prefix Freeze Net</div>
@@ -972,6 +981,7 @@
                             <div>
                                 <div class="text-xs text-gray-500 uppercase tracking-wide">Cache Miss Attribution</div>
                                 <div class="text-[11px] text-gray-600 mt-0.5">Why turns that expected a prompt-cache hit missed — TTL lapse (consider a longer TTL) vs the cacheable prefix changing</div>
+                                <div class="text-[11px] text-gray-600 mt-1">Current process only</div>
                             </div>
                             <div data-testid="miss-attr-headline" class="rounded-full border bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.18em]"
                                  :class="(missAttribution.ttl_expiry_pct || 0) >= (missAttribution.prefix_change_pct || 0) ? 'border-violet-400/25 text-violet-300/90' : 'border-amber-400/25 text-amber-300/90'"
@@ -1005,6 +1015,7 @@
                 <template x-if="Object.keys(stats.prefix_cache?.by_provider || {}).length > 0">
                     <div class="mt-4 border-t border-border pt-3">
                         <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">Per-Provider Breakdown</div>
+                        <div class="text-[11px] text-gray-600 mb-3">Current process only</div>
                         <div class="space-y-3">
                             <template x-for="[prov, pc] in Object.entries(stats.prefix_cache?.by_provider || {})" :key="prov">
                                 <div class="flex items-center justify-between">
@@ -2208,10 +2219,6 @@
                     return this.selectedScope?.cache || null;
                 },
 
-                get selectedScopeCodexWs() {
-                    return this.selectedScope?.codex_ws || null;
-                },
-
                 get scopeCompressionAvailable() {
                     if (!this.hasMetricScopes) return true;
                     const compression = this.selectedScopeCompression;
@@ -2228,14 +2235,25 @@
                     return Boolean(
                         cache
                         && typeof cache.cache_read_tokens === 'number'
+                        && typeof cache.cache_savings_usd === 'number'
                         && typeof cache.cache_write_tokens === 'number'
+                        && typeof cache.uncached_input_tokens === 'number'
+                        && typeof cache.hit_requests === 'number'
                         && typeof cache.hit_rate === 'number'
+                        && typeof cache.requests === 'number'
                         && typeof cache.bust_count === 'number'
+                        && typeof cache.bust_write_tokens === 'number'
+                        && typeof cache.cache_bust_count === 'number'
+                        && typeof cache.cache_bust_tokens_lost === 'number'
                     );
                 },
 
                 get scopeCacheUnavailable() {
                     return this.hasMetricScopes && !this.scopeCacheAvailable;
+                },
+
+                get legacyProcessCacheUnavailable() {
+                    return !this.hasMetricScopes && !this.cacheSessionActive;
                 },
 
                 get scopeFreshnessText() {
@@ -2253,8 +2271,22 @@
                     return this.selectedScopeLabel + ' · ' + this.scopeFreshnessText;
                 },
 
-                get scopeRequestTotal() {
-                    return this.selectedScopeRequests?.total ?? 0;
+                get scopeCacheStatusText() {
+                    if (this.hasMetricScopes) {
+                        return this.scopeCacheUnavailable
+                            ? 'Unavailable for selected scope'
+                            : this.scopeFreshnessBadge;
+                    }
+                    return this.cacheSessionActive
+                        ? 'Net savings: $' + this.formatCurrency(this.stats.prefix_cache?.totals?.net_savings_usd || 0)
+                        : 'no activity since restart';
+                },
+
+                get scopeCacheStatusClass() {
+                    if (this.hasMetricScopes) {
+                        return this.scopeCacheUnavailable ? 'text-gray-500' : 'text-emerald-400';
+                    }
+                    return this.cacheSessionActive ? 'text-emerald-400' : 'text-gray-500';
                 },
 
                 get scopeCompressionUsd() {
@@ -2273,18 +2305,7 @@
                     if (!this.hasMetricScopes) {
                         return this.cacheSessionActive || (this.stats.persistent_savings?.lifetime?.cache_read_tokens || 0) > 0;
                     }
-                    const scopes = this.stats.metric_scopes || {};
-                    return ['current_process', 'display_session', 'lifetime'].some((key) => {
-                        const cache = scopes[key]?.cache;
-                        return Boolean(
-                            cache
-                            && (
-                                (cache.requests || 0) > 0
-                                || (cache.cache_read_tokens || 0) > 0
-                                || (cache.cache_write_tokens || 0) > 0
-                            )
-                        );
-                    });
+                    return this.scopedCacheActive;
                 },
 
                 get scopedCacheActive() {
@@ -2345,25 +2366,14 @@
                     return this.selectedScopeCache?.bust_write_tokens ?? 0;
                 },
 
-                get hasScopedObservedTtlBuckets() {
-                    const buckets = this.hasMetricScopes
-                        ? (this.selectedScopeCache?.observed_ttl_buckets || {})
-                        : (this.stats.prefix_cache?.totals?.observed_ttl_buckets || {});
-                    return ((buckets['5m']?.tokens || 0) + (buckets['1h']?.tokens || 0)) > 0;
+                get processLocalCacheActive() {
+                    return (this.stats.prefix_cache?.totals?.requests || 0) > 0;
                 },
 
                 get scopedObservedTtlMix() {
                     return this.hasMetricScopes
                         ? (this.selectedScopeCache?.observed_ttl_mix || {})
                         : (this.stats.prefix_cache?.totals?.observed_ttl_mix || {});
-                },
-
-                get scopedObservedTtlHeadline() {
-                    const mix = this.scopedObservedTtlMix;
-                    const oneHour = mix['1h_pct'] || 0;
-                    const fiveMinute = mix['5m_pct'] || 0;
-                    if (oneHour === fiveMinute) return 'Balanced';
-                    return oneHour > fiveMinute ? '1h leaning' : '5m leaning';
                 },
 
                 get scopedObservedTtlWindowLabel() {
@@ -2718,7 +2728,9 @@
                     const t = this.hasMetricScopes
                         ? (this.selectedScopeCache || {})
                         : (this.stats.prefix_cache?.totals || {});
-                    const total = (t.cache_read_tokens || 0) + (t.cache_write_tokens || 0) + (t.uncached_input_tokens || 0);
+                    const total = this.hasMetricScopes
+                        ? ((t.cache_read_tokens || 0) + (t.cache_write_tokens || 0) + (t.uncached_input_tokens || 0))
+                        : ((t.cache_read_tokens || 0) + (t.cache_write_tokens || 0));
                     if (total === 0) return 0;
                     return Math.round((t.cache_read_tokens || 0) / total * 100);
                 },
@@ -2727,7 +2739,9 @@
                     const t = this.hasMetricScopes
                         ? (this.selectedScopeCache || {})
                         : (this.stats.prefix_cache?.totals || {});
-                    const total = (t.cache_read_tokens || 0) + (t.cache_write_tokens || 0) + (t.uncached_input_tokens || 0);
+                    const total = this.hasMetricScopes
+                        ? ((t.cache_read_tokens || 0) + (t.cache_write_tokens || 0) + (t.uncached_input_tokens || 0))
+                        : ((t.cache_read_tokens || 0) + (t.cache_write_tokens || 0));
                     if (total === 0) return 0;
                     return Math.round((t.cache_write_tokens || 0) / total * 100);
                 },
@@ -2788,8 +2802,13 @@
                     return pf.net_benefit_tokens ?? ((pf.tokens_preserved || 0) - (pf.compression_foregone_tokens || 0));
                 },
 
+                get hasProcessLocalPrefixFreeze() {
+                    const pf = this.stats.prefix_cache?.prefix_freeze || {};
+                    return (pf.tokens_preserved || 0) > 0 || (pf.compression_foregone_tokens || 0) > 0;
+                },
+
                 get hasCompressionVsCache() {
-                    if (this.hasMetricScopes) return this.hasScopedCompressionVsCache;
+                    if (this.hasMetricScopes) return this.hasScopedCompressionVsCache || this.hasProcessLocalPrefixFreeze;
                     const cvc = this.stats.prefix_cache?.compression_vs_cache || {};
                     const pf = this.stats.prefix_cache?.prefix_freeze || {};
                     return (cvc.tokens_saved_by_compression || 0) > 0
