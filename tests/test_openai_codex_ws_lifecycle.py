@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -765,16 +764,6 @@ async def test_ws_session_metrics_include_dashboard_performance_timings():
 
 @pytest.mark.asyncio
 async def test_ws_multi_turn_request_ids_are_unique():
-    repro_path = (
-        Path(__file__).resolve().parents[2]
-        / ".claude"
-        / "pr-sweep"
-        / "headroom-PR-TARGET-310-REPRO.txt"
-    )
-    repro_lines = repro_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(repro_lines) == 3
-    assert len({line.rsplit("=", 1)[-1] for line in repro_lines}) == 1
-
     upstream_events = [
         json.dumps({"type": "response.created", "response": {"id": "r_1"}}),
         json.dumps(
