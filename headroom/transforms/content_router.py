@@ -1188,6 +1188,17 @@ class ContentRouterConfig:
     search_group_by_file: bool = False
 
 
+# Domain routing: per-content-type bias multipliers for the kompress ML compressor.
+# Derived from eval_domain_routing.py (ultrawhale/scripts) on kompress-v4 with 20
+# samples per domain; threshold: mk_survival >= 0.95.
+# Values < 1.0 = more aggressive (keep fewer tokens); > 1.0 = more conservative.
+_DOMAIN_BIAS_MULTIPLIERS: dict[ContentType, float] = {
+    ContentType.BUILD_OUTPUT: 0.50,  # error/build traces: 2.15x ratio, 96.8% mk survival
+    ContentType.SOURCE_CODE: 0.50,  # file reads: 1.99x ratio, 96.8% mk survival
+    ContentType.SEARCH_RESULTS: 0.70,  # search output: 1.45x ratio, 98.9% mk survival
+}
+
+
 class ContentRouter(Transform):
     """Intelligent router that selects optimal compression strategy.
 
@@ -1539,6 +1550,13 @@ class ContentRouter(Transform):
                         else "content_detection"
                     ),
                 )
+
+            # Domain routing: adjust bias based on detected content type.
+            # Only applied when content type was detected (not force_kompress path).
+            if not force_kompress:
+                domain_mult = _DOMAIN_BIAS_MULTIPLIERS.get(detection.content_type, 1.0)
+                if domain_mult != 1.0:
+                    bias = bias * domain_mult
 
             if strategy == CompressionStrategy.MIXED:
                 result = self._compress_mixed(content, context, question, bias=bias)
@@ -3563,6 +3581,13 @@ class ContentRouter(Transform):
                 # Look up tool-specific compression bias for OpenAI tool messages
                 tool_name = tool_name_map.get(tool_call_id, "")
                 bias = self._get_tool_bias(tool_name) if tool_name else 1.0
+                # "none" profile: bias=inf sentinel → skip compression for this tool
+                if math.isinf(bias):
+                    result_slots[i] = message
+                    transforms_applied.append("router:protected:tool_profile_none")
+                    route_counts.setdefault("tool_profile_none", 0)
+                    route_counts["tool_profile_none"] += 1
+                    continue
 
                 # Bash-search lossless pre-empt: a read-only search (grep/rg/git
                 # grep) run via a shell tool yields byte-losslessly foldable
@@ -4412,6 +4437,14 @@ class ContentRouter(Transform):
                 # Look up tool-specific compression bias
                 tool_name = (tool_name_map or {}).get(tool_use_id, "")
                 bias = self._get_tool_bias(tool_name) if tool_name else 1.0
+                # "none" profile: bias=inf sentinel → skip compression for this tool
+                if math.isinf(bias):
+                    new_blocks.append(block)
+                    transforms_applied.append("router:protected:tool_profile_none")
+                    if route_counts is not None:
+                        route_counts.setdefault("tool_profile_none", 0)
+                        route_counts["tool_profile_none"] += 1
+                    continue
 
                 # Enrich the relevance query with the triggering tool call's
                 # args (grep pattern, read path, …) — the sharpest, per-output
