@@ -8,6 +8,7 @@ from headroom.install.runtime import resolve_headroom_command
 
 from .base import MCPRegistrar, RegisterResult, RegisterStatus, ServerSpec
 from .claude import ClaudeRegistrar
+from .codebuddy import CodeBuddyRegistrar
 from .codex import CodexRegistrar
 from .opencode import OpencodeRegistrar
 
@@ -20,7 +21,7 @@ def get_all_registrars() -> list[MCPRegistrar]:
 
     The list grows as we add adapters for Cursor, Continue, Cline, etc.
     """
-    return [ClaudeRegistrar(), CodexRegistrar(), OpencodeRegistrar()]
+    return [ClaudeRegistrar(), CodeBuddyRegistrar(), CodexRegistrar(), OpencodeRegistrar()]
 
 
 def build_headroom_spec(proxy_url: str = DEFAULT_PROXY_URL) -> ServerSpec:
