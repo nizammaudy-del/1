@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 HEADROOM_SAVINGS_PATH_ENV_VAR = _paths.HEADROOM_SAVINGS_PATH_ENV
 DEFAULT_SAVINGS_DIR = ".headroom"
 DEFAULT_SAVINGS_FILE = "proxy_savings.json"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_MAX_HISTORY_POINTS = 5000
 DEFAULT_MAX_PROJECTS = 50
 DEFAULT_MAX_HISTORY_AGE_DAYS = 365
@@ -363,6 +363,157 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
     }
 
 
+def _normalize_int_map(raw: Any) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, int] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            continue
+        cleaned = key.strip()
+        if not cleaned:
+            continue
+        result[cleaned] = _coerce_int(value)
+    return result
+
+
+def _empty_scope_cache() -> dict[str, Any]:
+    return {
+        "cache_write_tokens": 0,
+        "cache_write_5m_tokens": 0,
+        "cache_write_1h_tokens": 0,
+        "cache_write_5m_requests": 0,
+        "cache_write_1h_requests": 0,
+        "uncached_input_tokens": 0,
+        "requests": 0,
+        "hit_requests": 0,
+        "bust_count": 0,
+        "bust_write_tokens": 0,
+        "cache_bust_count": 0,
+        "cache_bust_tokens_lost": 0,
+    }
+
+
+def _normalize_scope_cache(raw: Any) -> dict[str, Any]:
+    normalized = _empty_scope_cache()
+    if not isinstance(raw, dict):
+        return normalized
+    for key in normalized:
+        normalized[key] = _coerce_int(raw.get(key))
+    return normalized
+
+
+def _empty_scope_compression() -> dict[str, Any]:
+    return {
+        "compressions_by_strategy": {},
+        "tokens_saved_by_strategy": {},
+    }
+
+
+def _normalize_scope_compression(raw: Any) -> dict[str, Any]:
+    normalized = _empty_scope_compression()
+    if not isinstance(raw, dict):
+        return normalized
+    normalized["compressions_by_strategy"] = _normalize_int_map(raw.get("compressions_by_strategy"))
+    normalized["tokens_saved_by_strategy"] = _normalize_int_map(raw.get("tokens_saved_by_strategy"))
+    return normalized
+
+
+def _empty_scope_codex_ws() -> dict[str, Any]:
+    return {
+        "units_total": 0,
+        "units_modified_total": 0,
+        "units_to_kompress_total": 0,
+        "units_kompress_attempted_total": 0,
+        "units_by_strategy": {},
+        "units_by_category": {},
+        "units_by_content_type": {},
+        "units_by_text_shape": {},
+        "unit_elapsed_ms_sum": 0.0,
+        "unit_elapsed_ms_max": 0.0,
+        "unit_bytes_sum": 0,
+        "unit_tokens_before_sum": 0,
+        "unit_tokens_after_sum": 0,
+        "unit_tokens_saved_sum": 0,
+        "frames_attempted_total": 0,
+        "frames_compressed_total": 0,
+        "frames_failed_total": 0,
+        "frames_to_kompress_total": 0,
+        "frames_kompress_attempted_total": 0,
+        "frame_elapsed_ms_sum": 0.0,
+        "frame_elapsed_ms_max": 0.0,
+        "frame_bytes_before_sum": 0,
+        "frame_bytes_after_sum": 0,
+        "frame_attempted_tokens_sum": 0,
+        "frame_tokens_saved_sum": 0,
+    }
+
+
+def _normalize_scope_codex_ws(raw: Any) -> dict[str, Any]:
+    normalized = _empty_scope_codex_ws()
+    if not isinstance(raw, dict):
+        return normalized
+
+    int_fields = {
+        "units_total",
+        "units_modified_total",
+        "units_to_kompress_total",
+        "units_kompress_attempted_total",
+        "unit_bytes_sum",
+        "unit_tokens_before_sum",
+        "unit_tokens_after_sum",
+        "unit_tokens_saved_sum",
+        "frames_attempted_total",
+        "frames_compressed_total",
+        "frames_failed_total",
+        "frames_to_kompress_total",
+        "frames_kompress_attempted_total",
+        "frame_bytes_before_sum",
+        "frame_bytes_after_sum",
+        "frame_attempted_tokens_sum",
+        "frame_tokens_saved_sum",
+    }
+    float_fields = {
+        "unit_elapsed_ms_sum",
+        "unit_elapsed_ms_max",
+        "frame_elapsed_ms_sum",
+        "frame_elapsed_ms_max",
+    }
+    dict_fields = {
+        "units_by_strategy",
+        "units_by_category",
+        "units_by_content_type",
+        "units_by_text_shape",
+    }
+
+    for key in int_fields:
+        normalized[key] = _coerce_int(raw.get(key))
+    for key in float_fields:
+        normalized[key] = round(_coerce_float(raw.get(key)), 6)
+    for key in dict_fields:
+        normalized[key] = _normalize_int_map(raw.get(key))
+
+    return normalized
+
+
+def _empty_metric_aggregates() -> dict[str, Any]:
+    return {
+        "cache": _empty_scope_cache(),
+        "compression": _empty_scope_compression(),
+        "codex_ws": _empty_scope_codex_ws(),
+    }
+
+
+def _normalize_metric_aggregates(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return _empty_metric_aggregates()
+    return {
+        "cache": _normalize_scope_cache(raw.get("cache")),
+        "compression": _normalize_scope_compression(raw.get("compression")),
+        "codex_ws": _normalize_scope_codex_ws(raw.get("codex_ws")),
+    }
+
+
 def _empty_display_session() -> dict[str, Any]:
     return {
         "requests": 0,
@@ -375,6 +526,7 @@ def _empty_display_session() -> dict[str, Any]:
         "savings_percent": 0.0,
         "started_at": None,
         "last_activity_at": None,
+        "aggregates": _empty_metric_aggregates(),
     }
 
 
@@ -492,6 +644,7 @@ def _normalize_display_session(entry: Any) -> dict[str, Any]:
         "savings_percent": savings_percent,
         "started_at": _to_utc_iso(started_at),
         "last_activity_at": _to_utc_iso(last_activity_at),
+        "aggregates": _normalize_metric_aggregates(entry.get("aggregates")),
     }
 
 
@@ -536,12 +689,35 @@ class SavingsTracker:
         # the FULL state — a skipped save just means the next one is complete.
         self._save_flush_every = max(_coerce_int(save_flush_every, 1), 1)
         self._since_save = 0
+        self._aggregate_dirty = False
         self._lock = threading.Lock()
         self._state = self._load_state()
 
     @property
     def storage_path(self) -> str:
         return str(self._path)
+
+    def _touch_state_locked(self, timestamp_dt: datetime) -> None:
+        self._state["updated_at"] = _to_utc_iso(timestamp_dt)
+
+    def _mark_aggregate_dirty_locked(self, timestamp_dt: datetime) -> None:
+        self._touch_state_locked(timestamp_dt)
+        self._aggregate_dirty = True
+
+    def _cache_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
+        return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
+            "cache", _empty_scope_cache()
+        )
+
+    def _compression_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
+        return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
+            "compression", _empty_scope_compression()
+        )
+
+    def _codex_ws_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
+        return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
+            "codex_ws", _empty_scope_codex_ws()
+        )
 
     def record_compression_savings(
         self,
@@ -609,6 +785,7 @@ class SavingsTracker:
                 }
             )
             self._trim_history_locked(reference_time=timestamp_dt)
+            self._touch_state_locked(timestamp_dt)
             self._maybe_save_locked()
             return True
 
@@ -622,7 +799,15 @@ class SavingsTracker:
         project: str | None = None,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        cache_write_5m_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
+        cache_write_5m_requests: int = 0,
+        cache_write_1h_requests: int = 0,
         uncached_input_tokens: int = 0,
+        cache_requests_delta: int = 0,
+        cache_hit_requests_delta: int = 0,
+        cache_provider_bust_count_delta: int = 0,
+        cache_provider_bust_write_tokens_delta: int = 0,
         total_input_tokens: int | None = None,
         total_input_cost_usd: float | None = None,
         timestamp: datetime | str | None = None,
@@ -643,6 +828,16 @@ class SavingsTracker:
         delta_savings_usd = _estimate_compression_savings_usd(model, delta_tokens_saved)
         delta_cache_read_tokens = _coerce_int(cache_read_tokens)
         delta_cache_savings_usd = _estimate_cache_savings_usd(model, delta_cache_read_tokens)
+        delta_cache_write_tokens = _coerce_int(cache_write_tokens)
+        delta_cache_write_5m_tokens = _coerce_int(cache_write_5m_tokens)
+        delta_cache_write_1h_tokens = _coerce_int(cache_write_1h_tokens)
+        delta_cache_write_5m_requests = _coerce_int(cache_write_5m_requests)
+        delta_cache_write_1h_requests = _coerce_int(cache_write_1h_requests)
+        delta_uncached_input_tokens = _coerce_int(uncached_input_tokens)
+        delta_cache_requests = _coerce_int(cache_requests_delta)
+        delta_cache_hit_requests = _coerce_int(cache_hit_requests_delta)
+        delta_cache_provider_busts = _coerce_int(cache_provider_bust_count_delta)
+        delta_cache_provider_bust_write_tokens = _coerce_int(cache_provider_bust_write_tokens_delta)
         delta_input_cost_usd = _estimate_input_cost_usd(
             model,
             delta_input_tokens,
@@ -695,6 +890,17 @@ class SavingsTracker:
             )
             lifetime["total_input_tokens"] = next_total_input_tokens
             lifetime["total_input_cost_usd"] = next_total_input_cost_usd
+            lifetime_cache = self._cache_aggregate_locked(lifetime)
+            lifetime_cache["cache_write_tokens"] += delta_cache_write_tokens
+            lifetime_cache["cache_write_5m_tokens"] += delta_cache_write_5m_tokens
+            lifetime_cache["cache_write_1h_tokens"] += delta_cache_write_1h_tokens
+            lifetime_cache["cache_write_5m_requests"] += delta_cache_write_5m_requests
+            lifetime_cache["cache_write_1h_requests"] += delta_cache_write_1h_requests
+            lifetime_cache["uncached_input_tokens"] += delta_uncached_input_tokens
+            lifetime_cache["requests"] += delta_cache_requests
+            lifetime_cache["hit_requests"] += delta_cache_hit_requests
+            lifetime_cache["bust_count"] += delta_cache_provider_busts
+            lifetime_cache["bust_write_tokens"] += delta_cache_provider_bust_write_tokens
 
             session = self._state["display_session"]
             last_activity = _parse_timestamp(session.get("last_activity_at"))
@@ -730,6 +936,17 @@ class SavingsTracker:
             session["last_activity_at"] = _to_utc_iso(timestamp_dt)
             if session.get("started_at") is None:
                 session["started_at"] = session["last_activity_at"]
+            session_cache = self._cache_aggregate_locked(session)
+            session_cache["cache_write_tokens"] += delta_cache_write_tokens
+            session_cache["cache_write_5m_tokens"] += delta_cache_write_5m_tokens
+            session_cache["cache_write_1h_tokens"] += delta_cache_write_1h_tokens
+            session_cache["cache_write_5m_requests"] += delta_cache_write_5m_requests
+            session_cache["cache_write_1h_requests"] += delta_cache_write_1h_requests
+            session_cache["uncached_input_tokens"] += delta_uncached_input_tokens
+            session_cache["requests"] += delta_cache_requests
+            session_cache["hit_requests"] += delta_cache_hit_requests
+            session_cache["bust_count"] += delta_cache_provider_busts
+            session_cache["bust_write_tokens"] += delta_cache_provider_bust_write_tokens
 
             self._record_by_model_locked(
                 model,
@@ -764,7 +981,195 @@ class SavingsTracker:
                 )
                 self._trim_history_locked(reference_time=timestamp_dt)
 
+            self._touch_state_locked(timestamp_dt)
             self._maybe_save_locked()
+            return True
+
+    def record_compression(
+        self,
+        *,
+        strategy: str,
+        original_tokens: int,
+        compressed_tokens: int,
+        timestamp: datetime | str | None = None,
+    ) -> bool:
+        saved = max(_coerce_int(original_tokens) - _coerce_int(compressed_tokens), 0)
+        if saved <= 0:
+            return False
+
+        timestamp_dt = (
+            _parse_timestamp(timestamp)
+            if isinstance(timestamp, str)
+            else timestamp.astimezone(timezone.utc)
+            if isinstance(timestamp, datetime)
+            else _utc_now()
+        )
+        if timestamp_dt is None:
+            timestamp_dt = _utc_now()
+
+        strategy_key = str(strategy or "unknown").strip() or "unknown"
+        with self._lock:
+            for scope in (self._state["lifetime"], self._state["display_session"]):
+                compression = self._compression_aggregate_locked(scope)
+                compression["compressions_by_strategy"][strategy_key] = (
+                    compression["compressions_by_strategy"].get(strategy_key, 0) + 1
+                )
+                compression["tokens_saved_by_strategy"][strategy_key] = (
+                    compression["tokens_saved_by_strategy"].get(strategy_key, 0) + saved
+                )
+            self._mark_aggregate_dirty_locked(timestamp_dt)
+            return True
+
+    def record_cache_bust(
+        self,
+        *,
+        tokens_lost: int,
+        timestamp: datetime | str | None = None,
+    ) -> bool:
+        delta_tokens_lost = _coerce_int(tokens_lost)
+        if delta_tokens_lost <= 0:
+            return False
+
+        timestamp_dt = (
+            _parse_timestamp(timestamp)
+            if isinstance(timestamp, str)
+            else timestamp.astimezone(timezone.utc)
+            if isinstance(timestamp, datetime)
+            else _utc_now()
+        )
+        if timestamp_dt is None:
+            timestamp_dt = _utc_now()
+
+        with self._lock:
+            for scope in (self._state["lifetime"], self._state["display_session"]):
+                cache = self._cache_aggregate_locked(scope)
+                cache["cache_bust_count"] += 1
+                cache["cache_bust_tokens_lost"] += delta_tokens_lost
+            self._mark_aggregate_dirty_locked(timestamp_dt)
+            return True
+
+    def record_codex_ws_unit(
+        self,
+        *,
+        strategy: str,
+        reason_category: str,
+        elapsed_ms: float,
+        text_bytes: int,
+        tokens_before: int,
+        tokens_after: int,
+        tokens_saved: int,
+        modified: bool,
+        strategy_chain: list[str] | None = None,
+        content_type: str = "unknown",
+        text_shape: str = "unknown",
+        timestamp: datetime | str | None = None,
+    ) -> bool:
+        timestamp_dt = (
+            _parse_timestamp(timestamp)
+            if isinstance(timestamp, str)
+            else timestamp.astimezone(timezone.utc)
+            if isinstance(timestamp, datetime)
+            else _utc_now()
+        )
+        if timestamp_dt is None:
+            timestamp_dt = _utc_now()
+
+        strategy_key = str(strategy or "unknown").strip() or "unknown"
+        category_key = str(reason_category or "unknown").strip() or "unknown"
+        content_type_key = str(content_type or "unknown").strip() or "unknown"
+        text_shape_key = str(text_shape or "unknown").strip() or "unknown"
+        chain = strategy_chain or []
+
+        with self._lock:
+            for scope in (self._state["lifetime"], self._state["display_session"]):
+                codex_ws = self._codex_ws_aggregate_locked(scope)
+                codex_ws["units_total"] += 1
+                codex_ws["units_by_strategy"][strategy_key] = (
+                    codex_ws["units_by_strategy"].get(strategy_key, 0) + 1
+                )
+                codex_ws["units_by_category"][category_key] = (
+                    codex_ws["units_by_category"].get(category_key, 0) + 1
+                )
+                codex_ws["units_by_content_type"][content_type_key] = (
+                    codex_ws["units_by_content_type"].get(content_type_key, 0) + 1
+                )
+                codex_ws["units_by_text_shape"][text_shape_key] = (
+                    codex_ws["units_by_text_shape"].get(text_shape_key, 0) + 1
+                )
+                if modified:
+                    codex_ws["units_modified_total"] += 1
+                if strategy_key == "kompress":
+                    codex_ws["units_to_kompress_total"] += 1
+                if "kompress" in chain or strategy_key == "kompress":
+                    codex_ws["units_kompress_attempted_total"] += 1
+                elapsed_value = max(0.0, float(elapsed_ms))
+                codex_ws["unit_elapsed_ms_sum"] = round(
+                    codex_ws["unit_elapsed_ms_sum"] + elapsed_value,
+                    6,
+                )
+                codex_ws["unit_elapsed_ms_max"] = max(
+                    codex_ws["unit_elapsed_ms_max"],
+                    elapsed_value,
+                )
+                codex_ws["unit_bytes_sum"] += max(0, int(text_bytes))
+                codex_ws["unit_tokens_before_sum"] += max(0, int(tokens_before))
+                codex_ws["unit_tokens_after_sum"] += max(0, int(tokens_after))
+                codex_ws["unit_tokens_saved_sum"] += max(0, int(tokens_saved))
+            self._mark_aggregate_dirty_locked(timestamp_dt)
+            return True
+
+    def record_codex_ws_frame(
+        self,
+        *,
+        elapsed_ms: float,
+        bytes_before: int,
+        bytes_after: int = 0,
+        attempted_tokens: int = 0,
+        tokens_saved: int = 0,
+        modified: bool = False,
+        failed: bool = False,
+        strategy_chain: list[str] | None = None,
+        final_strategies: list[str] | None = None,
+        timestamp: datetime | str | None = None,
+    ) -> bool:
+        timestamp_dt = (
+            _parse_timestamp(timestamp)
+            if isinstance(timestamp, str)
+            else timestamp.astimezone(timezone.utc)
+            if isinstance(timestamp, datetime)
+            else _utc_now()
+        )
+        if timestamp_dt is None:
+            timestamp_dt = _utc_now()
+
+        chain = strategy_chain or []
+        strategies = final_strategies or []
+        with self._lock:
+            for scope in (self._state["lifetime"], self._state["display_session"]):
+                codex_ws = self._codex_ws_aggregate_locked(scope)
+                codex_ws["frames_attempted_total"] += 1
+                if modified:
+                    codex_ws["frames_compressed_total"] += 1
+                if failed:
+                    codex_ws["frames_failed_total"] += 1
+                if "kompress" in strategies:
+                    codex_ws["frames_to_kompress_total"] += 1
+                if "kompress" in chain or "kompress" in strategies:
+                    codex_ws["frames_kompress_attempted_total"] += 1
+                elapsed_value = max(0.0, float(elapsed_ms))
+                codex_ws["frame_elapsed_ms_sum"] = round(
+                    codex_ws["frame_elapsed_ms_sum"] + elapsed_value,
+                    6,
+                )
+                codex_ws["frame_elapsed_ms_max"] = max(
+                    codex_ws["frame_elapsed_ms_max"],
+                    elapsed_value,
+                )
+                codex_ws["frame_bytes_before_sum"] += max(0, int(bytes_before))
+                codex_ws["frame_bytes_after_sum"] += max(0, int(bytes_after))
+                codex_ws["frame_attempted_tokens_sum"] += max(0, int(attempted_tokens))
+                codex_ws["frame_tokens_saved_sum"] += max(0, int(tokens_saved))
+            self._mark_aggregate_dirty_locked(timestamp_dt)
             return True
 
     def _record_project_locked(
@@ -880,6 +1285,7 @@ class SavingsTracker:
         snapshot = self.snapshot()
         return {
             "schema_version": snapshot["schema_version"],
+            "updated_at": snapshot["updated_at"],
             "storage_path": snapshot["storage_path"],
             "lifetime": snapshot["lifetime"],
             "display_session": snapshot["display_session"],
@@ -905,6 +1311,7 @@ class SavingsTracker:
         history = self._history_for_response(raw_history, mode=history_mode)
         return {
             "schema_version": snapshot["schema_version"],
+            "updated_at": snapshot["updated_at"],
             "generated_at": _to_utc_iso(_utc_now()),
             "storage_path": snapshot["storage_path"],
             "lifetime": snapshot["lifetime"],
@@ -971,6 +1378,7 @@ class SavingsTracker:
             history = [dict(item) for item in self._state["history"]]
             return {
                 "schema_version": SCHEMA_VERSION,
+                "updated_at": self._state.get("updated_at"),
                 "storage_path": str(self._path),
                 "lifetime": dict(self._state["lifetime"]),
                 "display_session": self._display_session_snapshot_locked(),
@@ -990,6 +1398,7 @@ class SavingsTracker:
     def _default_state(self) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
+            "updated_at": None,
             "lifetime": {
                 "requests": 0,
                 "tokens_saved": 0,
@@ -998,6 +1407,7 @@ class SavingsTracker:
                 "cache_savings_usd": 0.0,
                 "total_input_tokens": 0,
                 "total_input_cost_usd": 0.0,
+                "aggregates": _empty_metric_aggregates(),
             },
             "display_session": _empty_display_session(),
             "history": [],
@@ -1070,6 +1480,11 @@ class SavingsTracker:
 
         state = {
             "schema_version": SCHEMA_VERSION,
+            "updated_at": (
+                _to_utc_iso(updated_at)
+                if (updated_at := _parse_timestamp(raw.get("updated_at"))) is not None
+                else None
+            ),
             "lifetime": {
                 "requests": lifetime_requests,
                 "tokens_saved": lifetime_tokens_saved,
@@ -1078,6 +1493,9 @@ class SavingsTracker:
                 "cache_savings_usd": round(lifetime_cache_savings_usd, 6),
                 "total_input_tokens": lifetime_input_tokens,
                 "total_input_cost_usd": round(lifetime_input_cost_usd, 6),
+                "aggregates": _normalize_metric_aggregates(
+                    lifetime_raw.get("aggregates") if isinstance(lifetime_raw, dict) else None
+                ),
             },
             "display_session": _normalize_display_session(raw.get("display_session")),
             "history": normalized_history,
@@ -1173,7 +1591,7 @@ class SavingsTracker:
         recent requests. No-op when nothing is buffered.
         """
         with self._lock:
-            if self._since_save > 0:
+            if self._since_save > 0 or self._aggregate_dirty:
                 self._save_locked()
 
     def _maybe_save_locked(self) -> None:
@@ -1194,6 +1612,7 @@ class SavingsTracker:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "schema_version": SCHEMA_VERSION,
+                "updated_at": self._state.get("updated_at"),
                 "lifetime": self._state["lifetime"],
                 "display_session": self._state["display_session"],
                 "history": self._state["history"],
@@ -1239,6 +1658,7 @@ class SavingsTracker:
             # Reset only after a durable write. A failed save leaves the counter
             # untouched so the next record retries instead of waiting a full window.
             self._since_save = 0
+            self._aggregate_dirty = False
         except OSError as e:
             logger.warning("Failed to save savings history to %s: %s", self._path, e)
 

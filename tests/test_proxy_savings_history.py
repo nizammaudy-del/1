@@ -116,7 +116,7 @@ def test_savings_tracker_sanitizes_legacy_state_and_applies_retention(tmp_path):
     )
     snapshot = tracker.snapshot()
 
-    assert snapshot["schema_version"] == 4
+    assert snapshot["schema_version"] == 5
     assert snapshot["lifetime"] == {
         "requests": 0,
         "tokens_saved": 30,
@@ -125,6 +125,7 @@ def test_savings_tracker_sanitizes_legacy_state_and_applies_retention(tmp_path):
         "cache_savings_usd": 0.0,
         "total_input_tokens": 0,
         "total_input_cost_usd": 0.0,
+        "aggregates": savings_tracker_module._empty_metric_aggregates(),
     }
     assert snapshot["display_session"] == savings_tracker_module._empty_display_session()
     assert snapshot["history"] == [
@@ -160,6 +161,7 @@ def test_non_dict_savings_state_resets_to_default(tmp_path):
         "cache_savings_usd": 0.0,
         "total_input_tokens": 0,
         "total_input_cost_usd": 0.0,
+        "aggregates": savings_tracker_module._empty_metric_aggregates(),
     }
     assert snapshot["display_session"] == savings_tracker_module._empty_display_session()
     assert snapshot["history"] == []
@@ -299,6 +301,8 @@ def test_savings_tracker_save_does_not_flock_target_inode_before_replace(tmp_pat
 
 
 def test_savings_tracker_save_fsyncs_parent_directory(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("directory fsync is unsupported on Windows")
     # The file fsync persists contents, but the rename isn't durable until the
     # parent directory is fsynced too — without it a crash can drop the last
     # save. Assert a directory fd is fsynced on save. (FP4b)
@@ -628,6 +632,7 @@ def test_display_session_rolls_after_inactivity_and_counts_zero_savings_requests
         "savings_percent": pytest.approx(9.09),
         "started_at": "2026-03-27T09:00:00Z",
         "last_activity_at": "2026-03-27T09:10:00Z",
+        "aggregates": savings_tracker_module._empty_metric_aggregates(),
     }
 
     monkeypatch.setattr(
@@ -662,6 +667,7 @@ def test_display_session_rolls_after_inactivity_and_counts_zero_savings_requests
         "savings_percent": pytest.approx(9.09),
         "started_at": "2026-03-27T10:05:00Z",
         "last_activity_at": "2026-03-27T10:05:00Z",
+        "aggregates": savings_tracker_module._empty_metric_aggregates(),
     }
 
 
@@ -1087,7 +1093,7 @@ def test_stats_history_persists_across_restarts_and_stats_stays_compatible(tmp_p
         history = client.get("/stats-history")
         assert history.status_code == 200
         history_data = history.json()
-        assert history_data["schema_version"] == 4
+        assert history_data["schema_version"] == 5
         assert history_data["storage_path"] == str(savings_path)
         assert history_data["lifetime"]["tokens_saved"] == 40
         assert history_data["lifetime"]["total_input_tokens"] == 120
@@ -1525,10 +1531,13 @@ def test_savings_tracker_loads_non_finite_persisted_state_without_crashing(tmp_p
 
     # Non-finite fields fail open to safe defaults, not crash or NaN.
     for key, value in lifetime.items():
+        if key == "aggregates":
+            continue
         assert isinstance(value, int | float)
         assert math.isfinite(value), f"{key} is non-finite: {value}"
     assert lifetime["tokens_saved"] == 0
     assert lifetime["total_input_tokens"] == 0
+    assert lifetime["aggregates"] == savings_tracker_module._empty_metric_aggregates()
 
 
 def test_cache_read_savings_accumulate_and_survive_restart(tmp_path, monkeypatch):
@@ -1645,7 +1654,7 @@ def test_v3_state_without_cache_fields_loads_clean_and_saves_v4(tmp_path):
         timestamp="2026-07-02T00:00:00Z",
     )
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 4
+    assert persisted["schema_version"] == 5
     assert persisted["lifetime"]["cache_read_tokens"] == 5
     assert persisted["lifetime"]["tokens_saved"] == 42181
 
