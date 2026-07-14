@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- **proxy:** each Codex `/v1/responses` WebSocket turn now gets a unique `request_id` in the request-log feed instead of reusing the session id. Duplicate ids made the dashboard's Alpine `x-for` `:key` collide and blank the entire Recent Requests table after Codex traffic; the feed now renders Codex turns like every other request ([#310](https://github.com/headroomlabs-ai/headroom/issues/310)).
 - **shared_context:** `SharedContext.put` no longer evicts an unrelated entry when it merely updates a key that is already cached at capacity — same defect class fixed for `SemanticCache` in [#2094](https://github.com/headroomlabs-ai/headroom/pull/2094).
 - **compress:** stop mutating the caller's `CompressConfig`. `compress(config=my_cfg, protect_recent=0, target_ratio=0.2)` used to write those kwargs onto `my_cfg`, so a shared per-agent config was silently rewritten by every request that overrode a single option.
 - **paths:** reject `.`, `..`, and NUL as plugin names so `plugin_config_dir` / `plugin_workspace_dir` cannot resolve outside the `plugins/` sandbox. Previously `plugin_config_dir("..")` returned the entire config root and `plugin_workspace_dir("..")` returned the workspace root (savings ledger, memory DB, license cache, logs).
