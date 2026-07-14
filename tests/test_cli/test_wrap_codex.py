@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import tomllib
 from click.testing import CliRunner
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised in the Python 3.10 test job
+    import tomli as tomllib
 
 from headroom.cli import wrap as wrap_mod
 from headroom.cli.main import main
@@ -838,8 +843,6 @@ class TestInjectAvoidsDuplicateTopLevelKeys:
     def test_inject_does_not_create_duplicate_model_provider(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        import tomllib  # Python 3.11+ stdlib
-
         _set_test_home(monkeypatch, tmp_path)
         config_dir = tmp_path / ".codex"
         config_dir.mkdir()
@@ -901,8 +904,6 @@ class TestInjectAvoidsDuplicateTopLevelKeys:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Idempotent re-wrap on a config that already has top-level keys."""
-        import tomllib
-
         _set_test_home(monkeypatch, tmp_path)
         config_dir = tmp_path / ".codex"
         config_dir.mkdir()
@@ -937,8 +938,6 @@ class TestInjectAvoidsDuplicateTopLevelKeys:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Existing headroom provider table must not create duplicate TOML keys."""
-        import tomllib  # Python 3.11+ stdlib
-
         _set_test_home(monkeypatch, tmp_path)
         config_dir = tmp_path / ".codex"
         config_dir.mkdir()
@@ -1174,6 +1173,102 @@ def test_codex_session_launch_settings_preserve_custom_provider_identity(
     assert '"model_providers"."company"."base_url"="http://127.0.0.1:9898/v1"' in args
     assert env[wrap_mod._UPSTREAM_BASE_URL_ENV_VAR] == "https://api.example.test/v1"
     assert config_file.read_text(encoding="utf-8") == original_config
+
+
+def test_wrap_codex_rejects_custom_provider_without_upstream_base_url(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_test_home(monkeypatch, tmp_path)
+    codex_home = tmp_path / "custom-codex-home"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    (codex_home / "config.toml").write_text(
+        'model_provider = "company"\n[model_providers.company]\nname = "Company"\n',
+        encoding="utf-8",
+    )
+
+    def fake_launch(**kwargs: object) -> None:
+        configure_launch = kwargs["configure_launch"]
+        assert callable(configure_launch)
+        configure_launch(
+            8787,
+            kwargs["args"],
+            kwargs["env"],
+            kwargs["env_vars_display"],
+        )
+
+    with patch("headroom.cli.wrap._ensure_rtk_binary", return_value=None):
+        with patch(
+            "headroom.cli.wrap.shutil.which",
+            side_effect=lambda cmd: "/fake/codex" if cmd == "codex" else None,
+        ):
+            with patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch):
+                result = runner.invoke(
+                    main,
+                    [
+                        "wrap",
+                        "codex",
+                        "--port",
+                        "8787",
+                        "--no-rtk",
+                        "--no-mcp",
+                        "--no-tokensave",
+                        "--no-serena",
+                    ],
+                )
+
+    assert result.exit_code != 0
+    assert "custom provider 'company' has no upstream base_url" in result.output
+
+
+def test_wrap_codex_routes_model_provider_selected_by_config_argument(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_test_home(monkeypatch, tmp_path)
+    codex_home = tmp_path / "custom-codex-home"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(wrap_mod, "_project_name_from_cwd", lambda: None)
+    (codex_home / "config.toml").write_text(
+        '[model_providers.company]\nbase_url = "https://api.example.test/v1"\n',
+        encoding="utf-8",
+    )
+    configured_env: dict[str, str] = {}
+
+    def fake_launch(**kwargs: object) -> None:
+        configure_launch = kwargs["configure_launch"]
+        assert callable(configure_launch)
+        _, env, _ = configure_launch(
+            8787,
+            kwargs["args"],
+            kwargs["env"],
+            kwargs["env_vars_display"],
+        )
+        configured_env.update(env)
+
+    with patch("headroom.cli.wrap._ensure_rtk_binary", return_value=None):
+        with patch(
+            "headroom.cli.wrap.shutil.which",
+            side_effect=lambda cmd: "/fake/codex" if cmd == "codex" else None,
+        ):
+            with patch("headroom.cli.wrap._launch_tool", side_effect=fake_launch):
+                result = runner.invoke(
+                    main,
+                    [
+                        "wrap",
+                        "codex",
+                        "--no-rtk",
+                        "--no-mcp",
+                        "--no-tokensave",
+                        "--no-serena",
+                        "--",
+                        "--config",
+                        'model_provider="company"',
+                    ],
+                )
+
+    assert result.exit_code == 0, result.output
+    assert configured_env[wrap_mod._UPSTREAM_BASE_URL_ENV_VAR] == ("https://api.example.test/v1")
 
 
 def test_wrap_codex_injects_rtk_globally_without_changing_project_agents(

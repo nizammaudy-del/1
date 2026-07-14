@@ -23,6 +23,11 @@ _RUNTIME_NAMES = {".DS_Store"}
 _RUNTIME_SUFFIXES = {".lock", ".sock", ".socket", "-shm", "-wal", "-journal"}
 
 
+def _latest_state_mtime_ns(home: Path) -> int:
+    timestamps = [entry.lstat().st_mtime_ns for entry in home.rglob("*") if not entry.is_dir()]
+    return max(timestamps, default=home.stat().st_mtime_ns)
+
+
 @dataclass
 class RecoveryReport:
     source: Path
@@ -39,9 +44,9 @@ def discover_dangling_homes(temp_root: Path | None = None) -> list[Path]:
     root = temp_root or Path(tempfile.gettempdir())
     candidates: list[Path] = []
     for path in root.glob(f"{_TEMP_HOME_PREFIX}*"):
-        if path.is_dir() and any(path.iterdir()):
+        if path.is_dir() and not path.is_symlink() and any(path.iterdir()):
             candidates.append(path)
-    return sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    return sorted(candidates, key=_latest_state_mtime_ns, reverse=True)
 
 
 def home_fingerprint(home: Path) -> str:
@@ -100,6 +105,8 @@ def _copy_home(source: Path, destination: Path, skipped: list[str]) -> None:
         elif entry.is_file():
             output.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(entry, output, follow_symlinks=False)
+        else:
+            skipped.append(str(relative))
     _secure_tree(destination)
 
 
@@ -120,13 +127,20 @@ def _new_backup_dir(target: Path) -> Path:
 
 
 def _clean_managed_codex_config(document: Any) -> None:
+    providers = document.get("model_providers")
+    headroom_provider = providers.get("headroom") if providers is not None else None
+    managed_routing = document.get("model_provider") == "headroom" or (
+        headroom_provider is not None
+        and str(headroom_provider.get("base_url", "")).startswith("http://127.0.0.1:")
+    )
     if document.get("model_provider") == "headroom":
         del document["model_provider"]
-    providers = document.get("model_providers")
     if providers is not None and "headroom" in providers:
         del providers["headroom"]
         if not providers:
             del document["model_providers"]
+    if managed_routing and str(document.get("openai_base_url", "")).startswith("http://127.0.0.1:"):
+        del document["openai_base_url"]
 
 
 def _merge_toml_table(target: Any, source: Any, *, source_wins: bool) -> None:
@@ -184,7 +198,10 @@ def _merge_jsonl(source: Path, target: Path, quarantine: Path, report: RecoveryR
     incoming = _read_jsonl(source, quarantine, report)
     merged = list(existing)
     seen = set(existing)
-    merged.extend(line for line in incoming if line not in seen and not seen.add(line))
+    for line in incoming:
+        if line not in seen:
+            seen.add(line)
+            merged.append(line)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("".join(f"{line}\n" for line in merged), encoding="utf-8")
 
@@ -209,6 +226,16 @@ def _database_schema(connection: sqlite3.Connection, schema: str) -> dict[str, s
     return dict(rows)
 
 
+def _database_schema_objects(
+    connection: sqlite3.Connection, schema: str
+) -> list[tuple[str, str, str, str]]:
+    return connection.execute(
+        f"SELECT type, name, tbl_name, sql FROM {_quote(schema)}.sqlite_master "
+        "WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL "
+        "ORDER BY type, name"
+    ).fetchall()
+
+
 def _table_columns(
     connection: sqlite3.Connection, schema: str, table: str
 ) -> list[tuple[Any, ...]]:
@@ -226,7 +253,9 @@ def _merge_database(source: Path, target: Path) -> None:
         connection.execute("ATTACH DATABASE ? AS incoming", (str(source),))
         target_schema = _database_schema(connection, "main")
         source_schema = _database_schema(connection, "incoming")
-        if target_schema != source_schema:
+        if target_schema != source_schema or _database_schema_objects(
+            connection, "main"
+        ) != _database_schema_objects(connection, "incoming"):
             raise RuntimeError(f"SQLite schema mismatch for {target.name}")
         if "_sqlx_migrations" in target_schema:
             migration_columns = [
@@ -344,6 +373,19 @@ def _restore_modes(home: Path, modes: dict[str, int]) -> None:
             path.chmod(mode)
 
 
+def _reject_target_symlink_traversal(source: Path, target: Path) -> None:
+    if not target.exists():
+        return
+    for entry in source.rglob("*"):
+        if entry.is_dir() or entry.is_symlink():
+            continue
+        destination = target
+        for part in entry.relative_to(source).parts:
+            destination /= part
+            if destination.is_symlink():
+                raise ValueError(f"recovery would write through target symlink: {destination}")
+
+
 def recover_codex_home(*, source: Path, target: Path) -> RecoveryReport:
     """Merge one quiet temporary Codex home into the active home transactionally."""
     source = source.expanduser().resolve()
@@ -352,6 +394,7 @@ def recover_codex_home(*, source: Path, target: Path) -> RecoveryReport:
         raise ValueError("source must be an existing Codex home different from target")
     if source in target.parents or target in source.parents or target == Path(target.anchor):
         raise ValueError("source and target Codex homes must not overlap")
+    _reject_target_symlink_traversal(source, target)
     before = home_fingerprint(source)
     backup_dir = _new_backup_dir(target)
     report = RecoveryReport(source=source, target=target, backup_dir=backup_dir)

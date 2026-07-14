@@ -1551,7 +1551,7 @@ def _codex_home_dir() -> Path:
     return Path.home() / ".codex"
 
 
-def _codex_profile_from_args(codex_args: tuple) -> str | None:
+def _codex_profile_from_args(codex_args: tuple[str, ...]) -> str | None:
     """Return the profile selected by Codex CLI arguments, if any."""
     for index, argument in enumerate(codex_args):
         if argument.startswith("--profile="):
@@ -1559,6 +1559,23 @@ def _codex_profile_from_args(codex_args: tuple) -> str | None:
         if argument in {"--profile", "-p"} and index + 1 < len(codex_args):
             return codex_args[index + 1]
     return None
+
+
+def _codex_model_provider_from_args(codex_args: tuple[str, ...]) -> str | None:
+    """Return the last top-level model_provider CLI override, if present."""
+    provider: str | None = None
+    for index, argument in enumerate(codex_args):
+        override: str | None = None
+        if argument.startswith("--config=") or argument.startswith("-c="):
+            override = argument.partition("=")[2]
+        elif argument in {"--config", "-c"} and index + 1 < len(codex_args):
+            override = codex_args[index + 1]
+        if override is None:
+            continue
+        key, separator, value = override.partition("=")
+        if separator and key.strip() == "model_provider":
+            provider = value.strip().strip("\"'")
+    return provider
 
 
 def _codex_toml_value(value: Any) -> str:
@@ -1577,8 +1594,8 @@ def _codex_dotted_key(*parts: str) -> str:
 
 
 def _codex_session_launch_settings(
-    *, port: int, codex_args: tuple, environ: dict[str, str]
-) -> tuple[tuple, dict[str, str], list[str]]:
+    *, port: int, codex_args: tuple[str, ...], environ: dict[str, str]
+) -> tuple[tuple[str, ...], dict[str, str], list[str]]:
     """Build process-local routing while preserving the selected provider id."""
     config_file, _ = _codex_config_paths()
     try:
@@ -1591,7 +1608,7 @@ def _codex_session_launch_settings(
     profile_name = _codex_profile_from_args(codex_args)
     profiles = config.get("profiles", {})
     profile = profiles.get(profile_name, {}) if profile_name and isinstance(profiles, dict) else {}
-    provider = (
+    provider = _codex_model_provider_from_args(codex_args) or (
         profile.get("model_provider")
         if isinstance(profile, dict) and profile.get("model_provider")
         else config.get("model_provider", "openai")
@@ -1615,6 +1632,10 @@ def _codex_session_launch_settings(
                 f"Codex provider {provider!r} cannot be redirected without changing its identity"
             )
         upstream = provider_config.get("base_url")
+        if not isinstance(upstream, str) or not upstream.strip():
+            raise click.ClickException(
+                f"Codex custom provider {provider!r} has no upstream base_url"
+            )
         prefix = ("model_providers", provider)
         overrides.extend(
             (
@@ -1622,13 +1643,12 @@ def _codex_session_launch_settings(
                 f"{_codex_dotted_key(*prefix, 'supports_websockets')}=true",
             )
         )
-        if isinstance(upstream, str) and upstream.strip():
-            env[_UPSTREAM_BASE_URL_ENV_VAR] = upstream.rstrip("/")
-            display.append(f"{_UPSTREAM_BASE_URL_ENV_VAR}={upstream.rstrip('/')}")
-            overrides.append(
-                f"{_codex_dotted_key(*prefix, 'env_http_headers', _UPSTREAM_BASE_URL_HEADER_NAME)}="
-                f"{_codex_toml_value(_UPSTREAM_BASE_URL_ENV_VAR)}"
-            )
+        env[_UPSTREAM_BASE_URL_ENV_VAR] = upstream.rstrip("/")
+        display.append(f"{_UPSTREAM_BASE_URL_ENV_VAR}={upstream.rstrip('/')}")
+        overrides.append(
+            f"{_codex_dotted_key(*prefix, 'env_http_headers', _UPSTREAM_BASE_URL_HEADER_NAME)}="
+            f"{_codex_toml_value(_UPSTREAM_BASE_URL_ENV_VAR)}"
+        )
 
     if project and "HEADROOM_PROJECT" not in env:
         env["HEADROOM_PROJECT"] = project
