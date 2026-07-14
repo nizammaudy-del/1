@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **docs/ccr:** qualify the current CCR auto-resolution claim by provider. The docs now state that transparent `headroom_retrieve` handling is wired on the Anthropic and OpenAI proxy paths, while native Gemini still lacks that server-side response-handler path and Gemini's OpenAI-compatible endpoint can fail round-2 continuations with `MALFORMED_FUNCTION_CALL` ([#2041](https://github.com/headroomlabs-ai/headroom/issues/2041)).
 * **docs/claude:** document that `ENABLE_TOOL_SEARCH=true` is correct for the standalone Claude CLI through Headroom but currently breaks tool-result rendering in Anthropic's VSCode extension webview, and point persistent-install users at the manifest override to set `tool_envs.claude.ENABLE_TOOL_SEARCH` to `"false"` for that target ([#2028](https://github.com/headroomlabs-ai/headroom/issues/2028)).
 
+### Added
+
+* **integrations:** CrewAI tool compression — `wrap_tools_with_headroom()` wraps CrewAI `BaseTool` instances with automatic output compression via `compress_tool_result()`, with per-tool metrics tracking ([#1379](https://github.com/headroomlabs-ai/headroom/issues/1379)).
+* **integrations:** AutoGen tool compression — `wrap_tools_with_headroom()` wraps AutoGen `FunctionTool` instances (sync and async) with automatic output compression, including per-tool metrics tracking ([#1379](https://github.com/headroomlabs-ai/headroom/issues/1379)).
+
 ### Features
 
 * **compress:** expose `frozen_message_count` in library-mode `compress()` via a new `CompressConfig` field (default `0`, unchanged behavior). `read_lifecycle.apply()` already skips stale-Read replacements inside a frozen message prefix, but only the proxy handlers could pass it — `ContentRouter` reads it from transform kwargs and the public API never forwarded it. Library-mode callers that manage their own conversation loop can now stop transforms from rewriting messages already anchored in the provider's prompt cache, which would otherwise convert 0.1x cached prefix reads into full-price cache writes ([#2178](https://github.com/headroomlabs-ai/headroom/pull/2178)).
