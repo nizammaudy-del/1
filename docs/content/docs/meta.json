@@ -40,6 +40,7 @@
     "mcp",
     "---Configuration---",
     "configuration",
+    "codex-recovery",
     "pipeline-extensions",
     "filesystem-contract",
     "---Observability---",

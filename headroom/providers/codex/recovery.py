@@ -129,17 +129,18 @@ def _new_backup_dir(target: Path) -> Path:
 def _clean_managed_codex_config(document: Any) -> None:
     providers = document.get("model_providers")
     headroom_provider = providers.get("headroom") if providers is not None else None
-    managed_routing = document.get("model_provider") == "headroom" or (
-        headroom_provider is not None
-        and str(headroom_provider.get("base_url", "")).startswith("http://127.0.0.1:")
-    )
-    if document.get("model_provider") == "headroom":
+    local_provider = headroom_provider is not None and str(
+        headroom_provider.get("base_url", "")
+    ).startswith("http://127.0.0.1:")
+    local_openai_url = str(document.get("openai_base_url", "")).startswith("http://127.0.0.1:")
+    managed_routing = local_provider or local_openai_url
+    if managed_routing and document.get("model_provider") == "headroom":
         del document["model_provider"]
-    if providers is not None and "headroom" in providers:
+    if providers is not None and local_provider:
         del providers["headroom"]
         if not providers:
             del document["model_providers"]
-    if managed_routing and str(document.get("openai_base_url", "")).startswith("http://127.0.0.1:"):
+    if managed_routing and local_openai_url:
         del document["openai_base_url"]
 
 

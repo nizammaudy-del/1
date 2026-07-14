@@ -264,6 +264,61 @@ def test_recovery_rolls_back_when_sqlx_checksums_differ(tmp_path: Path) -> None:
         ]
 
 
+def test_recovery_rolls_back_when_source_sqlite_is_corrupt(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    original_config = 'model = "target"\n'
+    (target / "config.toml").write_text(original_config, encoding="utf-8")
+    (source / "config.toml").write_text('model = "source"\n', encoding="utf-8")
+    target_db = target / "sqlite" / "state_5.sqlite"
+    _write_db(target_db, [("target", "Target")])
+    source_db = source / "sqlite" / "state_5.sqlite"
+    source_db.parent.mkdir(parents=True)
+    source_db.write_bytes(b"not a sqlite database")
+
+    with pytest.raises(sqlite3.DatabaseError):
+        recover_codex_home(source=source, target=target)
+
+    assert (target / "config.toml").read_text(encoding="utf-8") == original_config
+    with sqlite3.connect(target_db) as connection:
+        assert connection.execute("SELECT id, title FROM threads").fetchall() == [
+            ("target", "Target")
+        ]
+
+
+def test_recovery_rolls_back_when_source_sqlite_breaks_foreign_keys(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    target_db = target / "sqlite" / "state_5.sqlite"
+    source_db = source / "sqlite" / "state_5.sqlite"
+    for database in (target_db, source_db):
+        database.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(database) as connection:
+            connection.executescript(
+                "CREATE TABLE parents (id TEXT PRIMARY KEY);"
+                "CREATE TABLE children ("
+                "id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parents(id)"
+                ");"
+            )
+    with sqlite3.connect(target_db) as connection:
+        connection.execute("INSERT INTO parents VALUES ('target-parent')")
+    with sqlite3.connect(source_db) as connection:
+        connection.execute("INSERT INTO children VALUES ('orphan', 'missing-parent')")
+
+    with pytest.raises(RuntimeError, match="foreign key check failed"):
+        recover_codex_home(source=source, target=target)
+
+    with sqlite3.connect(target_db) as connection:
+        assert connection.execute("SELECT id FROM parents").fetchall() == [("target-parent",)]
+        assert connection.execute("SELECT id, parent_id FROM children").fetchall() == []
+
+
 def test_recovery_removes_legacy_headroom_routing_from_config(tmp_path: Path) -> None:
     target = tmp_path / "codex"
     source = tmp_path / "headroom-codex-home-broken"
@@ -285,6 +340,26 @@ def test_recovery_removes_legacy_headroom_routing_from_config(tmp_path: Path) ->
     assert "headroom" not in config
     assert "127.0.0.1:8787" not in config
     assert "from_wrapped_session = true" in config
+
+
+def test_recovery_preserves_user_defined_remote_headroom_provider(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    (source / "config.toml").write_text(
+        'model_provider = "headroom"\n'
+        "[model_providers.headroom]\n"
+        'base_url = "https://gateway.example/v1"\n',
+        encoding="utf-8",
+    )
+
+    recover_codex_home(source=source, target=target)
+
+    config = (target / "config.toml").read_text(encoding="utf-8")
+    assert 'model_provider = "headroom"' in config
+    assert "[model_providers.headroom]" in config
+    assert 'base_url = "https://gateway.example/v1"' in config
 
 
 def test_recovery_quarantines_malformed_jsonl_and_keeps_valid_records(
