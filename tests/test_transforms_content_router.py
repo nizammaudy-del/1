@@ -15,6 +15,7 @@ from headroom.transforms.content_router import (
     RoutingDecision,
     _create_content_signature,
     _detect_content,
+    _estimate_tokens,
     _extract_json_block,
     _strip_detection_envelope,
     is_mixed_content,
@@ -483,7 +484,7 @@ def test_content_router_mixed_pure_apply_and_toin(monkeypatch: pytest.MonkeyPatc
     )
     pure = router._compress_pure("some plain text", CompressionStrategy.TEXT, "ctx")
     assert pure.routing_log[0].content_type is ContentType.PLAIN_TEXT
-    assert pure.total_original_tokens == 3
+    assert pure.total_original_tokens == _estimate_tokens("some plain text")
     assert pure.total_compressed_tokens == 1
 
     calls: list[dict] = []
@@ -551,7 +552,7 @@ def test_diff_strategy_does_not_fallback_to_kompress_when_diff_is_noop(
     )
 
     assert compressed == diff
-    assert compressed_tokens == len(diff.split())
+    assert compressed_tokens == _estimate_tokens(diff)
     assert strategy_chain == ["diff"]
 
 
@@ -579,7 +580,7 @@ def test_log_strategy_does_not_fallback_to_kompress_when_log_is_noop(
     )
 
     assert compressed == log
-    assert compressed_tokens == len(log.split())
+    assert compressed_tokens == _estimate_tokens(log)
     assert strategy_chain == ["log"]
 
 

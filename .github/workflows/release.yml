@@ -608,18 +608,30 @@ jobs:
                 fi
               elif command -v apt-get >/dev/null 2>&1; then
                 export DEBIAN_FRONTEND=noninteractive
-                apt-get update -qq
+                apt_retry() {
+                  apt_get_args="$*"
+                  for attempt in 1 2 3; do
+                    if apt-get "$@"; then
+                      return 0
+                    fi
+                    echo "apt-get ${apt_get_args} failed on attempt ${attempt}; refreshing package lists" >&2
+                    apt-get update -qq || true
+                    sleep $((attempt * 5))
+                  done
+                  apt-get "$@"
+                }
+                apt_retry update -qq
                 # ubuntu:20.04s default repo only ships 3.8; 3.10 lives
                 # in deadsnakes. Add it on demand. ubuntu:22.04 has
                 # 3.10/3.11 in main and 3.12 via deadsnakes.
-                apt-get install -y -qq --no-install-recommends ca-certificates software-properties-common >/dev/null
+                apt_retry install -y -qq --fix-missing --no-install-recommends ca-certificates software-properties-common >/dev/null
                 add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 || true
-                apt-get update -qq
-                apt-get install -y -qq --no-install-recommends \
+                apt_retry update -qq
+                apt_retry install -y -qq --fix-missing --no-install-recommends \
                   "python$PYTHON_VERSION" \
                   "python$PYTHON_VERSION-venv" \
                   "python$PYTHON_VERSION-distutils" >/dev/null 2>&1 \
-                || apt-get install -y -qq --no-install-recommends \
+                || apt_retry install -y -qq --fix-missing --no-install-recommends \
                   "python$PYTHON_VERSION" \
                   "python$PYTHON_VERSION-venv" >/dev/null
                 python_bin="python$PYTHON_VERSION"

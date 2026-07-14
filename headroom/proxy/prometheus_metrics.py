@@ -703,9 +703,18 @@ class PrometheusMetrics:
             # (claude-code, codex, cursor, ...); it falls back to "proxy" only
             # when the harness is unidentified.
             if tokens_saved > 0 and not self._stateless:
+                # `input_tokens` here is the optimized (post-compression) count
+                # that was actually forwarded — see emit_request_outcome, which
+                # passes `input_tokens=outcome.optimized_tokens`. The ledger's
+                # `before` is the pre-compression original and `after` is what we
+                # forwarded, and `headroom savings` derives the reduction percent
+                # as saved / before. Passing the forwarded count as `before`
+                # understated the original by `tokens_saved`, inflating that
+                # percentage (e.g. a real 40% reduction was reported as ~67%).
+                # Reconstruct the original as forwarded + saved.
                 savings_ledger.record_savings_event(
-                    tokens_before=input_tokens,
-                    tokens_after=max(input_tokens - tokens_saved, 0),
+                    tokens_before=input_tokens + tokens_saved,
+                    tokens_after=input_tokens,
                     model=model,
                     client=client or "proxy",
                     source="proxy",
