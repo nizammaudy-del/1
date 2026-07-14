@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
@@ -356,6 +357,8 @@ def _merge_pinned_home(pinned: Path, target: Path, report: RecoveryReport) -> No
 
 
 def _restore_target(target: Path, target_backup: Path, target_existed: bool) -> None:
+    # Windows can retain SQLite file handles until statement finalizers run.
+    gc.collect()
     if target.exists():
         shutil.rmtree(target)
     if target_existed:
