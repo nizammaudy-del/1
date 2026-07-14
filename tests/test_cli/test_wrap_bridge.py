@@ -83,7 +83,10 @@ def test_wrap_codex_prepare_only_updates_config(monkeypatch, tmp_path: Path) -> 
     _set_test_home(monkeypatch, tmp_path)
     runner = CliRunner()
 
-    with patch("headroom.cli.wrap._ensure_rtk_binary", return_value=None):
+    with (
+        patch("headroom.cli.wrap._ensure_rtk_binary", return_value=None),
+        patch("headroom.cli.wrap.ensure_proxy_dependencies", return_value=None),
+    ):
         result = runner.invoke(main, ["wrap", "codex", "--prepare-only", "--port", "8787"])
 
     assert result.exit_code == 0, result.output
@@ -100,7 +103,10 @@ def test_wrap_codex_prepare_only_uses_lean_ctx_when_configured(monkeypatch, tmp_
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
-        with patch("headroom.cli.wrap._ensure_rtk_binary") as ensure_rtk:
+        with (
+            patch("headroom.cli.wrap._ensure_rtk_binary") as ensure_rtk,
+            patch("headroom.cli.wrap.ensure_proxy_dependencies", return_value=None),
+        ):
             with patch(
                 "headroom.cli.wrap._setup_lean_ctx_agent",
                 return_value=Path("lean-ctx"),
@@ -122,7 +128,10 @@ def test_wrap_codex_prepare_only_accepts_no_context_tool_alias(monkeypatch, tmp_
     runner = CliRunner()
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
-        with patch("headroom.cli.wrap._ensure_rtk_binary") as ensure_rtk:
+        with (
+            patch("headroom.cli.wrap._ensure_rtk_binary") as ensure_rtk,
+            patch("headroom.cli.wrap.ensure_proxy_dependencies", return_value=None),
+        ):
             with patch("headroom.cli.wrap._setup_lean_ctx_agent") as setup:
                 result = runner.invoke(
                     main,

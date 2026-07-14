@@ -51,6 +51,7 @@ from headroom._version import normalize_release_version as _normalize_release_ve
 from headroom.agent_savings import (
     apply_agent_savings_env_defaults,
 )
+from headroom.cli.proxy import ensure_proxy_dependencies
 from headroom.copilot_auth import (
     has_oauth_auth,
     resolve_client_bearer_token,
@@ -4853,6 +4854,9 @@ def _run_codex_wrap(
     codex_args: tuple,
 ) -> None:
     """Execute the Codex wrap flow with the session overlay when launching."""
+    if not no_proxy:
+        ensure_proxy_dependencies()
+
     if prepare_only:
         _prepare_codex_wrap_state(
             port=port,
