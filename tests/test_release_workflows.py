@@ -835,6 +835,25 @@ def test_npm_publish_jobs_do_not_download_dist_artifact() -> None:
         )
 
 
+def test_smoke_import_ubuntu_apt_installs_are_retried() -> None:
+    """Ubuntu smoke-import containers must tolerate stale package mirrors.
+
+    The ARM Ubuntu ports mirror can briefly serve indexes that point at a
+    package version which has just been removed, causing apt install to fail
+    with a 404 even after an update. Keep the smoke gate strict, but retry the
+    package operations and use --fix-missing so transient mirror skew does not
+    make unrelated PRs red.
+    """
+    content = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    smoke_start = content.index("\n  smoke-import-wheels:")
+    smoke_end = content.index("\n  publish-pypi:", smoke_start)
+    smoke_body = content[smoke_start:smoke_end]
+
+    assert "apt_retry()" in smoke_body
+    assert "apt_retry update -qq" in smoke_body
+    assert "apt_retry install -y -qq --fix-missing --no-install-recommends" in smoke_body
+
+
 def test_release_workflow_runs_dry_run_on_pull_request() -> None:
     """X2: the release workflow MUST trigger on `pull_request` for paths
     that change wheel-layout / release pipeline so the wheel matrix +

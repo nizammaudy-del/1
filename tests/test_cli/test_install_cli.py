@@ -17,15 +17,20 @@ def test_install_apply_starts_service_supervisor(monkeypatch) -> None:
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
-        targets = ["claude", "codex"]
+        mutations = [object()]
+        mutations = [object()]
         mutations = []
+        targets = ["claude", "codex"]
         artifacts = []
 
     manifest = Manifest()
 
     monkeypatch.setattr("headroom.cli.install.build_manifest", lambda **_: manifest)
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: None)
-    monkeypatch.setattr("headroom.cli.install.apply_mutations", lambda deployment: [])
+    monkeypatch.setattr(
+        "headroom.cli.install.apply_mutations",
+        lambda deployment: calls.append("apply") or [],
+    )
     monkeypatch.setattr("headroom.cli.install.install_supervisor", lambda deployment: [])
     monkeypatch.setattr(
         "headroom.cli.install.save_manifest", lambda deployment: calls.append("save")
@@ -51,7 +56,7 @@ def test_install_apply_starts_service_supervisor(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert "Installed persistent deployment 'default'" in result.output
     assert "Targets: claude, codex" in result.output
-    assert calls == ["save", "start_service"]
+    assert calls == ["save", "start_service", "apply", "save"]
 
 
 def test_install_apply_forwards_no_http2_to_build_manifest(monkeypatch) -> None:
@@ -65,6 +70,8 @@ def test_install_apply_forwards_no_http2_to_build_manifest(monkeypatch) -> None:
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = [object()]
+        mutations = [object()]
         targets = ["claude"]
         mutations = []
         artifacts = []
@@ -141,8 +148,12 @@ def test_install_restart_uses_internal_helpers(monkeypatch) -> None:
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
+    monkeypatch.setattr(
+        "headroom.cli.install.revert_mutations", lambda manifest: calls.append("revert")
+    )
     monkeypatch.setattr(
         "headroom.cli.install.stop_supervisor", lambda manifest: calls.append("stop_supervisor")
     )
@@ -155,6 +166,10 @@ def test_install_restart_uses_internal_helpers(monkeypatch) -> None:
     monkeypatch.setattr(
         "headroom.cli.install.wait_ready", lambda manifest, timeout_seconds=45: True
     )
+    monkeypatch.setattr(
+        "headroom.cli.install.apply_mutations", lambda manifest: calls.append("apply") or []
+    )
+    monkeypatch.setattr("headroom.cli.install.save_manifest", lambda manifest: calls.append("save"))
     monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: False)
     monkeypatch.setattr("headroom.cli.install.runtime_status", lambda manifest: "stopped")
 
@@ -162,7 +177,15 @@ def test_install_restart_uses_internal_helpers(monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Restarted deployment 'default'." in result.output
-    assert calls == ["stop_supervisor", "stop_runtime", "start_supervisor"]
+    assert calls == [
+        "revert",
+        "save",
+        "stop_supervisor",
+        "stop_runtime",
+        "start_supervisor",
+        "apply",
+        "save",
+    ]
 
 
 def test_install_start_noops_when_already_healthy(monkeypatch) -> None:
@@ -176,6 +199,7 @@ def test_install_start_noops_when_already_healthy(monkeypatch) -> None:
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
     monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: True)
@@ -200,6 +224,7 @@ def test_install_start_noops_for_healthy_docker_without_docker_on_path(monkeypat
         supervisor_kind = "none"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
     monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: True)
@@ -222,8 +247,10 @@ def test_install_start_does_not_spawn_when_start_lock_is_contended(monkeypatch) 
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = []
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
+    monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: False)
 
     import contextlib
 
@@ -254,14 +281,28 @@ def test_install_start_restarts_wedged_runtime_under_single_lock(monkeypatch) ->
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
-    monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: False)
+    probe_calls = {"count": 0}
+
+    def fake_probe_ready(url: str) -> bool:
+        probe_calls["count"] += 1
+        return probe_calls["count"] > 2
+
+    monkeypatch.setattr("headroom.cli.install.probe_ready", fake_probe_ready)
     monkeypatch.setattr("headroom.cli.install.runtime_status", lambda manifest: "running")
     wait_results = iter([False, True])
     monkeypatch.setattr(
         "headroom.cli.install.wait_ready", lambda manifest, timeout_seconds: next(wait_results)
     )
+    monkeypatch.setattr(
+        "headroom.cli.install.revert_mutations", lambda manifest: calls.append("revert")
+    )
+    monkeypatch.setattr(
+        "headroom.cli.install.apply_mutations", lambda manifest: calls.append("apply") or []
+    )
+    monkeypatch.setattr("headroom.cli.install.save_manifest", lambda manifest: calls.append("save"))
     monkeypatch.setattr("headroom.cli.install.stop_runtime", lambda manifest: calls.append("stop"))
     monkeypatch.setattr(
         "headroom.cli.install.start_supervisor", lambda manifest: calls.append("start_supervisor")
@@ -270,7 +311,7 @@ def test_install_start_restarts_wedged_runtime_under_single_lock(monkeypatch) ->
     result = runner.invoke(main, ["install", "start"])
 
     assert result.exit_code == 0, result.output
-    assert calls == ["stop", "start_supervisor"]
+    assert calls == ["revert", "save", "stop", "start_supervisor", "apply", "save"]
 
 
 def test_install_apply_rejects_invalid_profile() -> None:
@@ -363,6 +404,7 @@ def test_install_apply_restores_previous_deployment_after_failed_update(monkeypa
 
     new_manifest = Manifest("default", ["claude"])
     existing_manifest = Manifest("default", ["codex"])
+    existing_manifest.mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.build_manifest", lambda **_: new_manifest)
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: existing_manifest)
@@ -411,24 +453,23 @@ def test_install_apply_restores_previous_deployment_after_failed_update(monkeypa
     assert result.exit_code != 0
     assert "Restoring previous deployment 'default'" in result.output
     assert calls == [
+        "revert:codex",
         "stop-supervisor:codex",
         "stop-runtime:codex",
         "remove-supervisor:codex",
-        "revert:codex",
         "delete:default",
-        "apply:claude",
         "supervisor:claude",
         "save:claude",
         "start:claude",
         "stop-supervisor:claude",
         "stop-runtime:claude",
         "remove-supervisor:claude",
-        "revert:claude",
         "delete:default",
-        "apply:codex",
         "supervisor:codex",
         "save:codex",
         "start:codex",
+        "apply:codex",
+        "save:codex",
     ]
 
 
@@ -508,8 +549,12 @@ def test_install_remove_continues_when_runtime_teardown_errors(monkeypatch) -> N
         supervisor_kind = "service"
         scope = "user"
         health_url = "http://127.0.0.1:8787/readyz"
+        mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
+    monkeypatch.setattr(
+        "headroom.cli.install.revert_mutations", lambda manifest: calls.append("revert")
+    )
     monkeypatch.setattr(
         "headroom.cli.install.stop_supervisor",
         lambda manifest: (_ for _ in ()).throw(RuntimeError("boom")),
@@ -522,16 +567,13 @@ def test_install_remove_continues_when_runtime_teardown_errors(monkeypatch) -> N
         "headroom.cli.install.remove_supervisor", lambda manifest: calls.append("remove_supervisor")
     )
     monkeypatch.setattr(
-        "headroom.cli.install.revert_mutations", lambda manifest: calls.append("revert")
-    )
-    monkeypatch.setattr(
         "headroom.cli.install.delete_manifest", lambda profile: calls.append("delete")
     )
 
     result = runner.invoke(main, ["install", "remove"])
 
     assert result.exit_code == 0, result.output
-    assert calls == ["remove_supervisor", "revert", "delete"]
+    assert calls == ["revert", "remove_supervisor", "delete"]
 
 
 def test_install_agent_ensure_reports_already_healthy(monkeypatch) -> None:
@@ -609,11 +651,26 @@ def test_install_agent_ensure_stops_wedged_runtime_before_restart(monkeypatch) -
         health_url = "http://127.0.0.1:8787/readyz"
         preset = "persistent-task"
         supervisor_kind = "none"
+        scope = "user"
+        mutations = []
+        scope = "user"
+        mutations = []
+        scope = "user"
+        mutations = []
+        scope = "user"
+        mutations = [object()]
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
     monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: False)
     monkeypatch.setattr("headroom.cli.install.runtime_status", lambda manifest: "running")
     monkeypatch.setattr("headroom.cli.install.wait_ready", lambda manifest, timeout_seconds: False)
+    monkeypatch.setattr(
+        "headroom.cli.install.revert_mutations", lambda manifest: calls.append("revert")
+    )
+    monkeypatch.setattr(
+        "headroom.cli.install.apply_mutations", lambda manifest: calls.append("apply") or []
+    )
+    monkeypatch.setattr("headroom.cli.install.save_manifest", lambda manifest: calls.append("save"))
     monkeypatch.setattr("headroom.cli.install.stop_runtime", lambda manifest: calls.append("stop"))
     monkeypatch.setattr(
         "headroom.cli.install.start_detached_agent",
@@ -639,7 +696,9 @@ def test_install_agent_ensure_stops_wedged_runtime_before_restart(monkeypatch) -
     result = runner.invoke(main, ["install", "agent", "ensure"])
     assert result.exit_code == 0, result.output
     # stop must come before start_deployment — that's the bug guard.
+    assert calls.index("revert") < calls.index("stop")
     assert calls.index("stop") < calls.index("start_deployment")
+    assert calls.index("start_deployment") < calls.index("apply")
     assert "start_agent" not in calls
     assert "start_docker" not in calls
 
@@ -654,10 +713,16 @@ def test_install_agent_ensure_starts_when_stopped_and_lock_acquired(monkeypatch)
         health_url = "http://127.0.0.1:8787/readyz"
         preset = "persistent-task"
         supervisor_kind = "none"
+        scope = "user"
+        mutations = []
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
     monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: False)
     monkeypatch.setattr("headroom.cli.install.runtime_status", lambda manifest: "stopped")
+    monkeypatch.setattr(
+        "headroom.cli.install.apply_mutations", lambda manifest: calls.append("apply") or []
+    )
+    monkeypatch.setattr("headroom.cli.install.save_manifest", lambda manifest: calls.append("save"))
     monkeypatch.setattr(
         "headroom.cli.install.start_detached_agent",
         lambda profile: calls.append("start_agent"),
@@ -678,7 +743,7 @@ def test_install_agent_ensure_starts_when_stopped_and_lock_acquired(monkeypatch)
 
     result = runner.invoke(main, ["install", "agent", "ensure"])
     assert result.exit_code == 0, result.output
-    assert calls == ["start_agent"]
+    assert calls == ["start_agent", "apply", "save"]
 
 
 def test_install_agent_ensure_no_duplicate_spawn_after_lock_recheck(monkeypatch) -> None:
@@ -729,6 +794,8 @@ def test_install_agent_ensure_propagates_start_deployment_failure(monkeypatch) -
         health_url = "http://127.0.0.1:8787/readyz"
         preset = "persistent-task"
         supervisor_kind = "none"
+        scope = "user"
+        mutations = []
 
     monkeypatch.setattr("headroom.cli.install.load_manifest", lambda profile: Manifest())
     monkeypatch.setattr("headroom.cli.install.probe_ready", lambda url: False)

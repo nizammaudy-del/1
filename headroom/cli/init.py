@@ -322,11 +322,18 @@ def _ensure_codex_provider(path: Path, port: int) -> None:
         f"{_CODEX_PROVIDER_MARKER_END}"
     )
     content = path.read_text(encoding="utf-8") if path.exists() else ""
-    # init owns model_provider/openai_base_url: drop any prior assignment (any
-    # value, including one an older version mis-scoped under a table) so we
-    # replace it instead of emitting a duplicate top-level key (#260).
-    content = re.sub(r"(?m)^[ \t]*model_provider[ \t]*=.*\r?\n", "", content)
-    content = re.sub(r"(?m)^[ \t]*openai_base_url[ \t]*=.*\r?\n", "", content)
+    # init owns the ROOT-level model_provider/openai_base_url: drop any prior
+    # root assignment so we replace it instead of emitting a duplicate top-level
+    # key (#260). Scope the strip to the document root (everything before the
+    # first table header) -- these keys also appear legitimately inside
+    # [profiles.*] tables as per-profile overrides, and stripping them there
+    # silently reroutes the user's profiles to the injected "headroom" default.
+    _first_table = re.search(r"(?m)^[ \t]*\[", content)
+    _split = _first_table.start() if _first_table else len(content)
+    root, rest = content[:_split], content[_split:]
+    root = re.sub(r"(?m)^[ \t]*model_provider[ \t]*=.*\r?\n", "", root)
+    root = re.sub(r"(?m)^[ \t]*openai_base_url[ \t]*=.*\r?\n", "", root)
+    content = root + rest
     # The provider block carries top-level keys (model_provider, openai_base_url),
     # so it must land at the document root rather than after a trailing table (#260).
     content = _replace_marker_block(

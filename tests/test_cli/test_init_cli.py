@@ -533,6 +533,33 @@ def test_ensure_codex_provider_replaces_existing_model_provider(
     assert parsed["features"]["hooks"] is True
 
 
+def test_ensure_codex_provider_preserves_profile_overrides(monkeypatch, tmp_path: Path) -> None:
+    """Per-profile model_provider/openai_base_url overrides must survive init.
+
+    init owns the ROOT-level keys, but the same keys inside [profiles.*] are the
+    user's per-profile routing; a broad strip silently reroutes those profiles
+    to the injected "headroom" default (config corruption).
+    """
+    init_cli, _ = _load_init_module(monkeypatch)
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'model_provider = "openai"\n\n'
+        "[profiles.work]\n"
+        'model_provider = "azure"\n'
+        'openai_base_url = "https://azure.example/v1"\n',
+        encoding="utf-8",
+    )
+
+    init_cli._ensure_codex_provider(path, 8787)
+
+    parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+    # Root is replaced by headroom (no duplicate top-level key).
+    assert parsed["model_provider"] == "headroom"
+    # The user's per-profile overrides are untouched.
+    assert parsed["profiles"]["work"]["model_provider"] == "azure"
+    assert parsed["profiles"]["work"]["openai_base_url"] == "https://azure.example/v1"
+
+
 def test_ensure_codex_provider_emits_requires_openai_auth_for_chatgpt(
     monkeypatch, tmp_path: Path
 ) -> None:

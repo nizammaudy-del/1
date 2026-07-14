@@ -107,7 +107,27 @@ def _stop_deployment(manifest: DeploymentManifest) -> None:
     stop_runtime(manifest)
 
 
+def _deactivate_deployment_mutations(
+    manifest: DeploymentManifest, *, persist_manifest: bool = True
+) -> None:
+    if not manifest.mutations:
+        return
+    revert_mutations(manifest)
+    manifest.mutations = []
+    if persist_manifest:
+        save_manifest(manifest)
+
+
+def _activate_deployment_mutations(manifest: DeploymentManifest) -> None:
+    manifest.mutations = apply_mutations(manifest)
+    save_manifest(manifest)
+
+
 def _remove_deployment(manifest: DeploymentManifest) -> None:
+    try:
+        _deactivate_deployment_mutations(manifest, persist_manifest=False)
+    except Exception:
+        pass
     try:
         _stop_deployment(manifest)
     except Exception:
@@ -116,19 +136,15 @@ def _remove_deployment(manifest: DeploymentManifest) -> None:
         remove_supervisor(manifest)
     except Exception:
         pass
-    try:
-        revert_mutations(manifest)
-    except Exception:
-        pass
     delete_manifest(manifest.profile)
 
 
 def _restore_deployment(manifest: DeploymentManifest) -> None:
     restored = deepcopy(manifest)
-    restored.mutations = apply_mutations(restored)
     restored.artifacts = install_supervisor(restored)
     save_manifest(restored)
     _start_deployment(restored)
+    _activate_deployment_mutations(restored)
 
 
 def _reject_task_lifecycle(manifest: DeploymentManifest, action: str) -> None:
@@ -280,10 +296,10 @@ def install_apply(
         _remove_deployment(existing)
 
     try:
-        manifest.mutations = apply_mutations(manifest)
         manifest.artifacts = install_supervisor(manifest)
         save_manifest(manifest)
         _start_deployment(manifest)
+        _activate_deployment_mutations(manifest)
     except Exception as exc:
         _remove_deployment(manifest)
         if existing is not None:
@@ -331,7 +347,11 @@ def install_start(profile: str) -> None:
 
     manifest = _require_manifest(profile)
     _reject_task_lifecycle(manifest, "start")
+    if not probe_ready(manifest.health_url):
+        _deactivate_deployment_mutations(manifest)
     _start_deployment(manifest)
+    if probe_ready(manifest.health_url) and not manifest.mutations:
+        _activate_deployment_mutations(manifest)
     click.echo(f"Started deployment '{profile}'.")
 
 
@@ -342,6 +362,7 @@ def install_stop(profile: str) -> None:
 
     manifest = _require_manifest(profile)
     _reject_task_lifecycle(manifest, "stop")
+    _deactivate_deployment_mutations(manifest)
     _stop_deployment(manifest)
     click.echo(f"Stopped deployment '{profile}'.")
 
@@ -353,8 +374,10 @@ def install_restart(profile: str) -> None:
 
     manifest = _require_manifest(profile)
     _reject_task_lifecycle(manifest, "restart")
+    _deactivate_deployment_mutations(manifest)
     _stop_deployment(manifest)
     _start_deployment(manifest)
+    _activate_deployment_mutations(manifest)
     click.echo(f"Restarted deployment '{profile}'.")
 
 
@@ -364,6 +387,7 @@ def install_remove(profile: str) -> None:
     """Remove a persistent deployment and undo managed config."""
 
     manifest = _require_manifest(profile)
+    _deactivate_deployment_mutations(manifest, persist_manifest=False)
     try:
         if manifest.supervisor_kind == SupervisorKind.SERVICE.value:
             stop_supervisor(manifest)
@@ -377,7 +401,6 @@ def install_remove(profile: str) -> None:
         remove_supervisor(manifest)
     except Exception:
         pass
-    revert_mutations(manifest)
     delete_manifest(profile)
     click.echo(f"Removed deployment '{profile}'.")
 
@@ -423,6 +446,10 @@ def install_agent_ensure(profile: str) -> None:
             if wait_ready(manifest, timeout_seconds=_STARTUP_READY_TIMEOUT_SECONDS):
                 click.echo(f"Deployment '{profile}' is healthy.")
                 return
+            _deactivate_deployment_mutations(manifest)
             stop_runtime(manifest)
+        else:
+            _deactivate_deployment_mutations(manifest)
         _start_deployment(manifest, assume_start_lock=True)
+        _activate_deployment_mutations(manifest)
     click.echo(f"Deployment '{profile}' is healthy.")

@@ -353,6 +353,8 @@ constraint-dependencies = [
     "nltk>=3.10.0",
     # CVE-2026-5241 (High) — direct optional dep for proxy/ml/voice; fix at 5.5.0
     "transformers>=5.5.0",
+    # PYSEC-2026-3447 — transitive dependency; fix at 83.0.0
+    "setuptools>=83.0.0",
 ]
 
 # Pin the project's package index to public PyPI. Without this, `uv lock`
