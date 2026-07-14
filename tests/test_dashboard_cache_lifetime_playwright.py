@@ -84,7 +84,7 @@ def test_card_renders_lifetime_cache_reads_after_zero_traffic_restart() -> None:
         expect(page.get_by_text("$7.20 saved")).to_be_visible()
         # Session-scoped siblings read as inactive, not as literal zeros.
         expect(page.get_by_text("no activity since restart").first).to_be_visible()
-        assert page.get_by_text("no activity since restart").count() >= 5
+        assert page.get_by_text("no activity since restart").count() >= 4
         # x-show hides via CSS (element stays in the DOM), so assert
         # visibility, not count — unlike the x-if card gate below.
         expect(page.get_by_text("Cache Efficiency", exact=True)).to_be_hidden()

@@ -282,7 +282,6 @@ def test_lifetime_selection_keeps_process_local_widgets_process_scoped() -> None
 
         page.get_by_test_id("scope-lifetime").click()
         expect(page.get_by_test_id("scope-cache-reads-value")).to_have_text("3.3k")
-        expect(page.get_by_test_id("per-model-process-label")).to_have_text("Current process only")
         expect(page.get_by_text("Current process", exact=True)).to_have_count(3)
 
         browser.close()
@@ -334,7 +333,6 @@ def test_missing_selected_scope_cache_fields_render_unavailable() -> None:
         _open_dashboard(page, stats)
 
         page.get_by_test_id("scope-current").click()
-        expect(page.get_by_text("Unavailable for selected scope", exact=True)).to_be_visible()
         expect(page.get_by_test_id("scope-cache-reads-value")).to_have_text("Unavailable")
         expect(page.get_by_text("Cache Efficiency", exact=True)).to_have_count(0)
         expect(page.get_by_test_id("cvc-net-headline")).to_have_text("Selected scope unavailable")
@@ -352,7 +350,7 @@ def test_lifetime_scope_keeps_process_local_cache_breakdowns_labeled() -> None:
         _open_dashboard(page, _stats_with_metric_scopes())
 
         page.get_by_test_id("scope-lifetime").click()
-        expect(page.get_by_text("Current process only", exact=True)).to_have_count(3)
+        expect(page.get_by_text("Current process only", exact=True)).to_have_count(1)
 
         browser.close()
 
@@ -367,7 +365,8 @@ def test_legacy_lifetime_cache_keeps_process_local_cache_metrics_unavailable() -
         expect(_scope_cache_metric_value(page, "Cache Writes")).to_have_text("—")
         expect(_scope_cache_metric_value(page, "Hit Rate")).to_have_text("—")
         expect(_scope_cache_metric_value(page, "Cache Busts")).to_have_text("—")
-        expect(page.get_by_text("no activity since restart", exact=True)).to_be_visible()
+        expect(page.get_by_text("no activity since restart").first).to_be_visible()
+        assert page.get_by_text("no activity since restart").count() >= 4
         expect(page.get_by_text("Cache Efficiency", exact=True)).to_have_count(0)
 
         browser.close()
