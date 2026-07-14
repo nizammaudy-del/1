@@ -435,6 +435,7 @@ def _start_proxy(
     vertex_api_url: str | None = None,
     clear_vertex_api_url: bool = False,
     copilot_api_token: str | None = None,
+    bedrock_sign: bool = False,
 ) -> subprocess.Popen:
     """Start Headroom proxy as a background subprocess.
 
@@ -477,6 +478,10 @@ def _start_proxy(
     _region = region or os.environ.get("HEADROOM_REGION")
     if _region:
         cmd.extend(["--region", _region])
+
+    # Direct-to-AWS Bedrock SigV4 re-signing (CLAUDE_CODE_USE_BEDROCK turnkey).
+    if bedrock_sign:
+        cmd.append("--bedrock-sign")
 
     if openai_api_url:
         cmd.extend(["--openai-api-url", openai_api_url])
@@ -907,9 +912,13 @@ def _vertex_target_api_url_from_claude_env(proxy_url: str) -> str | None:
     return vertex_url
 
 
-def _claude_wrap_base_url_env_key(*, foundry_mode: bool = False, vertex_mode: bool = False) -> str:
+def _claude_wrap_base_url_env_key(
+    *, foundry_mode: bool = False, vertex_mode: bool = False, bedrock_mode: bool = False
+) -> str:
     if vertex_mode:
         return "ANTHROPIC_VERTEX_BASE_URL"
+    if bedrock_mode:
+        return "ANTHROPIC_BEDROCK_BASE_URL"
     if foundry_mode:
         return "ANTHROPIC_FOUNDRY_BASE_URL"
     return "ANTHROPIC_BASE_URL"
@@ -1001,6 +1010,7 @@ def _write_claude_wrap_base_url(
     *,
     foundry_mode: bool = False,
     vertex_mode: bool = False,
+    bedrock_mode: bool = False,
     settings_path: Path | None = None,
     port: int | None = None,
 ) -> str | None:
@@ -1029,7 +1039,9 @@ def _write_claude_wrap_base_url(
     if not isinstance(payload, dict):
         payload = {}
     env_map = dict(payload.get("env") or {}) if isinstance(payload.get("env"), dict) else {}
-    key = _claude_wrap_base_url_env_key(foundry_mode=foundry_mode, vertex_mode=vertex_mode)
+    key = _claude_wrap_base_url_env_key(
+        foundry_mode=foundry_mode, vertex_mode=vertex_mode, bedrock_mode=bedrock_mode
+    )
     previous = env_map.get(key)
     env_map[key] = proxy_url
     payload["env"] = env_map
@@ -1045,6 +1057,7 @@ def _restore_claude_wrap_base_url(
     *,
     foundry_mode: bool = False,
     vertex_mode: bool = False,
+    bedrock_mode: bool = False,
     settings_path: Path | None = None,
     _key_override: str | None = None,
 ) -> None:
@@ -1058,7 +1071,9 @@ def _restore_claude_wrap_base_url(
     """
     path = settings_path or (Path.cwd() / ".claude" / "settings.local.json")
     key = _key_override or _claude_wrap_base_url_env_key(
-        foundry_mode=foundry_mode, vertex_mode=vertex_mode
+        foundry_mode=foundry_mode,
+        vertex_mode=vertex_mode,
+        bedrock_mode=bedrock_mode,
     )
     if not path.exists():
         _clear_wrap_marker(path, key=key)
@@ -2279,6 +2294,7 @@ def _run_proxy_only_watcher(
             _unregister_proxy_client(port)
             _register_proxy_client(actual_port)
         port_holder[0] = actual_port
+        port = actual_port
         _push_runtime_env(actual_port, no_proxy)
         click.echo()
         print_setup_lines(actual_port)
@@ -3005,6 +3021,7 @@ def _ensure_proxy(
     vertex_api_url: str | None = None,
     clear_vertex_api_url: bool = False,
     copilot_api_token: str | None = None,
+    bedrock_sign: bool = False,
 ) -> tuple[subprocess.Popen | None, int]:
     """Start or verify proxy. Returns (process_handle, actual_port)."""
     helpers = _live_wrap_module()
@@ -3304,6 +3321,7 @@ def _ensure_proxy(
                     vertex_api_url=vertex_api_url,
                     clear_vertex_api_url=clear_vertex_api_url,
                     copilot_api_token=copilot_api_token,
+                    bedrock_sign=bedrock_sign,
                 ),
             )
             click.echo(f"  Proxy ready on http://127.0.0.1:{actual_port}")
@@ -3956,7 +3974,9 @@ def claude(
     _settings_foundry: list[bool] = [False]
     port_holder: list[int] = [port]
     _settings_vertex: list[bool] = [False]
+    _settings_bedrock: list[bool] = [False]
     cleanup = _make_cleanup(proxy_holder, port_holder)
+    _wrap_settings_path = Path.cwd() / ".claude" / "settings.local.json"
     signal.signal(signal.SIGINT, _ignore_child_sigint)
     signal.signal(signal.SIGTERM, cleanup)
     if hasattr(signal, "SIGHUP"):
@@ -4036,6 +4056,25 @@ def claude(
         proxy_url = _claude_proxy_base_url(port)
         vertex_upstream = _vertex_target_api_url_from_claude_env(proxy_url) if use_vertex else None
 
+        # Detect Bedrock mode: with CLAUDE_CODE_USE_BEDROCK=1, Claude Code IGNORES
+        # ANTHROPIC_BASE_URL and talks to the AWS Bedrock runtime, SigV4-signing
+        # each InvokeModel request. The documented endpoint override is
+        # ANTHROPIC_BEDROCK_BASE_URL. Point it at Headroom and the proxy
+        # compresses the body — but compression invalidates the SigV4 signature,
+        # so the proxy must re-sign before forwarding to AWS. We therefore start
+        # it with --bedrock-sign (boto3 default credential chain — the same creds
+        # Claude Code already uses) and forward to the regional endpoint derived
+        # from the region. Turnkey Bedrock compression; no re-signing gateway.
+        use_bedrock = bool(os.environ.get("CLAUDE_CODE_USE_BEDROCK"))
+        # Region precedence mirrors Claude Code's Bedrock resolution: explicit
+        # --region wins, then AWS_REGION / AWS_DEFAULT_REGION, else the proxy
+        # default — so the signer targets the same endpoint Claude Code would.
+        bedrock_region = (
+            (region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+            if use_bedrock
+            else region
+        )
+
         _register_proxy_client(port)
         proxy_holder[0], actual_port = _ensure_proxy(
             port,
@@ -4045,8 +4084,9 @@ def claude(
             agent_type="claude",
             code_graph=code_graph,
             backend=backend,
-            region=region,
+            region=bedrock_region,
             anthropic_api_url=foundry_upstream,
+            bedrock_sign=use_bedrock,
             vertex_api_url=vertex_upstream,
             clear_vertex_api_url=use_vertex and vertex_upstream is None,
         )
@@ -4095,6 +4135,12 @@ def claude(
             click.echo(
                 f"  Vertex mode: ANTHROPIC_VERTEX_BASE_URL={proxy_url} "
                 "→ compress, then forward to Vertex with your GCP ADC token"
+            )
+        elif use_bedrock:
+            _region_label = bedrock_region or "us-west-2"
+            click.echo(
+                f"  Bedrock mode: ANTHROPIC_BEDROCK_BASE_URL={proxy_url} "
+                f"→ compress, re-sign (SigV4), then forward to AWS [{_region_label}]"
             )
         elif foundry_upstream:
             click.echo(
@@ -4146,6 +4192,12 @@ def claude(
             # ANTHROPIC_VERTEX_PROJECT_ID, CLOUD_ML_REGION, ADC — all inherited);
             # we only redirect its Vertex endpoint to Headroom.
             env["ANTHROPIC_VERTEX_BASE_URL"] = proxy_url
+        elif use_bedrock:
+            # Claude Code stays in Bedrock mode (keeps CLAUDE_CODE_USE_BEDROCK,
+            # AWS_REGION, AWS_PROFILE / SSO creds — all inherited); we only
+            # redirect its Bedrock endpoint to Headroom, which re-signs before
+            # forwarding to AWS.
+            env["ANTHROPIC_BEDROCK_BASE_URL"] = proxy_url
         elif foundry_upstream:
             # ANTHROPIC_FOUNDRY_BASE_URL is the base URL the Anthropic SDK
             # appends /v1/messages to.  The real Foundry URL includes /anthropic,
@@ -4158,12 +4210,16 @@ def claude(
         # workers (which read settings.json fresh rather than inheriting the
         # daemon's environment) also route through Headroom.
         _settings_vertex[0] = bool(use_vertex)
-        _settings_foundry[0] = bool(foundry_upstream) and not _settings_vertex[0]
-        _wrap_settings_path = Path.cwd() / ".claude" / "settings.local.json"
+        _settings_bedrock[0] = bool(use_bedrock) and not _settings_vertex[0]
+        _settings_foundry[0] = (
+            bool(foundry_upstream) and not _settings_vertex[0] and not _settings_bedrock[0]
+        )
         _check_and_clear_stale_wrap_marker(
             _wrap_settings_path,
             key=_claude_wrap_base_url_env_key(
-                foundry_mode=_settings_foundry[0], vertex_mode=_settings_vertex[0]
+                foundry_mode=_settings_foundry[0],
+                vertex_mode=_settings_vertex[0],
+                bedrock_mode=_settings_bedrock[0],
             ),
         )
         _saved_base_url[0] = _write_claude_wrap_base_url(
@@ -4176,6 +4232,7 @@ def claude(
             ),
             foundry_mode=_settings_foundry[0],
             vertex_mode=_settings_vertex[0],
+            bedrock_mode=_settings_bedrock[0],
             settings_path=_wrap_settings_path,
             port=port,
         )
@@ -4228,6 +4285,7 @@ def claude(
             _saved_base_url[0],
             foundry_mode=_settings_foundry[0],
             vertex_mode=_settings_vertex[0],
+            bedrock_mode=_settings_bedrock[0],
             settings_path=_wrap_settings_path,
         )
         cleanup()
@@ -4297,8 +4355,17 @@ def unwrap_claude(
         click.echo("  Kept rtk Claude hooks (--keep-rtk).")
 
     _unwrap_settings_path = Path.cwd() / ".claude" / "settings.local.json"
-    for _foundry, _vertex in ((False, False), (True, False), (False, True)):
-        _key = _claude_wrap_base_url_env_key(foundry_mode=_foundry, vertex_mode=_vertex)
+    for _foundry, _vertex, _bedrock in (
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+    ):
+        _key = _claude_wrap_base_url_env_key(
+            foundry_mode=_foundry,
+            vertex_mode=_vertex,
+            bedrock_mode=_bedrock,
+        )
         _marker = _read_wrap_marker(_unwrap_settings_path)
         _prior = (
             _marker.get("previous") if _marker is not None and _marker.get("key") == _key else None
@@ -4307,6 +4374,7 @@ def unwrap_claude(
             _prior,
             foundry_mode=_foundry,
             vertex_mode=_vertex,
+            bedrock_mode=_bedrock,
             settings_path=_unwrap_settings_path,
         )
 

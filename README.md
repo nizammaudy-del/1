@@ -102,7 +102,7 @@ headroom perf
 headroom dashboard                      # live savings dashboard (proxy must be running)
 ```
 
-To use headroom, it is recommended you launch a wrapped agent session each time so that all necessary setup is completed. When wrapping a coding agent, headroom starts a local proxy, sets up an MCP server that provides tools such as rtk and tokensave, and launches a coding agent session configured to proxy requests to headroom. 
+To use headroom, it is recommended you launch a wrapped agent session each time so that all necessary setup is completed. When wrapping a coding agent, headroom starts a local proxy, sets up an MCP server that provides tools such as rtk and tokensave, and launches a coding agent session configured to proxy requests to headroom.
 
 The `headroom` CLI ships **only** via the PyPI package. The npm `headroom-ai` is the TypeScript SDK — a library you import (`import { compress } from 'headroom-ai'`), not a CLI, so it provides no `headroom` command.
 
@@ -216,7 +216,7 @@ shows an **Output Tokens Saved** card next to input compression, labelled
 
 | Agent        | `headroom wrap` | Notes                            |
 |--------------|:---------------:|----------------------------------|
-| Claude Code  | ✅              | `--memory` · `--code-graph` · `--1m` · `--tool-search` |
+| Claude Code  | ✅              | `--memory` · `--code-graph` · `--1m` · `--tool-search` · Vertex / Bedrock auto-detected |
 | Codex        | ✅              | shares memory with Claude        |
 | Cursor       | Manual setup    | starts proxy and prints base URLs for Cursor settings |
 | Aider        | ✅              | starts proxy + launches          |

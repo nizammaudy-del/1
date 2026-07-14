@@ -35,6 +35,7 @@
     "strands",
     "litellm",
     "claude-code-vertex",
+    "claude-code-bedrock",
     "claude-code-azure-foundry",
     "opencode",
     "mcp",
