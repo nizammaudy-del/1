@@ -184,41 +184,36 @@ def test_no_native_tls_in_wheel_build_tree() -> None:
 def test_fastembed_uses_rustls_features() -> None:
     """The mechanism that keeps openssl-sys out of the build is
     fastembed's explicit rustls feature selection in headroom-core.
-    fastembed's default features include `hf-hub-native-tls` and
-    `ort-download-binaries-native-tls` — both pull openssl-sys.
-    Disabling defaults and enabling the rustls equivalents removes
-    the OpenSSL surface entirely.
+    fastembed's default features include `hf-hub-native-tls` (pulls
+    openssl-sys). Disabling defaults and enabling the rustls
+    equivalent removes the OpenSSL surface entirely.
     """
     cargo = (ROOT / "crates" / "headroom-core" / "Cargo.toml").read_text(encoding="utf-8")
 
     assert "default-features = false" in cargo
     assert '"hf-hub-rustls-tls"' in cargo
-    assert '"ort-download-binaries-rustls-tls"' in cargo
     # `image-models` is in default; we re-enable it explicitly so we
     # don't lose the image-embedding capability when defaults are off.
     assert '"image-models"' in cargo
 
 
-def test_fastembed_uses_dynamic_ort_on_windows() -> None:
-    """Windows and Intel macOS sdist builds must not link Pyke's ORT binaries.
+def test_fastembed_uses_dynamic_ort_everywhere() -> None:
+    """No build may statically link Pyke's prebuilt ORT binaries.
 
     `ort-download-binaries-*` emits platform SDK link libs (DirectML on
-    Windows; unavailable prebuilts on `x86_64-apple-darwin`). Those targets
-    must use ORT dynamic loading instead.
+    Windows; no prebuilts for `x86_64-apple-darwin`) and its Linux/macOS
+    binaries require AVX2 at load time, SIGILLing `import headroom._core`
+    on pre-AVX2 x86-64 CPUs (#1278). Every platform loads ORT dynamically
+    (`ort-load-dynamic`), resolved at runtime from the pip `onnxruntime`
+    package by `headroom/_ort.py` / the crate's loader guard.
     """
 
     cargo = (ROOT / "crates" / "headroom-core" / "Cargo.toml").read_text(encoding="utf-8")
-    for section_marker in (
-        "[target.'cfg(windows)'.dependencies]",
-        '[target.\'cfg(all(target_os = "macos", target_arch = "x86_64"))\'.dependencies]',
-    ):
-        assert section_marker in cargo, f"missing Cargo target section: {section_marker}"
-        section = cargo.split(section_marker, 1)[1].split("\n[", 1)[0]
-        dependency_lines = "\n".join(
-            line for line in section.splitlines() if not line.lstrip().startswith("#")
-        )
-        assert '"ort-load-dynamic"' in section
-        assert "ort-download-binaries" not in dependency_lines
+    dependency_lines = "\n".join(
+        line for line in cargo.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert '"ort-load-dynamic"' in dependency_lines
+    assert "ort-download-binaries" not in dependency_lines
 
 
 def test_dockerfiles_no_longer_install_openssl_devel() -> None:

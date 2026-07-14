@@ -1647,6 +1647,8 @@ langchain = [
 mcp = [
     { name = "httpx" },
     { name = "mcp" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 memory = [
     { name = "sentence-transformers", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
@@ -1844,6 +1846,7 @@ requires-dist = [
     { name = "sqlite-vec", marker = "extra == 'dev'", specifier = ">=0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'memory'", specifier = ">=0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'proxy'", specifier = ">=0.1.6" },
+    { name = "starlette", marker = "extra == 'mcp'", specifier = ">=0.27.0" },
     { name = "strands-agents", marker = "extra == 'strands'", specifier = ">=0.1.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
@@ -1857,6 +1860,7 @@ requires-dist = [
     { name = "tree-sitter", marker = "extra == 'code'", specifier = ">=0.25.2,<0.27" },
     { name = "tree-sitter-language-pack", marker = "extra == 'code'", specifier = ">=0.10.0,<1.0" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.23.0,<1.0" },
+    { name = "uvicorn", marker = "extra == 'mcp'", specifier = ">=0.23.0,<1.0" },
     { name = "uvicorn", marker = "extra == 'proxy'", specifier = ">=0.23.0,<1.0" },
     { name = "watchdog", marker = "extra == 'proxy'", specifier = ">=4.0.0" },
     { name = "websockets", marker = "extra == 'dev'", specifier = ">=13.0" },

@@ -37,7 +37,7 @@ Telemetry is **off by default** (opt-in). Opt in with `HEADROOM_TELEMETRY=on` or
 | `--max-connections` | `500` | Maximum upstream HTTP connections |
 | `--max-keepalive` | `100` | Maximum upstream keep-alive connections |
 | `--http-proxy` | None | HTTP proxy URL for upstream provider requests only; HTTPS provider APIs use CONNECT |
-| `--mode` | `token` | Optimization mode: `token` prioritizes compression, `cache` preserves provider prefix-cache stability |
+| `--mode` | `cache` | Optimization mode: `token` prioritizes compression, `cache` preserves provider prefix-cache stability. Default is `cache` (see [Savings profiles](#savings-profiles)) |
 | `--no-optimize` | `false` | Disable optimization (passthrough mode) |
 | `--no-cache` | `false` | Disable semantic caching |
 | `--no-rate-limit` | `false` | Disable rate limiting |
@@ -65,8 +65,8 @@ Avoid setting process-wide variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_P
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--mode token` | `token` | Prioritize token compression. This is the default. |
-| `--mode cache` | `token` | Preserve prior turns to maximize provider prefix-cache hit rate. |
+| `--mode token` | | Prioritize token compression; prior turns may be rewritten for maximum savings. |
+| `--mode cache` | default | Freeze prior turns to maximize provider prefix-cache hit rate. This is the effective default (see [Savings profiles](#savings-profiles)). |
 | `--intercept-tool-results` | `false` | Opt into tool-result interceptors such as ast-grep Read outlining. |
 | `--no-read-lifecycle` | `false` | Disable stale/superseded Read-output compression. |
 | `--code-aware` / `--no-code-aware` | disabled | Enable or disable AST-based code compression. Requires `headroom-ai[code]`. |
@@ -88,6 +88,26 @@ headroom proxy --mode token
 
 # Preserve provider prefix cache stability
 headroom proxy --mode cache
+```
+
+### Savings profiles
+
+`HEADROOM_SAVINGS_PROFILE` selects a named profile that seeds Headroom's whole compression posture — proxy mode, keep-ratio, which messages are compressed, and `force_kompress` — at proxy startup. It is read by `headroom proxy` and by the `headroom wrap` subprocesses. When unset, the default profile is `coding`.
+
+| Profile | Target savings | Mode | Notes |
+|---------|----------------|------|-------|
+| `coding` | emergent (~50%) | `cache` | **Default.** Delta-only compression at ~0 prefix-cache busts; never lossy-compresses file reads. |
+| `balanced` | ~70% | `token` | Moderate compression with structural compaction. Also the fallback for an unknown profile name. |
+| `agent-90` | ~90% | `token` | Aggressive; pins a `0.10` keep-ratio and forces Kompress. |
+| `general` | emergent (~60%) | `token` | Non-coding workloads. |
+
+An unrecognized `HEADROOM_SAVINGS_PROFILE` value logs a warning and falls back to `balanced` — the proxy never fails to start over a bad profile name. See `headroom/agent_savings.py` for each profile's full set of knobs.
+
+Because the default `coding` profile uses **cache** mode (and the proxy's own default mode is also `cache`), Headroom runs in cache mode out of the box. Mode precedence: an explicit `--mode` wins, otherwise `HEADROOM_MODE` (which a profile seeds), otherwise the `cache` default. To run token mode, pass `--mode token` or choose a token-mode profile:
+
+```bash
+# Aggressive ~90% token-savings profile
+HEADROOM_SAVINGS_PROFILE=agent-90 headroom proxy --port 8787
 ```
 
 ### Optional features
