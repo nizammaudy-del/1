@@ -967,7 +967,9 @@ async def test_ws_connect_failure_falls_back_to_http():
 
     fallback_calls: list[tuple] = []
 
-    async def _fallback(websocket, body, first_msg_raw, upstream_headers, request_id):
+    async def _fallback(
+        websocket, body, first_msg_raw, upstream_headers, request_id, upstream_base_url=None
+    ):
         fallback_calls.append((body, first_msg_raw))
 
     handler._ws_http_fallback = _fallback  # type: ignore[assignment]
@@ -1031,7 +1033,9 @@ async def test_ws_codex_responses_lite_header_is_not_forwarded_to_fallback():
 
     fallback_calls: list[dict[str, str]] = []
 
-    async def _fallback(websocket, body, first_msg_raw, upstream_headers, request_id):
+    async def _fallback(
+        websocket, body, first_msg_raw, upstream_headers, request_id, upstream_base_url=None
+    ):
         fallback_calls.append(dict(upstream_headers))
 
     handler._ws_http_fallback = _fallback  # type: ignore[assignment]

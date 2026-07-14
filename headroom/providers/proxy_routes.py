@@ -63,15 +63,28 @@ from headroom.proxy.request_scope import normalize_request_path
 logger = logging.getLogger("headroom.proxy.routes")
 
 
+def _select_openai_base_url(proxy: Any, headers: dict[str, str]) -> str:
+    custom_base = headers.get("x-headroom-base-url", "")
+    if custom_base:
+        normalized = custom_base.rstrip("/")
+        return normalized[:-3] if normalized.endswith("/v1") else normalized
+    return _api_target(proxy, "openai")
+
+
 def _register_provider_passthrough_route(
     app: FastAPI,
     proxy: Any,
     spec: ProviderPassthroughRoute,
 ) -> None:
     async def provider_passthrough(request: Request):
+        base_url = (
+            _select_openai_base_url(proxy, dict(request.headers))
+            if spec.provider_name == "openai"
+            else _api_target(proxy, spec.provider_name)
+        )
         return await proxy.handle_passthrough(
             request,
-            _api_target(proxy, spec.provider_name),
+            base_url,
             spec.sub_path,
             spec.provider_name,
         )
@@ -153,7 +166,7 @@ def _register_openai_responses_subpath_route(
         return await handle_openai_responses_subpath(
             proxy.http_client,
             request,
-            _api_target(proxy, "openai"),
+            _select_openai_base_url(proxy, dict(request.headers)),
             sub_path,
         )
 
@@ -180,7 +193,7 @@ def _register_openai_image_route(app: FastAPI, proxy: Any, endpoint: OpenAIImage
         return await handle_openai_image_endpoint(
             proxy,
             request,
-            openai_api_base_url=_api_target(proxy, "openai"),
+            openai_api_base_url=_select_openai_base_url(proxy, dict(request.headers)),
             endpoint=endpoint,
         )
 
@@ -417,7 +430,11 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
             proxy,
             request,
             endpoint=MODEL_METADATA_LIST_ENDPOINT,
-            provider_api_base_url=_api_target(proxy, provider_name),
+            provider_api_base_url=(
+                _select_openai_base_url(proxy, dict(request.headers))
+                if provider_name == "openai"
+                else _api_target(proxy, provider_name)
+            ),
             provider_name=provider_name,
         )
 
@@ -428,7 +445,11 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
             proxy,
             request,
             endpoint=model_metadata_get_endpoint(model_id),
-            provider_api_base_url=_api_target(proxy, provider_name),
+            provider_api_base_url=(
+                _select_openai_base_url(proxy, dict(request.headers))
+                if provider_name == "openai"
+                else _api_target(proxy, provider_name)
+            ),
             provider_name=provider_name,
         )
 

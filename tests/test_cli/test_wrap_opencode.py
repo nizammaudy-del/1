@@ -11,6 +11,13 @@ from click.testing import CliRunner
 
 from headroom.cli import wrap as wrap_mod
 from headroom.cli.main import main
+from headroom.providers.opencode.config import _resolve_plugin_spec
+
+
+def _expected_plugin_entry(port: int) -> list[object]:
+    return [
+        [_resolve_plugin_spec(), {"proxyUrl": f"http://127.0.0.1:{port}", "mode": "native-fetch"}]
+    ]
 
 
 @pytest.fixture
@@ -36,7 +43,7 @@ def test_wrap_opencode_sets_config_content_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OPENCODE_CONFIG_CONTENT env var is set with the headroom provider."""
+    """HEADROOM_PROXY_URL env var is set and the plugin is installed as local files."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
     _set_test_home(monkeypatch, tmp_path)
@@ -59,11 +66,10 @@ def test_wrap_opencode_sets_config_content_env(
     assert result.exit_code == 0, result.output
     env = captured["env"]
     assert isinstance(env, dict)
-    assert "OPENCODE_CONFIG_CONTENT" in env
-    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
-    assert config["provider"]["headroom"]["npm"] == "@ai-sdk/openai-compatible"
-    assert config["provider"]["headroom"]["options"]["baseURL"] == "http://127.0.0.1:9000/v1"
-    assert "model" not in config  # headroom provider is a transparent pass-through
+    assert "OPENCODE_CONFIG_CONTENT" not in env
+    assert env["HEADROOM_PROXY_URL"] == "http://127.0.0.1:9000"
+    plugin_dir = tmp_path / ".config" / "opencode" / "plugins"
+    assert list(plugin_dir.glob("index.js"))
     assert captured["tool_label"] == "OPENCODE"
     assert captured["agent_type"] == "opencode"
     assert captured["args"] == ("--model", "gpt-4o")
@@ -120,7 +126,7 @@ def test_wrap_opencode_prepare_only_injects_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`wrap opencode --prepare-only` writes the provider config to opencode.json."""
+    """`wrap opencode --prepare-only` installs the plugin as local files."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
     _set_test_home(monkeypatch, tmp_path)
@@ -130,10 +136,12 @@ def test_wrap_opencode_prepare_only_injects_config(
             result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--prepare-only"])
 
     assert result.exit_code == 0, result.output
+    plugin_dir = tmp_path / ".config" / "opencode" / "plugins"
+    assert list(plugin_dir.glob("index.js"))
     config_file = tmp_path / ".config" / "opencode" / "opencode.json"
-    assert config_file.exists()
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert config["provider"]["headroom"]["options"]["baseURL"] == "http://127.0.0.1:9000/v1"
+    if config_file.exists():
+        config = json.loads(config_file.read_text())
+        assert "provider" not in config
 
 
 def test_wrap_opencode_prepare_only_registers_serena_with_agent_context(
@@ -178,11 +186,8 @@ def test_wrap_opencode_no_mcp_skips_mcp_injection(
 
     assert result.exit_code == 0, result.output
     env = captured["env"]
-    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
-    assert "mcp" not in config
-    config_file = tmp_path / ".config" / "opencode" / "opencode.json"
-    persisted_config = json.loads(config_file.read_text())
-    assert "headroom" not in persisted_config.get("mcp", {})
+    assert "OPENCODE_CONFIG_CONTENT" not in env
+    assert env["HEADROOM_PROXY_URL"] == "http://127.0.0.1:9000"
 
 
 def test_wrap_opencode_injects_mcp_by_default(
@@ -190,7 +195,7 @@ def test_wrap_opencode_injects_mcp_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MCP is included in OPENCODE_CONFIG_CONTENT by default."""
+    """Runtime env stays plugin-only; MCP is handled by the registrar."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
     _set_test_home(monkeypatch, tmp_path)
@@ -203,18 +208,14 @@ def test_wrap_opencode_injects_mcp_by_default(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=fake_launch_tool):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                result = runner.invoke(main, ["wrap", "opencode", "--port", "9000"])
+                with patch.object(wrap_mod, "_setup_headroom_mcp"):
+                    with patch.object(wrap_mod, "_setup_serena_mcp"):
+                        result = runner.invoke(main, ["wrap", "opencode", "--port", "9000"])
 
     assert result.exit_code == 0, result.output
     env = captured["env"]
-    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
-    assert "mcp" in config
-    assert config["mcp"]["headroom"] == {
-        "type": "local",
-        "command": ["headroom", "mcp", "serve"],
-        "enabled": True,
-        "environment": {"HEADROOM_PROXY_URL": "http://127.0.0.1:9000"},
-    }
+    assert "OPENCODE_CONFIG_CONTENT" not in env
+    assert env["HEADROOM_PROXY_URL"] == "http://127.0.0.1:9000"
 
 
 def test_wrap_opencode_injects_rtk_into_agents_md(
@@ -230,15 +231,17 @@ def test_wrap_opencode_injects_rtk_into_agents_md(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
+                result = runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-serena"]
+                )
 
     assert result.exit_code == 0, result.output
     global_agents = tmp_path / ".config" / "opencode" / "AGENTS.md"
     project_agents = tmp_path / "AGENTS.md"
     assert global_agents.exists(), "Global AGENTS.md should be created"
     assert project_agents.exists(), "Project AGENTS.md should be created"
-    assert wrap_mod._RTK_MARKER in global_agents.read_text(encoding="utf-8")
-    assert wrap_mod._RTK_MARKER in project_agents.read_text(encoding="utf-8")
+    assert wrap_mod._RTK_MARKER in global_agents.read_text()
+    assert wrap_mod._RTK_MARKER in project_agents.read_text()
 
 
 def test_unwrap_opencode_removes_rtk_from_agents_md(
@@ -327,7 +330,7 @@ def test_wrap_opencode_idempotent_no_duplicate_block(
                 runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
 
     project_agents = tmp_path / "AGENTS.md"
-    content = project_agents.read_text(encoding="utf-8")
+    content = project_agents.read_text()
     assert content.count(wrap_mod._RTK_MARKER) == 1
 
 
@@ -358,7 +361,7 @@ def test_unwrap_opencode_restores_from_backup(
     assert result.exit_code == 0, result.output
     assert "Restored prior" in result.output
     assert not backup_file.exists()
-    assert config_file.read_text(encoding="utf-8") == original
+    assert config_file.read_text() == original
 
 
 def test_unwrap_opencode_strips_blocks_when_no_backup(
@@ -387,8 +390,8 @@ def test_unwrap_opencode_strips_blocks_when_no_backup(
 
     assert result.exit_code == 0, result.output
     assert "Removed Headroom block" in result.output
-    assert user_content in config_file.read_text(encoding="utf-8")
-    assert wrap_mod._PROVIDER_MARKER_START not in config_file.read_text(encoding="utf-8")
+    assert user_content in config_file.read_text()
+    assert wrap_mod._PROVIDER_MARKER_START not in config_file.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +404,7 @@ def test_wrap_opencode_preserves_existing_user_providers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wrap merges headroom provider without disturbing user's existing providers."""
+    """Wrap preserves the user's provider config and injects only the plugin bootstrap."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
     _set_test_home(monkeypatch, tmp_path)
@@ -416,9 +419,9 @@ def test_wrap_opencode_preserves_existing_user_providers(
                 result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
 
     assert result.exit_code == 0, result.output
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert "headroom" in config["provider"], "headroom provider not injected"
+    config = json.loads(config_file.read_text())
     assert "openai" in config["provider"], "user's openai provider was removed"
+    assert "plugin" not in config
 
 
 def test_wrap_opencode_port_change_updates_existing_config(
@@ -426,7 +429,7 @@ def test_wrap_opencode_port_change_updates_existing_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wrapping with a different port updates the baseURL in opencode.json."""
+    """Runtime wrap keeps persistent config clean across different proxy ports."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
     _set_test_home(monkeypatch, tmp_path)
@@ -434,12 +437,15 @@ def test_wrap_opencode_port_change_updates_existing_config(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
-                runner.invoke(main, ["wrap", "opencode", "--port", "9001", "--no-mcp"])
+                runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-serena"]
+                )
+                runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9001", "--no-mcp", "--no-serena"]
+                )
 
     config_file = tmp_path / ".config" / "opencode" / "opencode.json"
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert config["provider"]["headroom"]["options"]["baseURL"] == "http://127.0.0.1:9001/v1"
+    assert not config_file.exists()
 
 
 def test_wrap_opencode_handles_malformed_config_file(
@@ -461,16 +467,15 @@ def test_wrap_opencode_handles_malformed_config_file(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
+                result = runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-serena"]
+                )
 
     assert result.exit_code == 0, result.output
     assert backup_file.exists(), "backup must be created before overwriting"
-    assert backup_file.read_text(encoding="utf-8") == malformed, (
-        "backup must preserve original byte-for-byte"
-    )
-    # The config file is now valid JSON with headroom provider.
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert "headroom" in config.get("provider", {})
+    assert backup_file.read_text() == malformed, "backup must preserve original byte-for-byte"
+    # Runtime wrap leaves malformed user config untouched while still snapshotting it.
+    assert config_file.read_text() == malformed
 
 
 def test_wrap_opencode_handles_empty_config_file(
@@ -490,11 +495,12 @@ def test_wrap_opencode_handles_empty_config_file(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
+                result = runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-serena"]
+                )
 
     assert result.exit_code == 0, result.output
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert config["provider"]["headroom"]["options"]["baseURL"] == "http://127.0.0.1:9000/v1"
+    assert config_file.read_text() == ""
 
 
 def test_wrap_opencode_handles_config_dir_missing(
@@ -513,11 +519,13 @@ def test_wrap_opencode_handles_config_dir_missing(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
+                result = runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-serena"]
+                )
 
     assert result.exit_code == 0, result.output
     assert config_dir.exists()
-    assert (config_dir / "opencode.json").exists()
+    assert not (config_dir / "opencode.json").exists()
 
 
 def test_wrap_opencode_rtk_preserves_existing_agents_md(
@@ -536,10 +544,12 @@ def test_wrap_opencode_rtk_preserves_existing_agents_md(
     with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
         with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
-                result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
+                result = runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-serena"]
+                )
 
     assert result.exit_code == 0, result.output
-    content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    content = (tmp_path / "AGENTS.md").read_text()
     assert existing_content in content
     assert wrap_mod._RTK_MARKER in content
 
@@ -565,7 +575,7 @@ def test_wrap_opencode_no_rtk_leaves_agents_md_untouched(
                 )
 
     assert result.exit_code == 0, result.output
-    content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    content = (tmp_path / "AGENTS.md").read_text()
     assert content == existing_content, "--no-rtk modified AGENTS.md"
     assert wrap_mod._RTK_MARKER not in content
 
@@ -575,7 +585,7 @@ def test_wrap_opencode_respects_opencode_config_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OPENCODE_CONFIG env var overrides the default config path."""
+    """OPENCODE_CONFIG env var redirects any persistent config writes."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
     _set_test_home(monkeypatch, tmp_path)
@@ -590,6 +600,7 @@ def test_wrap_opencode_respects_opencode_config_env(
 
     assert result.exit_code == 0, result.output
     assert custom_config.exists()
+    assert "headroom-opencode" not in custom_config.read_text()
     default_config = tmp_path / ".config" / "opencode" / "opencode.json"
     assert not default_config.exists(), (
         "default config should not be created when OPENCODE_CONFIG is set"
@@ -670,9 +681,45 @@ def test_wrap_opencode_config_merges_existing_model(
                 result = runner.invoke(main, ["wrap", "opencode", "--port", "9000", "--no-mcp"])
 
     assert result.exit_code == 0, result.output
-    config = json.loads(config_file.read_text(encoding="utf-8"))
+    config = json.loads(config_file.read_text())
     assert config["model"] == "openai/gpt-4o"
-    assert config["provider"]["headroom"]["npm"] == "@ai-sdk/openai-compatible"
+    assert "plugin" not in config
+
+
+def test_wrap_opencode_cleans_stale_persisted_headroom_plugin(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime wrap repairs old persistent plugin state from earlier Headroom versions."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HEADROOM_CONTEXT_TOOL", raising=False)
+    _set_test_home(monkeypatch, tmp_path)
+
+    config_file = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        json.dumps(
+            {
+                "model": "openai/gpt-4o",
+                "plugin": _expected_plugin_entry(9000),
+                "mcp": {"existing": {"type": "local", "command": ["echo"]}},
+            }
+        )
+    )
+
+    with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
+        with patch.object(wrap_mod, "_launch_tool", side_effect=SystemExit(0)):
+            with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
+                result = runner.invoke(
+                    main, ["wrap", "opencode", "--port", "9001", "--no-mcp", "--no-serena"]
+                )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads(config_file.read_text())
+    assert config["model"] == "openai/gpt-4o"
+    assert config["mcp"] == {"existing": {"type": "local", "command": ["echo"]}}
+    assert "plugin" not in config
 
 
 # ---------------------------------------------------------------------------
@@ -738,7 +785,36 @@ def test_unwrap_opencode_noop_when_no_headroom_markers(
 
     assert result.exit_code == 0, result.output
     assert "no Headroom wrap markers" in result.output
-    assert config_file.read_text(encoding="utf-8").strip() == '{"model": "openai/gpt-4o"}'
+    assert config_file.read_text().strip() == '{"model": "openai/gpt-4o"}'
+
+
+def test_unwrap_opencode_removes_stale_persisted_plugin_without_backup(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unwrap repairs older persistent plugin injection even without marker blocks."""
+    monkeypatch.chdir(tmp_path)
+    _set_test_home(monkeypatch, tmp_path)
+
+    config_file = tmp_path / ".config" / "opencode" / "opencode.json"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        json.dumps(
+            {
+                "model": "openai/gpt-4o",
+                "plugin": _expected_plugin_entry(8787),
+            }
+        )
+    )
+
+    with patch.object(wrap_mod, "_stop_local_proxy_for_unwrap", return_value="stopped"):
+        result = runner.invoke(main, ["unwrap", "opencode"])
+
+    assert result.exit_code == 0, result.output
+    assert "persisted Headroom OpenCode plugin" in result.output
+    config = json.loads(config_file.read_text())
+    assert config == {"model": "openai/gpt-4o"}
 
 
 def test_wrap_unwrap_rewrap_is_idempotent(
@@ -767,7 +843,7 @@ def test_wrap_unwrap_rewrap_is_idempotent(
         runner.invoke(main, ["unwrap", "opencode"])
 
     # After unwrap, file should match original
-    after_unwrap = json.loads(config_file.read_text(encoding="utf-8"))
+    after_unwrap = json.loads(config_file.read_text())
     assert after_unwrap["model"] == "openai/gpt-4o"
     assert "headroom" not in after_unwrap.get("provider", {})
 
@@ -777,10 +853,10 @@ def test_wrap_unwrap_rewrap_is_idempotent(
             with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=Path("/tmp/rtk")):
                 runner.invoke(main, ["wrap", "opencode", "--port", "9001", "--no-mcp"])
 
-    # After re-wrap, headroom should be back, model unchanged
-    after_rewrap = json.loads(config_file.read_text(encoding="utf-8"))
+    # After re-wrap, user config remains native and model stays unchanged.
+    after_rewrap = json.loads(config_file.read_text())
     assert after_rewrap["model"] == "openai/gpt-4o"
-    assert "headroom" in after_rewrap.get("provider", {})
+    assert "plugin" not in after_rewrap
 
 
 def test_unwrap_opencode_restores_backup_and_removes_it(
@@ -943,51 +1019,3 @@ def test_wrap_opencode_respects_opencode_home_env(
     assert result.exit_code == 0, result.output
     agents_md = Path(custom_home) / "AGENTS.md"
     assert agents_md.exists()
-
-
-# ---------------------------------------------------------------------------
-# Regression: unwrap must preserve non-ASCII UTF-8 user content (#1126)
-# ---------------------------------------------------------------------------
-
-
-def test_unwrap_opencode_preserves_utf8_user_content(
-    runner: CliRunner,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unwrap strips Headroom blocks but preserves non-ASCII UTF-8 user content (#1126)."""
-    monkeypatch.chdir(tmp_path)
-    _set_test_home(monkeypatch, tmp_path)
-
-    config_file = tmp_path / ".config" / "opencode" / "opencode.json"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # User content with smart quotes and em dashes (non-ASCII UTF-8)
-    user_config = {
-        "model": "openai/gpt-4o",
-        "description": "“smart quotes” and an em dash — here",
-    }
-    user_json = json.dumps(user_config, ensure_ascii=False)
-
-    wrapped_content = (
-        wrap_mod._PROVIDER_MARKER_START
-        + '\n"provider": {},\n'
-        + wrap_mod._PROVIDER_MARKER_END
-        + "\n"
-        + user_json
-    )
-    config_file.write_text(wrapped_content, encoding="utf-8")
-
-    # Mock out OpencodeRegistrar to avoid its own bare-open encoding issue
-    # (pre-existing; outside this PR's scope).
-    fake_registrar = type("FakeRegistrar", (), {"detect": lambda self: False})()
-    with patch.object(wrap_mod, "_stop_local_proxy_for_unwrap", return_value="stopped"):
-        with patch("headroom.mcp_registry.OpencodeRegistrar", return_value=fake_registrar):
-            result = runner.invoke(main, ["unwrap", "opencode"])
-
-    assert result.exit_code == 0, result.output
-    assert "Removed Headroom block" in result.output
-    content = config_file.read_text(encoding="utf-8")
-    assert "“smart quotes”" in content
-    assert "—" in content
-    assert wrap_mod._PROVIDER_MARKER_START not in content

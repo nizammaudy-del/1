@@ -731,7 +731,7 @@ def test_dashboard_uses_cached_stats_and_lazy_history_feed_polling() -> None:
     assert "0.3.0" not in html
     assert "@click=\"setViewMode('history')\"" in html
     assert '@click="toggleFeed()"' in html
-    assert "this.viewMode === 'history'" in html
+    assert "this.lastHistoryFetchMs >= this.historyPollMs" in html
     assert "this.feedOpen" in html
     assert "CLI Filtering (rtk)" not in html
     assert "RTK Filtered" not in html
