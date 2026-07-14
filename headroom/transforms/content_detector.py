@@ -260,24 +260,33 @@ def _try_detect_json(content: str) -> DetectionResult | None:
 
     try:
         value = json.loads(stripped)
+    except RecursionError:
+        # Deeply nested JSON (e.g. ``[[[[...]]]]`` with 10k+ levels) can
+        # exceed Python's recursion limit. Treat as non-JSON so the router
+        # falls through to a safe strategy instead of crashing.
+        return None
     except ValueError:
         # Not pure JSON. First: a run of whitespace-separated top-level JSON
         # objects (web_search output, #1741) -> JSON_ARRAY.
         if stripped.startswith("{"):
-            items = _decode_concatenated_json(stripped)
+            try:
+                items = _decode_concatenated_json(stripped)
+            except RecursionError:
+                return None
             if items and len(items) >= 2 and all(isinstance(item, dict) for item in items):
                 return DetectionResult(
                     ContentType.JSON_ARRAY,
                     1.0,
                     {"item_count": len(items), "is_dict_array": True, "concatenated": True},
                 )
+
         # Otherwise decode one JSON value out of a small wrapped payload.
         start = min((i for i in (stripped.find("{"), stripped.find("[")) if i >= 0), default=-1)
         if start < 0:
             return None
         try:
             value, end = _JSON_DECODER.raw_decode(stripped, start)
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
         # Accept only when the decoded JSON is the BULK of the content (see
         # _JSON_MIN_BULK_FRACTION) — a small structural wrapper around a JSON body,
@@ -286,7 +295,7 @@ def _try_detect_json(content: str) -> DetectionResult | None:
             return None
 
     # A bare scalar (42, "s", true) is not structured data worth routing as JSON.
-    if not isinstance(value, (dict, list)):
+    if not isinstance(value, dict | list):
         return None
 
     if isinstance(value, list):
