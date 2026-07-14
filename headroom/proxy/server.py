@@ -3212,8 +3212,242 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         total_tokens_all_layers = all_layers_tokens_saved
         persistent_savings = m.savings_tracker.stats_preview()
         display_session = persistent_savings.get("display_session", {})
+        lifetime_scope = persistent_savings.get("lifetime", {})
+        display_session_scope = persistent_savings.get("display_session", {})
         recent_request_logs = proxy.logger.get_recent(10_000) if proxy.logger else []
         recent_request_payload = _build_recent_request_payload()
+
+        def _build_scope_cache(
+            raw_cache: dict[str, Any],
+            *,
+            cache_read_tokens: int,
+            cache_savings_usd: float,
+        ) -> dict[str, Any]:
+            cache_write_tokens = int(raw_cache.get("cache_write_tokens", 0) or 0)
+            uncached_input_tokens = int(raw_cache.get("uncached_input_tokens", 0) or 0)
+            requests = int(raw_cache.get("requests", 0) or 0)
+            hit_requests = int(raw_cache.get("hit_requests", 0) or 0)
+            total_input = cache_read_tokens + cache_write_tokens + uncached_input_tokens
+            observed_5m_tokens = int(raw_cache.get("cache_write_5m_tokens", 0) or 0)
+            observed_1h_tokens = int(raw_cache.get("cache_write_1h_tokens", 0) or 0)
+            observed_total_tokens = observed_5m_tokens + observed_1h_tokens
+            return {
+                "cache_read_tokens": cache_read_tokens,
+                "cache_savings_usd": round(float(cache_savings_usd or 0.0), 6),
+                "cache_write_tokens": cache_write_tokens,
+                "cache_write_5m_tokens": observed_5m_tokens,
+                "cache_write_1h_tokens": observed_1h_tokens,
+                "cache_write_5m_requests": int(raw_cache.get("cache_write_5m_requests", 0) or 0),
+                "cache_write_1h_requests": int(raw_cache.get("cache_write_1h_requests", 0) or 0),
+                "uncached_input_tokens": uncached_input_tokens,
+                "requests": requests,
+                "hit_requests": hit_requests,
+                "bust_count": int(raw_cache.get("bust_count", 0) or 0),
+                "bust_write_tokens": int(raw_cache.get("bust_write_tokens", 0) or 0),
+                "cache_bust_count": int(raw_cache.get("cache_bust_count", 0) or 0),
+                "cache_bust_tokens_lost": int(raw_cache.get("cache_bust_tokens_lost", 0) or 0),
+                "hit_rate": round(cache_read_tokens / total_input * 100, 1)
+                if total_input > 0
+                else 0.0,
+                "request_hit_rate": round(hit_requests / requests * 100, 1)
+                if requests > 0
+                else 0.0,
+                "observed_ttl_buckets": {
+                    "5m": {
+                        "tokens": observed_5m_tokens,
+                        "requests": int(raw_cache.get("cache_write_5m_requests", 0) or 0),
+                    },
+                    "1h": {
+                        "tokens": observed_1h_tokens,
+                        "requests": int(raw_cache.get("cache_write_1h_requests", 0) or 0),
+                    },
+                },
+                "observed_ttl_mix": {
+                    "5m_pct": round(observed_5m_tokens / observed_total_tokens * 100, 1)
+                    if observed_total_tokens > 0
+                    else 0.0,
+                    "1h_pct": round(observed_1h_tokens / observed_total_tokens * 100, 1)
+                    if observed_total_tokens > 0
+                    else 0.0,
+                    "active_buckets": [
+                        bucket
+                        for bucket, tokens in (
+                            ("5m", observed_5m_tokens),
+                            ("1h", observed_1h_tokens),
+                        )
+                        if tokens > 0
+                    ],
+                },
+            }
+
+        def _build_scope_compression(
+            flat_scope: dict[str, Any],
+            raw_compression: dict[str, Any],
+        ) -> dict[str, Any]:
+            return {
+                "tokens_saved": int(flat_scope.get("tokens_saved", 0) or 0),
+                "compression_savings_usd": round(
+                    float(flat_scope.get("compression_savings_usd", 0.0) or 0.0),
+                    6,
+                ),
+                "total_input_tokens": int(flat_scope.get("total_input_tokens", 0) or 0),
+                "total_input_cost_usd": round(
+                    float(flat_scope.get("total_input_cost_usd", 0.0) or 0.0),
+                    6,
+                ),
+                "compressions_by_strategy": dict(
+                    raw_compression.get("compressions_by_strategy", {}) or {}
+                ),
+                "tokens_saved_by_strategy": dict(
+                    raw_compression.get("tokens_saved_by_strategy", {}) or {}
+                ),
+            }
+
+        def _build_scope_codex_ws(raw_codex_ws: dict[str, Any]) -> dict[str, Any]:
+            units_total = int(raw_codex_ws.get("units_total", 0) or 0)
+            frames_attempted_total = int(raw_codex_ws.get("frames_attempted_total", 0) or 0)
+            unit_elapsed_ms_sum = float(raw_codex_ws.get("unit_elapsed_ms_sum", 0.0) or 0.0)
+            frame_elapsed_ms_sum = float(raw_codex_ws.get("frame_elapsed_ms_sum", 0.0) or 0.0)
+            return {
+                "units_total": units_total,
+                "units_modified_total": int(raw_codex_ws.get("units_modified_total", 0) or 0),
+                "units_by_strategy": dict(raw_codex_ws.get("units_by_strategy", {}) or {}),
+                "units_by_category": dict(raw_codex_ws.get("units_by_category", {}) or {}),
+                "units_by_content_type": dict(raw_codex_ws.get("units_by_content_type", {}) or {}),
+                "units_by_text_shape": dict(raw_codex_ws.get("units_by_text_shape", {}) or {}),
+                "units_to_kompress_total": int(raw_codex_ws.get("units_to_kompress_total", 0) or 0),
+                "units_kompress_attempted_total": int(
+                    raw_codex_ws.get("units_kompress_attempted_total", 0) or 0
+                ),
+                "units_to_kompress_percent": _pct(
+                    raw_codex_ws.get("units_to_kompress_total", 0),
+                    units_total,
+                ),
+                "units_kompress_attempted_percent": _pct(
+                    raw_codex_ws.get("units_kompress_attempted_total", 0),
+                    units_total,
+                ),
+                "unit_elapsed_ms_sum": round(unit_elapsed_ms_sum, 6),
+                "unit_elapsed_ms": {
+                    "average": round(unit_elapsed_ms_sum / units_total, 2) if units_total else 0.0,
+                    "max": round(float(raw_codex_ws.get("unit_elapsed_ms_max", 0.0) or 0.0), 2),
+                },
+                "unit_bytes_sum": int(raw_codex_ws.get("unit_bytes_sum", 0) or 0),
+                "unit_tokens_before_sum": int(raw_codex_ws.get("unit_tokens_before_sum", 0) or 0),
+                "unit_tokens_after_sum": int(raw_codex_ws.get("unit_tokens_after_sum", 0) or 0),
+                "unit_tokens_saved_sum": int(raw_codex_ws.get("unit_tokens_saved_sum", 0) or 0),
+                "frames_attempted_total": frames_attempted_total,
+                "frames_compressed_total": int(raw_codex_ws.get("frames_compressed_total", 0) or 0),
+                "frames_failed_total": int(raw_codex_ws.get("frames_failed_total", 0) or 0),
+                "frames_to_kompress_total": int(
+                    raw_codex_ws.get("frames_to_kompress_total", 0) or 0
+                ),
+                "frames_kompress_attempted_total": int(
+                    raw_codex_ws.get("frames_kompress_attempted_total", 0) or 0
+                ),
+                "frames_to_kompress_percent": _pct(
+                    raw_codex_ws.get("frames_to_kompress_total", 0),
+                    frames_attempted_total,
+                ),
+                "frames_kompress_attempted_percent": _pct(
+                    raw_codex_ws.get("frames_kompress_attempted_total", 0),
+                    frames_attempted_total,
+                ),
+                "frame_elapsed_ms_sum": round(frame_elapsed_ms_sum, 6),
+                "frame_elapsed_ms": {
+                    "average": round(frame_elapsed_ms_sum / frames_attempted_total, 2)
+                    if frames_attempted_total
+                    else 0.0,
+                    "max": round(float(raw_codex_ws.get("frame_elapsed_ms_max", 0.0) or 0.0), 2),
+                },
+                "frame_bytes_before_sum": int(raw_codex_ws.get("frame_bytes_before_sum", 0) or 0),
+                "frame_bytes_after_sum": int(raw_codex_ws.get("frame_bytes_after_sum", 0) or 0),
+                "frame_attempted_tokens_sum": int(
+                    raw_codex_ws.get("frame_attempted_tokens_sum", 0) or 0
+                ),
+                "frame_tokens_saved_sum": int(raw_codex_ws.get("frame_tokens_saved_sum", 0) or 0),
+            }
+
+        current_process_cache_raw = dict(prefix_cache_stats.get("totals", {}) or {})
+        current_process_cache_raw["cache_bust_count"] = m.cache_bust_count
+        current_process_cache_raw["cache_bust_tokens_lost"] = m.cache_bust_tokens_lost
+        current_process_scope = {
+            "requests": {"total": m.requests_total},
+            "cache": _build_scope_cache(
+                current_process_cache_raw,
+                cache_read_tokens=int(
+                    prefix_cache_stats.get("totals", {}).get("cache_read_tokens", 0) or 0
+                ),
+                cache_savings_usd=float(getattr(m, "cache_savings_usd_total", 0.0) or 0.0),
+            ),
+            "compression": _build_scope_compression(
+                {
+                    "tokens_saved": m.tokens_saved_total,
+                    "compression_savings_usd": getattr(m, "compression_savings_usd_total", 0.0),
+                    "total_input_tokens": m.tokens_input_total,
+                    "total_input_cost_usd": getattr(m, "input_cost_usd_total", 0.0),
+                },
+                {
+                    "compressions_by_strategy": dict(m.compressions_by_strategy),
+                    "tokens_saved_by_strategy": dict(m.tokens_saved_by_strategy),
+                },
+            ),
+            "codex_ws": _build_scope_codex_ws(
+                {
+                    "units_total": m.codex_ws_units_total,
+                    "units_modified_total": m.codex_ws_units_modified_total,
+                    "units_by_strategy": dict(m.codex_ws_units_by_strategy),
+                    "units_by_category": dict(m.codex_ws_units_by_category),
+                    "units_by_content_type": dict(m.codex_ws_units_by_content_type),
+                    "units_by_text_shape": dict(m.codex_ws_units_by_text_shape),
+                    "units_to_kompress_total": m.codex_ws_units_to_kompress_total,
+                    "units_kompress_attempted_total": m.codex_ws_units_kompress_attempted_total,
+                    "unit_elapsed_ms_sum": m.codex_ws_unit_elapsed_ms_sum,
+                    "unit_elapsed_ms_max": m.codex_ws_unit_elapsed_ms_max,
+                    "unit_bytes_sum": m.codex_ws_unit_bytes_sum,
+                    "unit_tokens_before_sum": m.codex_ws_unit_tokens_before_sum,
+                    "unit_tokens_after_sum": m.codex_ws_unit_tokens_after_sum,
+                    "unit_tokens_saved_sum": m.codex_ws_unit_tokens_saved_sum,
+                    "frames_attempted_total": m.codex_ws_frames_attempted_total,
+                    "frames_compressed_total": m.codex_ws_frames_compressed_total,
+                    "frames_failed_total": m.codex_ws_frames_failed_total,
+                    "frames_to_kompress_total": m.codex_ws_frames_to_kompress_total,
+                    "frames_kompress_attempted_total": m.codex_ws_frames_kompress_attempted_total,
+                    "frame_elapsed_ms_sum": m.codex_ws_frame_elapsed_ms_sum,
+                    "frame_elapsed_ms_max": m.codex_ws_frame_elapsed_ms_max,
+                    "frame_bytes_before_sum": m.codex_ws_frame_bytes_before_sum,
+                    "frame_bytes_after_sum": m.codex_ws_frame_bytes_after_sum,
+                    "frame_attempted_tokens_sum": m.codex_ws_frame_attempted_tokens_sum,
+                    "frame_tokens_saved_sum": m.codex_ws_frame_tokens_saved_sum,
+                }
+            ),
+        }
+
+        def _persistent_metric_scope(scope_data: dict[str, Any]) -> dict[str, Any]:
+            aggregates = scope_data.get("aggregates", {}) if isinstance(scope_data, dict) else {}
+            return {
+                "requests": {"total": int(scope_data.get("requests", 0) or 0)},
+                "cache": _build_scope_cache(
+                    aggregates.get("cache", {}) if isinstance(aggregates, dict) else {},
+                    cache_read_tokens=int(scope_data.get("cache_read_tokens", 0) or 0),
+                    cache_savings_usd=float(scope_data.get("cache_savings_usd", 0.0) or 0.0),
+                ),
+                "compression": _build_scope_compression(
+                    scope_data,
+                    aggregates.get("compression", {}) if isinstance(aggregates, dict) else {},
+                ),
+                "codex_ws": _build_scope_codex_ws(
+                    aggregates.get("codex_ws", {}) if isinstance(aggregates, dict) else {}
+                ),
+            }
+
+        metric_scopes = {
+            "current_process": current_process_scope,
+            "display_session": _persistent_metric_scope(display_session_scope),
+            "lifetime": _persistent_metric_scope(lifetime_scope),
+            "process_started_at": getattr(m, "process_started_at", None),
+            "updated_at": persistent_savings.get("updated_at"),
+        }
 
         # Tool-schema deferral savings: tool-definition tokens kept out of the
         # model's context by deferring heavy schemas until they're needed
@@ -3525,6 +3759,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             },
             "savings_history": m.savings_history[-100:],  # Last 100 data points
             "display_session": display_session,
+            "metric_scopes": metric_scopes,
             # Whether LiteLLM is importable. Pricing (the "$ Saved" tile) is
             # derived entirely from LiteLLM's cost tables, and LiteLLM is gated
             # off on Python >=3.14 in pyproject — so when this is False the
