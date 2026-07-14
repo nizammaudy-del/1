@@ -640,7 +640,7 @@ def _restore_target(target: Path, target_backup: Path, target_existed: bool) -> 
     # Windows can retain SQLite file handles until statement finalizers run.
     gc.collect()
     if target.exists():
-        shutil.rmtree(target)
+        target.replace(target_backup.parent / "target-failed")
     if target_existed:
         shutil.copytree(target_backup, target, symlinks=True)
 

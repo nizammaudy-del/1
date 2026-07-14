@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+import headroom.providers.codex.recovery as codex_recovery
 from headroom.cli.main import main
 from headroom.providers.codex.recovery import discover_dangling_homes, recover_codex_home
 
@@ -264,6 +266,33 @@ def test_recovery_rolls_back_when_sqlite_schema_differs(tmp_path: Path) -> None:
         assert connection.execute("SELECT id, title FROM threads").fetchall() == [
             ("target", "Target")
         ]
+
+
+def test_recovery_rollback_does_not_delete_live_target_recursively(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    (target / "config.toml").write_text('model = "target"\n', encoding="utf-8")
+    (source / "config.toml").write_text('model = "source"\n', encoding="utf-8")
+    _write_db(target / "state_5.sqlite", [("target", "Target")])
+    with sqlite3.connect(source / "state_5.sqlite") as connection:
+        connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, title BLOB)")
+
+    def fail_recursive_delete(path: Path) -> None:
+        raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
+
+    monkeypatch.setattr(codex_recovery.shutil, "rmtree", fail_recursive_delete)
+
+    with pytest.raises(RuntimeError, match="SQLite schema mismatch"):
+        recover_codex_home(source=source, target=target)
+
+    assert (target / "config.toml").read_text(encoding="utf-8") == 'model = "target"\n'
+    failed_targets = list((tmp_path / ".headroom-codex-recovery").glob("*/target-failed"))
+    assert len(failed_targets) == 1
 
 
 def test_recover_codex_cli_previews_then_merges(tmp_path: Path) -> None:

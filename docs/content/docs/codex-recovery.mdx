@@ -59,13 +59,14 @@ Every source is pinned before migration. The existing durable home, including it
 <target-parent>/.headroom-codex-recovery/<timestamp-pid>/
 ├── source-pinned/
 ├── target-before/
+├── target-failed/     # only when a merge is rolled back
 ├── manifest.json
 └── quarantine/       # only when malformed input is found
 ```
 
 `target-before/` is absent when the target did not exist before recovery. `manifest.json` records copied, merged, quarantined, and skipped paths.
 
-If configuration parsing, SQLite schema validation, integrity checks, foreign-key checks, or filesystem writes fail, Headroom restores the target from `target-before/`. A newly created target is removed on failure. The pinned source and recovery backup remain available for inspection.
+If configuration parsing, SQLite schema validation, integrity checks, foreign-key checks, or filesystem writes fail, Headroom atomically renames the failed target to `target-failed/` before restoring `target-before/`. This avoids recursive-deletion races with SQLite runtime files and preserves the failed merge for inspection. When the target did not exist before recovery, the partial target is retained only as `target-failed/`. The pinned source and recovery backup remain available for inspection.
 
 Recovery also refuses overlapping source and target paths, target symlink traversal, and a source that changes while it is being pinned.
 
