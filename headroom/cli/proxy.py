@@ -1007,7 +1007,6 @@ def proxy(
         OPENAI_BASE_URL=http://localhost:8787/v1 your-app
     """
     # Import here to avoid slow startup
-    ensure_proxy_dependencies()
     from headroom.proxy.server import (
         ProxyConfig,
         _parse_csv_tools,
