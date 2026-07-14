@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import warnings
+from importlib import import_module
 from typing import Any, Literal, cast
 
 import click
@@ -17,14 +18,25 @@ from .main import main
 
 def ensure_proxy_dependencies() -> None:
     """Verify optional proxy extras are installed before starting or wrapping."""
+    required_modules: list[str] = [
+        "fastapi",
+        "uvicorn",
+        "httpx",
+        "openai",
+        "mcp",
+        "magika",
+        "zstandard",
+        "websockets",
+        "onnxruntime",
+        "transformers",
+        "watchdog",
+    ]
+    if sys.implementation.name != "pypy":
+        required_modules.append("orjson")
+
     try:
-        from headroom.proxy.server import (  # noqa: F401
-            ProxyConfig,
-            _parse_csv_tools,
-            _parse_exclude_tools,
-            _parse_tool_profiles,
-            run_server,
-        )
+        for module in required_modules:
+            import_module(module)
     except ImportError as e:
         click.secho(
             "Error: Proxy dependencies not installed. Run: pip install headroom-ai[proxy]",

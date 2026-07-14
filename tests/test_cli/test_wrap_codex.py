@@ -1105,7 +1105,7 @@ def test_ensure_proxy_dependencies_exits_when_server_import_fails(
         fromlist: tuple = (),
         level: int = 0,
     ):
-        if name == "headroom.proxy.server":
+        if name == "fastapi":
             raise ImportError("No module named 'fastapi'")
         return real_import(name, globals, locals, fromlist, level)
 
