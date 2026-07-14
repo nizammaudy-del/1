@@ -18,7 +18,7 @@ from csv import DictWriter
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from headroom import paths as _paths
 from headroom.proxy import project_name_policy
@@ -705,7 +705,7 @@ class SavingsTracker:
         self._aggregate_dirty = True
 
     def _active_display_session_locked(self, timestamp_dt: datetime) -> dict[str, Any]:
-        session = self._state["display_session"]
+        session = cast(dict[str, Any], self._state["display_session"])
         last_activity = _parse_timestamp(session.get("last_activity_at"))
         if last_activity is None or self._is_display_session_expired(
             last_activity,
@@ -720,19 +720,25 @@ class SavingsTracker:
         return session
 
     def _cache_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
-        return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
-            "cache", _empty_scope_cache()
+        aggregates = cast(
+            dict[str, Any], scope.setdefault("aggregates", _empty_metric_aggregates())
         )
+        return cast(dict[str, Any], aggregates.setdefault("cache", _empty_scope_cache()))
 
     def _compression_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
-        return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
-            "compression", _empty_scope_compression()
+        aggregates = cast(
+            dict[str, Any], scope.setdefault("aggregates", _empty_metric_aggregates())
+        )
+        return cast(
+            dict[str, Any],
+            aggregates.setdefault("compression", _empty_scope_compression()),
         )
 
     def _codex_ws_aggregate_locked(self, scope: dict[str, Any]) -> dict[str, Any]:
-        return scope.setdefault("aggregates", _empty_metric_aggregates()).setdefault(
-            "codex_ws", _empty_scope_codex_ws()
+        aggregates = cast(
+            dict[str, Any], scope.setdefault("aggregates", _empty_metric_aggregates())
         )
+        return cast(dict[str, Any], aggregates.setdefault("codex_ws", _empty_scope_codex_ws()))
 
     def record_compression_savings(
         self,
