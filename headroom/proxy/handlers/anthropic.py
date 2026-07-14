@@ -1385,6 +1385,7 @@ class AnthropicHandlerMixin:
                                             else "deferred:dropped"
                                         ]
                                         timing = {}
+                                        waste_signals = None
 
                                     result = _DeferredCompressionResult()
                             else:
@@ -1571,9 +1572,7 @@ class AnthropicHandlerMixin:
                     # Split timeout from other errors: a timeout means the
                     # compression budget was too tight, not a code bug.
                     reason = (
-                        "timeout"
-                        if isinstance(e, (asyncio.TimeoutError, TimeoutError))
-                        else "error"
+                        "timeout" if isinstance(e, asyncio.TimeoutError | TimeoutError) else "error"
                     )
                     self.metrics.record_compression_failed(reason)
 
@@ -3580,7 +3579,10 @@ class AnthropicHandlerMixin:
                     # blocks every other request for the duration; a timeout
                     # here is caught below and passes the item through.
                     result = await self._run_compression_in_executor(
-                        lambda messages=messages, model=model, context_limit=context_limit, frozen_message_count=frozen_message_count: (
+                        lambda messages=messages,
+                        model=model,
+                        context_limit=context_limit,
+                        frozen_message_count=frozen_message_count: (
                             self.anthropic_pipeline.apply(
                                 messages=messages,
                                 model=model,
@@ -3660,7 +3662,7 @@ class AnthropicHandlerMixin:
                 # Same fail-open accounting as the single-message path: a
                 # timeout means the budget was too tight, not a code bug.
                 reason = (
-                    "timeout" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else "error"
+                    "timeout" if isinstance(e, asyncio.TimeoutError | TimeoutError) else "error"
                 )
                 self.metrics.record_compression_failed(reason)
                 # Pass through unchanged on failure

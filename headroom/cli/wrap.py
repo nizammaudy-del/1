@@ -5615,7 +5615,7 @@ def zcode(
     upstream = _detect_zcode_upstream()
     anthropic_url, openai_url = _zcode_upstream_to_urls(upstream)
 
-    def _print_zcode_setup(actual_port: int) -> None:
+    def _print_zcode_setup(actual_port: int = port) -> None:
         click.echo(f"  Detected provider: {upstream.provider_name}")
         click.echo(f"  Upstream: {upstream.base_url}")
         click.echo()
