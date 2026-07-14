@@ -930,6 +930,14 @@ class AnthropicHandlerMixin:
                 "thinking": body.get("thinking"),
                 "output_config": body.get("output_config"),
             }
+            # Snapshot the lookup messages too. `messages` is the primary cache
+            # key component, but it is reassigned below by the security scan, the
+            # pre_compress hook, and image compression, so caching the response
+            # under the live `messages` would store it under a different key than
+            # it was looked up by — the cache would never hit and would fill with
+            # unreachable entries. Reuse this raw snapshot verbatim at cache.set
+            # (the same reason cache_key_fields is snapshotted here, #327).
+            cache_lookup_messages = messages
             # Check cache (non-streaming only)
             cache_hit = False
             if self.cache and not stream:
@@ -3057,10 +3065,12 @@ class AnthropicHandlerMixin:
                         original_messages=next_original_messages,
                     )
 
-                    # Cache response
+                    # Cache response under the SAME key it was looked up by:
+                    # cache_lookup_messages is the raw pre-mutation snapshot, not
+                    # the live (compressed/hooked) `messages` (#327).
                     if self.cache and response.status_code == 200:
                         await self.cache.set(
-                            messages,
+                            cache_lookup_messages,
                             model,
                             response.content,
                             dict(response.headers),

@@ -428,13 +428,18 @@ class SQLiteMemoryStore:
                 conditions.append("session_id = ?")
                 params.append(filter.session_id)
 
+                # agent_id and turn_id are independent narrowing constraints:
+                # turn_id must be applied even when agent_id is absent. Nesting
+                # the turn_id check inside the agent_id block dropped the turn
+                # filter for a (session_id + turn_id, no agent_id) query, so it
+                # returned the whole session instead of the one turn.
                 if filter.agent_id is not None:
                     conditions.append("agent_id = ?")
                     params.append(filter.agent_id)
 
-                    if filter.turn_id is not None:
-                        conditions.append("turn_id = ?")
-                        params.append(filter.turn_id)
+                if filter.turn_id is not None:
+                    conditions.append("turn_id = ?")
+                    params.append(filter.turn_id)
             elif filter.agent_id is not None:
                 # Agent without session - unusual but supported
                 conditions.append("agent_id = ?")
