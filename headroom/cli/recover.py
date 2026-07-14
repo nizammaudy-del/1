@@ -9,6 +9,7 @@ import click
 
 from headroom.cli.main import main
 from headroom.providers.codex.recovery import (
+    audit_codex_history,
     discover_dangling_homes,
     discover_referenced_temp_homes,
     discover_retained_sources,
@@ -50,6 +51,29 @@ def recover_codex(sources: tuple[Path, ...], target: Path | None, yes: bool) -> 
             click.echo("Referenced temporary Codex homes were already deleted:")
             for source in deleted_sources:
                 click.echo(f"  {source}")
+        audit = audit_codex_history(target)
+        if audit is not None:
+            click.echo(
+                f"Durable Codex history: {audit.indexed} indexed chats "
+                f"({audit.active} active, {audit.archived} archived)."
+            )
+            if audit.unindexed_rollouts:
+                click.echo(
+                    "Surviving rollout files missing from the thread database: "
+                    f"{len(audit.unindexed_rollouts)}"
+                )
+                for session_id in audit.unindexed_rollouts:
+                    click.echo(f"  {session_id}")
+            if audit.history_without_rollout:
+                click.echo(
+                    "History-only records without a surviving rollout: "
+                    f"{len(audit.history_without_rollout)}"
+                )
+                for session_id in audit.history_without_rollout:
+                    click.echo(f"  {session_id}")
+                click.echo("Their full transcripts cannot be restored without a retained rollout.")
+            if audit.indexed:
+                click.echo("Run `codex resume --all` to show chats from every working directory.")
         click.echo("No recoverable Headroom Codex homes were found.")
         return
 

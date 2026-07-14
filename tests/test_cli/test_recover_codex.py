@@ -288,12 +288,31 @@ def test_recover_codex_cli_previews_then_merges(tmp_path: Path) -> None:
     )
 
 
-def test_recover_codex_cli_reports_deleted_referenced_temp_home(tmp_path: Path) -> None:
+def test_recover_codex_cli_audits_history_without_treating_prompt_text_as_paths(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "codex"
     target.mkdir()
     deleted = Path("/private/tmp/headroom-codex-home-deleted")
+    rollout = target / "sessions/2026/07/14/rollout-indexed.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    _write_thread_db(
+        target / "state_5.sqlite",
+        [("indexed", str(rollout), "openai")],
+    )
+    with sqlite3.connect(target / "state_5.sqlite") as connection:
+        connection.execute("ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
     (target / "history.jsonl").write_text(
-        json.dumps({"session_id": "thread-1", "text": f"rollout: {deleted}/sessions/x"}) + "\n",
+        json.dumps({"session_id": "indexed", "text": "surviving chat"})
+        + "\n"
+        + json.dumps(
+            {
+                "session_id": "orphaned",
+                "text": f"pasted error referenced {deleted}/sessions/x",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -304,8 +323,12 @@ def test_recover_codex_cli_reports_deleted_referenced_temp_home(tmp_path: Path) 
     )
 
     assert result.exit_code == 0, result.output
-    assert "Referenced temporary Codex homes were already deleted:" in result.output
-    assert str(deleted) in result.output
+    assert "Referenced temporary Codex homes were already deleted:" not in result.output
+    assert str(deleted) not in result.output
+    assert "Durable Codex history: 1 indexed chats (1 active, 0 archived)." in result.output
+    assert "History-only records without a surviving rollout: 1" in result.output
+    assert "orphaned" in result.output
+    assert "codex resume --all" in result.output
     assert "No recoverable Headroom Codex homes were found." in result.output
 
 

@@ -5,7 +5,7 @@ description: Merge sessions and configuration left in a temporary Headroom Codex
 
 Older versions of `headroom wrap codex` could run Codex with a temporary `CODEX_HOME` named `headroom-codex-home-*`. Chats and configuration created during that wrapped session stayed in the temporary home, so they disappeared from the normal Codex history after the wrapper exited. This recovery migrates the retained state back into the durable Codex home without deleting either source.
 
-This procedure can recover temporary homes that still exist and pinned sources retained by an interrupted recovery. A temporary home that was already deleted cannot be reconstructed unless one of those retained copies exists. Headroom reports deleted temporary homes that are still referenced by `history.jsonl` or the Codex thread database, so the command does not mistake a deleted source for an absence of evidence. See [issue #2159](https://github.com/headroomlabs-ai/headroom/issues/2159) for the regression details.
+This procedure can recover temporary homes that still exist and pinned sources retained by an interrupted recovery. A temporary home that was already deleted cannot be reconstructed unless one of those retained copies exists. Headroom reports deleted temporary homes still referenced by the Codex thread database. It does not treat paths pasted into prompts or error messages as recovery sources. See [issue #2159](https://github.com/headroomlabs-ai/headroom/issues/2159) for the regression details.
 
 ## Before you recover
 
@@ -27,7 +27,9 @@ Let Headroom discover retained temporary homes and `source-pinned/` copies left 
 headroom recover codex
 ```
 
-If no recoverable copy remains, the command prints any deleted temporary home paths still referenced by the durable Codex state. The path identifies what was lost, but it does not make deleted files recoverable.
+If no recoverable copy remains, the command audits the durable Codex thread database, rollout files, and `history.jsonl`. It reports indexed active and archived chats, surviving rollouts missing from the thread index, and history-only records whose rollouts no longer exist. History-only prompt text cannot reconstruct a full chat transcript.
+
+Codex filters the default resume picker by the current working directory. Run `codex resume --all` yourself to display indexed chats from every working directory. Headroom does not launch Codex during recovery.
 
 To select a known temporary home and an explicit durable target:
 

@@ -6,7 +6,6 @@ import gc
 import hashlib
 import json
 import os
-import re
 import shutil
 import sqlite3
 import stat
@@ -23,9 +22,6 @@ _RECOVERY_DIR = ".headroom-codex-recovery"
 _SQLITE_SUFFIXES = {".sqlite", ".db"}
 _RUNTIME_NAMES = {".DS_Store"}
 _RUNTIME_SUFFIXES = {".lock", ".sock", ".socket", "-shm", "-wal", "-journal"}
-_TEMP_HOME_PATH_PATTERN = re.compile(
-    rf"/(?:[^/\"'\s]+/)*{re.escape(_TEMP_HOME_PREFIX)}[A-Za-z0-9._-]+"
-)
 
 
 def _latest_state_mtime_ns(home: Path) -> int:
@@ -42,6 +38,15 @@ class RecoveryReport:
     merged: list[str] = field(default_factory=list)
     quarantined: list[str] = field(default_factory=list)
     skipped_runtime: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CodexHistoryAudit:
+    indexed: int
+    active: int
+    archived: int
+    unindexed_rollouts: tuple[str, ...]
+    history_without_rollout: tuple[str, ...]
 
 
 def discover_dangling_homes(temp_root: Path | None = None) -> list[Path]:
@@ -75,14 +80,8 @@ def discover_dangling_homes(temp_root: Path | None = None) -> list[Path]:
 
 
 def discover_referenced_temp_homes(target: Path) -> list[Path]:
-    """Find temporary Codex homes referenced by retained history or thread rows."""
+    """Find temporary Codex homes referenced by retained thread rows."""
     references: set[Path] = set()
-    history = target / "history.jsonl"
-    if history.is_file():
-        content = history.read_text(encoding="utf-8", errors="replace")
-        references.update(
-            Path(match.group()) for match in _TEMP_HOME_PATH_PATTERN.finditer(content)
-        )
     for database in target.rglob("*"):
         if not database.is_file() or database.suffix not in _SQLITE_SUFFIXES:
             continue
@@ -107,6 +106,78 @@ def discover_referenced_temp_homes(target: Path) -> list[Path]:
             if connection is not None:
                 connection.close()
     return sorted(references)
+
+
+def _history_session_ids(history: Path) -> set[str]:
+    session_ids: set[str] = set()
+    if not history.is_file():
+        return session_ids
+    for line in history.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        session_id = record.get("session_id") or record.get("thread_id") or record.get("id")
+        if session_id:
+            session_ids.add(str(session_id))
+    return session_ids
+
+
+def _rollout_session_ids(target: Path) -> set[str]:
+    session_ids: set[str] = set()
+    for directory in (target / "sessions", target / "archived_sessions"):
+        if not directory.is_dir():
+            continue
+        for rollout in directory.rglob("rollout-*.jsonl"):
+            try:
+                with rollout.open(encoding="utf-8", errors="replace") as handle:
+                    first_line = handle.readline()
+                record = json.loads(first_line)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if record.get("type") != "session_meta":
+                continue
+            payload = record.get("payload", {})
+            session_id = payload.get("id") or payload.get("session_id")
+            if session_id:
+                session_ids.add(str(session_id))
+    return session_ids
+
+
+def audit_codex_history(target: Path) -> CodexHistoryAudit | None:
+    """Compare durable history, rollout files, and the canonical thread index."""
+    database = target / "state_5.sqlite"
+    if not database.is_file():
+        return None
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)
+        tables = _database_schema(connection, "main")
+        if "threads" not in tables:
+            return None
+        columns = {str(column[1]) for column in _table_columns(connection, "main", "threads")}
+        if "id" not in columns:
+            return None
+        if "archived" in columns:
+            rows = connection.execute("SELECT id, archived FROM threads").fetchall()
+        else:
+            rows = [(thread_id, 0) for (thread_id,) in connection.execute("SELECT id FROM threads")]
+    except sqlite3.Error:
+        return None
+    finally:
+        if connection is not None:
+            connection.close()
+    thread_ids = {str(row[0]) for row in rows}
+    archived = sum(bool(row[1]) for row in rows)
+    rollout_ids = _rollout_session_ids(target)
+    history_ids = _history_session_ids(target / "history.jsonl")
+    return CodexHistoryAudit(
+        indexed=len(thread_ids),
+        active=len(thread_ids) - archived,
+        archived=archived,
+        unindexed_rollouts=tuple(sorted(rollout_ids - thread_ids)),
+        history_without_rollout=tuple(sorted(history_ids - thread_ids - rollout_ids)),
+    )
 
 
 def discover_retained_sources(target: Path) -> list[Path]:
