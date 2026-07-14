@@ -95,6 +95,33 @@ def _codex_ws_compression_timeout_seconds() -> float:
 _WS_ALLOWED_ORIGINS_ENV = "HEADROOM_WS_ORIGINS"
 _CORS_ALLOWED_ORIGINS_ENV = "HEADROOM_CORS_ORIGINS"
 _CODEX_RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite"
+# Codex mirrors the responses-lite request header into the response.create
+# frame body under client_metadata; upstream rejects gpt-5.x when it is
+# truthy. Stripping the WS handshake header alone is insufficient
+# (headroomlabs-ai/headroom#1523) — the frame-body mirror must be removed too.
+_CODEX_LITE_METADATA_KEY = "ws_request_header_x_openai_internal_codex_responses_lite"
+
+
+def _strip_codex_lite_metadata(raw_msg: str) -> str:
+    """Remove the Codex responses-lite marker mirrored into a response.create
+    frame's client_metadata. Fail-safe: returns raw_msg unchanged on any
+    parse issue or when the marker is absent."""
+    try:
+        frame = json.loads(raw_msg)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return raw_msg
+    if not isinstance(frame, dict):
+        return raw_msg
+    changed = False
+    for container in (frame, frame.get("response")):
+        if isinstance(container, dict):
+            cm = container.get("client_metadata")
+            if isinstance(cm, dict) and _CODEX_LITE_METADATA_KEY in cm:
+                del cm[_CODEX_LITE_METADATA_KEY]
+                changed = True
+    return json.dumps(frame) if changed else raw_msg
+
+
 _OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
 _OPENAI_RESPONSES_PATH = "/responses"
 _OPENAI_ORIGINAL_PATH_HEADER = "x-headroom-original-path"
@@ -5838,7 +5865,7 @@ class OpenAIHandlerMixin:
 
             if ws_connected:
                 async with upstream:
-                    await upstream.send(first_msg_raw)
+                    await upstream.send(_strip_codex_lite_metadata(first_msg_raw))
 
                     # Unit 3: flag the upstream side flips on seeing
                     # ``response.completed`` so the outer cause
@@ -6211,7 +6238,7 @@ class OpenAIHandlerMixin:
                                         "transforms_applied": transforms_applied,
                                     },
                                 )
-                                await upstream.send(msg)
+                                await upstream.send(_strip_codex_lite_metadata(msg))
                         except asyncio.CancelledError:
                             # Explicit cancel from the outer
                             # orchestrator — re-raise so
