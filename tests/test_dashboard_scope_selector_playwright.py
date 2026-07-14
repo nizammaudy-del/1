@@ -334,7 +334,7 @@ def test_missing_selected_scope_cache_fields_render_unavailable() -> None:
 
         page.get_by_test_id("scope-current").click()
         expect(page.get_by_test_id("scope-cache-reads-value")).to_have_text("Unavailable")
-        expect(page.get_by_text("Cache Efficiency", exact=True)).to_have_count(0)
+        expect(page.get_by_text("Cache Efficiency", exact=True)).to_be_hidden()
         expect(page.get_by_test_id("cvc-net-headline")).to_have_text("Selected scope unavailable")
         expect(page.get_by_test_id("cvc-saved-value")).to_have_text("Unavailable")
         expect(page.get_by_test_id("cvc-bust-value")).to_have_text("Unavailable")
@@ -367,7 +367,7 @@ def test_legacy_lifetime_cache_keeps_process_local_cache_metrics_unavailable() -
         expect(_scope_cache_metric_value(page, "Cache Busts")).to_have_text("—")
         expect(page.get_by_text("no activity since restart").first).to_be_visible()
         assert page.get_by_text("no activity since restart").count() >= 4
-        expect(page.get_by_text("Cache Efficiency", exact=True)).to_have_count(0)
+        expect(page.get_by_text("Cache Efficiency", exact=True)).to_be_hidden()
 
         browser.close()
 
