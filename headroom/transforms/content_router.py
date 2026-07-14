@@ -2833,6 +2833,15 @@ class ContentRouter(Transform):
         if model_id == "disabled":
             return None
 
+        # Remote Kompress (HEADROOM_KOMPRESS_ENDPOINT): offload inference to a
+        # hosted /compress endpoint so a sandboxed proxy needs no local ML deps.
+        # Intercepts BOTH default and custom-model paths (the endpoint's deployed
+        # model is authoritative) and bypasses is_kompress_available() — there is
+        # nothing to load locally. The CCR store stays proxy-local.
+        remote = self._get_remote_kompress()
+        if remote is not None:
+            return remote
+
         # Custom model — don't touch self._kompress (that's the default cache)
         if model_id:
             try:
@@ -2873,6 +2882,29 @@ class ContentRouter(Transform):
             except ImportError:
                 logger.debug("Kompress dependencies not available")
         return self._kompress
+
+    def _get_remote_kompress(self) -> Any:
+        """Return a cached RemoteKompressCompressor when HEADROOM_KOMPRESS_ENDPOINT
+        is set, else None.
+
+        The endpoint runs the model, so this needs no local ML deps and no
+        is_kompress_available() gate. Cached per ContentRouter instance so the
+        httpx connection pool is reused across requests.
+        """
+        endpoint = os.environ.get("HEADROOM_KOMPRESS_ENDPOINT", "").strip()
+        if not endpoint:
+            return None
+        if getattr(self, "_kompress_remote", None) is None:
+            from .kompress_compressor import KompressConfig
+            from .kompress_remote import RemoteKompressCompressor
+
+            self._kompress_remote = RemoteKompressCompressor(
+                endpoint=endpoint,
+                token=os.environ.get("HEADROOM_KOMPRESS_ENDPOINT_TOKEN") or None,
+                config=KompressConfig(enable_ccr=self.config.ccr_inject_marker),
+            )
+            logger.info("Kompress: using remote endpoint %s", endpoint)
+        return self._kompress_remote
 
     def _get_image_optimizer(self) -> Any:
         """Create an ImageCompressor for one optimization pass.

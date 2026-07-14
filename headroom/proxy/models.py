@@ -6,12 +6,37 @@ Extracted from server.py to keep the codebase maintainable.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import InitVar, dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
 from headroom.memory import qdrant_env
 from headroom.providers.registry import ProviderApiOverrides
+
+logger = logging.getLogger(__name__)
+
+
+def _qdrant_env_port_or_default() -> int:
+    """Resolve ``HEADROOM_QDRANT_PORT``, falling back to the default on a bad value.
+
+    ``qdrant_env.qdrant_env_port`` raises on an invalid port (intended for
+    explicit qdrant setup). As a ``ProxyConfig`` field ``default_factory`` it
+    runs on EVERY ``ProxyConfig()`` construction, regardless of whether
+    memory/qdrant is enabled (both off by default), so a stray or typo'd
+    ``HEADROOM_QDRANT_PORT`` would crash proxy startup for an unrelated,
+    off-by-default subsystem. Fail soft here so config construction never raises.
+    """
+    try:
+        return qdrant_env.qdrant_env_port()
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid HEADROOM_QDRANT_PORT; using default %d. "
+            "Set a valid 1-65535 port to override.",
+            qdrant_env.DEFAULT_QDRANT_PORT,
+        )
+        return qdrant_env.DEFAULT_QDRANT_PORT
+
 
 # =============================================================================
 # Data Models
@@ -319,7 +344,7 @@ class ProxyConfig:
     # Qdrant connection (defaults resolve from HEADROOM_QDRANT_* env vars)
     memory_qdrant_url: str | None = field(default_factory=qdrant_env.qdrant_env_url)
     memory_qdrant_host: str = field(default_factory=qdrant_env.qdrant_env_host)
-    memory_qdrant_port: int = field(default_factory=qdrant_env.qdrant_env_port)
+    memory_qdrant_port: int = field(default_factory=_qdrant_env_port_or_default)
     memory_qdrant_api_key: str | None = field(default_factory=qdrant_env.qdrant_env_api_key)
     memory_neo4j_uri: str = "neo4j://localhost:7687"
     memory_neo4j_user: str = "neo4j"
