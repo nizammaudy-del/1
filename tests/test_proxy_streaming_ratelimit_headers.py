@@ -87,10 +87,12 @@ class TestStreamingRatelimitHeaderForwarding:
             "anthropic-ratelimit-output-tokens-limit": "30000",
             "anthropic-ratelimit-output-tokens-remaining": "27000",
             "anthropic-ratelimit-output-tokens-reset": "2026-03-25T12:00:00Z",
-            # request-id is forwarded (clients record it per transcript turn);
-            # cf-ray is a non-allowlisted header that must NOT be forwarded.
+            # Safe upstream headers are forwarded; StreamingResponse-owned
+            # body/framing headers are dropped separately.
             "x-request-id": "req-12345",
             "cf-ray": "abc123",
+            "content-length": "999",
+            "transfer-encoding": "chunked",
         }
         if extra_headers:
             headers.update(extra_headers)
@@ -151,8 +153,8 @@ class TestStreamingRatelimitHeaderForwarding:
         assert result.headers.get("anthropic-ratelimit-output-tokens-limit") == "30000"
 
     @pytest.mark.asyncio
-    async def test_non_ratelimit_headers_not_forwarded(self):
-        """Arbitrary upstream headers stay dropped; the request-id family is allowed."""
+    async def test_safe_non_framing_headers_forwarded(self):
+        """Safe upstream headers are forwarded, not just the old allowlist."""
         proxy = self._create_mock_proxy()
         mock_response = self._create_mock_upstream_response()
 
@@ -180,9 +182,12 @@ class TestStreamingRatelimitHeaderForwarding:
             optimization_latency=0.0,
         )
 
-        # request-id is forwarded; other non-ratelimit headers are not.
+        # request-id and arbitrary safe response headers are forwarded.
         assert result.headers.get("x-request-id") == "req-12345"
-        assert result.headers.get("cf-ray") is None
+        assert result.headers.get("cf-ray") == "abc123"
+        # Body-framing headers remain owned by StreamingResponse.
+        assert result.headers.get("content-length") is None
+        assert result.headers.get("transfer-encoding") is None
 
     @pytest.mark.asyncio
     async def test_request_id_headers_forwarded_in_streaming(self):
@@ -195,8 +200,8 @@ class TestStreamingRatelimitHeaderForwarding:
                 "request-id": "req-aaa",
                 "anthropic-request-id": "req-bbb",
                 "x-request-id": "req-ccc",
-                # Non-allowlisted header: must NOT be forwarded.
                 "cf-ray": "ray-123",
+                "content-length": "999",
             }
         )
 
@@ -228,7 +233,8 @@ class TestStreamingRatelimitHeaderForwarding:
         assert result.headers.get("request-id") == "req-aaa"
         assert result.headers.get("anthropic-request-id") == "req-bbb"
         assert result.headers.get("x-request-id") == "req-ccc"
-        assert result.headers.get("cf-ray") is None
+        assert result.headers.get("cf-ray") == "ray-123"
+        assert result.headers.get("content-length") is None
 
     @pytest.mark.asyncio
     async def test_no_ratelimit_headers_still_works(self):

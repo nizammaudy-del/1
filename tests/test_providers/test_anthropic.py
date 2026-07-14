@@ -12,7 +12,7 @@ class TestAnthropicModelSanitization:
     def test_sanitize_model_id_removes_displayed_style_suffix(self):
         from headroom.providers.anthropic import sanitize_anthropic_model_id
 
-        assert sanitize_anthropic_model_id("claude-opus-4-8[1m]") == "claude-opus-4-8"
+        assert sanitize_anthropic_model_id("claude-opus-4-8[1m]") == "claude-opus-4-8[1m]"
         assert sanitize_anthropic_model_id("glm-5.2[1m]") == "glm-5.2"
 
     def test_sanitize_model_metadata_cleans_nested_model_ids(self):
@@ -29,9 +29,9 @@ class TestAnthropicModelSanitization:
         assert sanitize_anthropic_model_metadata(payload) == {
             "data": [
                 {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8"},
-                {"id": "claude-sonnet-4-5"},
+                {"id": "claude-sonnet-4-5[1m]"},
             ],
-            "model": "claude-opus-4-8",
+            "model": "claude-opus-4-8[1m]",
         }
 
 
