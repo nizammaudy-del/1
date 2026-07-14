@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 import click
 
 from headroom.cli.main import main
-from headroom.providers.codex.recovery import discover_dangling_homes, recover_codex_home
+from headroom.providers.codex.recovery import (
+    discover_dangling_homes,
+    discover_referenced_temp_homes,
+    discover_retained_sources,
+    recover_codex_home,
+)
 
 
 @main.group()
@@ -34,13 +38,23 @@ def recover() -> None:
 def recover_codex(sources: tuple[Path, ...], target: Path | None, yes: bool) -> None:
     """Merge sessions and configuration from dangling Codex homes."""
     target = target or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-    selected_sources = list(sources) or discover_dangling_homes(Path(tempfile.gettempdir()))
+    selected_sources = list(sources) or [
+        *discover_dangling_homes(),
+        *discover_retained_sources(target),
+    ]
     if not selected_sources:
-        click.echo("No dangling Headroom Codex homes were found.")
+        deleted_sources = [
+            source for source in discover_referenced_temp_homes(target) if not source.exists()
+        ]
+        if deleted_sources:
+            click.echo("Referenced temporary Codex homes were already deleted:")
+            for source in deleted_sources:
+                click.echo(f"  {source}")
+        click.echo("No recoverable Headroom Codex homes were found.")
         return
 
     click.echo(f"Target Codex home: {target}")
-    click.echo("Sources, newest first:")
+    click.echo("Sources:")
     for source in selected_sources:
         click.echo(f"  {source}")
     click.echo("Both the current target and each source will be backed up before merging.")

@@ -5,7 +5,7 @@ description: Merge sessions and configuration left in a temporary Headroom Codex
 
 Older versions of `headroom wrap codex` could run Codex with a temporary `CODEX_HOME` named `headroom-codex-home-*`. Chats and configuration created during that wrapped session stayed in the temporary home, so they disappeared from the normal Codex history after the wrapper exited. This recovery migrates the retained state back into the durable Codex home without deleting either source.
 
-This procedure can recover only temporary homes that still exist. A temporary home that was already deleted cannot be reconstructed by Headroom. See [issue #2159](https://github.com/headroomlabs-ai/headroom/issues/2159) for the regression details.
+This procedure can recover temporary homes that still exist and pinned sources retained by an interrupted recovery. A temporary home that was already deleted cannot be reconstructed unless one of those retained copies exists. Headroom reports deleted temporary homes that are still referenced by `history.jsonl` or the Codex thread database, so the command does not mistake a deleted source for an absence of evidence. See [issue #2159](https://github.com/headroomlabs-ai/headroom/issues/2159) for the regression details.
 
 ## Before you recover
 
@@ -15,17 +15,19 @@ The target defaults to `$CODEX_HOME` when it is set, otherwise `~/.codex`. Check
 
 ## Automatic recovery
 
-The first interactive `headroom wrap codex` with the fixed version searches the system temporary directory for non-empty `headroom-codex-home-*` directories. If it finds any, it lists them newest first and offers to back up and recover them before Codex starts.
+The first interactive `headroom wrap codex` with the fixed version searches Python's temporary directory, `$TMPDIR`, `/tmp`, `/private/tmp`, and the macOS `/private/var/folders/*/*/T` roots for non-empty `headroom-codex-home-*` directories. If it finds any, it lists them and offers to back up and recover them before Codex starts.
 
 Declining the prompt changes nothing. You can run the manual command later.
 
 ## Manual recovery
 
-Let Headroom discover retained temporary homes and preview the migration:
+Let Headroom discover retained temporary homes and `source-pinned/` copies left by interrupted or failed recovery attempts, then preview the migration:
 
 ```bash
 headroom recover codex
 ```
+
+If no recoverable copy remains, the command prints any deleted temporary home paths still referenced by the durable Codex state. The path identifies what was lost, but it does not make deleted files recoverable.
 
 To select a known temporary home and an explicit durable target:
 
@@ -41,7 +43,7 @@ Repeat `--source` to merge multiple homes. Headroom shows the target and every s
 
 - `history.jsonl` and other JSONL indexes are combined without duplicate records. Malformed input is excluded from the result and copied to the backup quarantine.
 - Session rollouts under `sessions/` and `archived_sessions/` keep the newer file when the same path exists in both homes.
-- SQLite databases are merged only when their tables, indexes, triggers, views, and migration checksums are compatible. Primary-key conflicts keep rows from the newer database.
+- SQLite databases are merged only when their tables, indexes, triggers, views, and migration checksums are compatible. Primary-key conflicts keep rows from the newer database. Recovered thread rows are rewritten to the durable rollout path, including rows restored from a pinned source after the original temporary home was deleted.
 - `config.toml` tables are merged recursively. Values from the newer config win, and localhost Headroom routing injected by the old wrapper is removed. A user-defined remote provider is preserved.
 - Other files, including credentials and user settings, keep the newer copy. The durable target wins equal modification-time ties, and missing source files never delete target files.
 

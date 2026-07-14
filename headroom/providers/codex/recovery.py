@@ -6,6 +6,7 @@ import gc
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -22,6 +23,9 @@ _RECOVERY_DIR = ".headroom-codex-recovery"
 _SQLITE_SUFFIXES = {".sqlite", ".db"}
 _RUNTIME_NAMES = {".DS_Store"}
 _RUNTIME_SUFFIXES = {".lock", ".sock", ".socket", "-shm", "-wal", "-journal"}
+_TEMP_HOME_PATH_PATTERN = re.compile(
+    rf"/(?:[^/\"'\s]+/)*{re.escape(_TEMP_HOME_PREFIX)}[A-Za-z0-9._-]+"
+)
 
 
 def _latest_state_mtime_ns(home: Path) -> int:
@@ -42,11 +46,87 @@ class RecoveryReport:
 
 def discover_dangling_homes(temp_root: Path | None = None) -> list[Path]:
     """Find non-empty Headroom temporary Codex homes, newest first."""
-    root = temp_root or Path(tempfile.gettempdir())
+    if temp_root is not None:
+        roots = [temp_root]
+    else:
+        roots = [Path(tempfile.gettempdir())]
+        if env_tmpdir := os.environ.get("TMPDIR"):
+            roots.append(Path(env_tmpdir))
+        roots.extend((Path("/tmp"), Path("/private/tmp")))
+        roots.extend(Path("/private/var/folders").glob("*/*/T"))
     candidates: list[Path] = []
-    for path in root.glob(f"{_TEMP_HOME_PREFIX}*"):
-        if path.is_dir() and not path.is_symlink() and any(path.iterdir()):
-            candidates.append(path)
+    seen: set[Path] = set()
+    for root in roots:
+        try:
+            paths = root.glob(f"{_TEMP_HOME_PREFIX}*")
+            for path in paths:
+                resolved = path.resolve()
+                if (
+                    resolved not in seen
+                    and path.is_dir()
+                    and not path.is_symlink()
+                    and any(path.iterdir())
+                ):
+                    seen.add(resolved)
+                    candidates.append(path)
+        except OSError:
+            continue
+    return sorted(candidates, key=_latest_state_mtime_ns, reverse=True)
+
+
+def discover_referenced_temp_homes(target: Path) -> list[Path]:
+    """Find temporary Codex homes referenced by retained history or thread rows."""
+    references: set[Path] = set()
+    history = target / "history.jsonl"
+    if history.is_file():
+        content = history.read_text(encoding="utf-8", errors="replace")
+        references.update(
+            Path(match.group()) for match in _TEMP_HOME_PATH_PATTERN.finditer(content)
+        )
+    for database in target.rglob("*"):
+        if not database.is_file() or database.suffix not in _SQLITE_SUFFIXES:
+            continue
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+            tables = _database_schema(connection, "main")
+            if "threads" not in tables:
+                continue
+            columns = {str(column[1]) for column in _table_columns(connection, "main", "threads")}
+            if "rollout_path" not in columns:
+                continue
+            for (rollout_path,) in connection.execute("SELECT rollout_path FROM threads"):
+                path = Path(str(rollout_path))
+                for index, part in enumerate(path.parts):
+                    if part.startswith(_TEMP_HOME_PREFIX):
+                        references.add(Path(*path.parts[: index + 1]))
+                        break
+        except sqlite3.Error:
+            continue
+        finally:
+            if connection is not None:
+                connection.close()
+    return sorted(references)
+
+
+def discover_retained_sources(target: Path) -> list[Path]:
+    """Find pinned sources retained by interrupted or failed recovery attempts."""
+    recovery_root = target.parent / _RECOVERY_DIR
+    candidates: list[Path] = []
+    try:
+        attempts = recovery_root.iterdir()
+        for attempt in attempts:
+            pinned = attempt / "source-pinned"
+            if (
+                attempt.is_dir()
+                and not (attempt / "manifest.json").exists()
+                and pinned.is_dir()
+                and not pinned.is_symlink()
+                and any(pinned.iterdir())
+            ):
+                candidates.append(pinned)
+    except OSError:
+        return []
     return sorted(candidates, key=_latest_state_mtime_ns, reverse=True)
 
 
@@ -125,6 +205,16 @@ def _new_backup_dir(target: Path) -> Path:
             continue
         return candidate
     raise RuntimeError("could not allocate a Codex recovery backup directory")
+
+
+def _uses_legacy_headroom_routing(document: Any) -> bool:
+    providers = document.get("model_providers")
+    headroom_provider = providers.get("headroom") if providers is not None else None
+    local_provider = headroom_provider is not None and str(
+        headroom_provider.get("base_url", "")
+    ).startswith("http://127.0.0.1:")
+    local_openai_url = str(document.get("openai_base_url", "")).startswith("http://127.0.0.1:")
+    return document.get("model_provider") == "headroom" and (local_provider or local_openai_url)
 
 
 def _clean_managed_codex_config(document: Any) -> None:
@@ -244,10 +334,101 @@ def _table_columns(
     return connection.execute(f"PRAGMA {_quote(schema)}.table_info({_quote(table)})").fetchall()
 
 
-def _merge_database(source: Path, target: Path) -> None:
+def _active_model_provider(config_file: Path) -> str:
+    if not config_file.is_file():
+        return "openai"
+    document = tomlkit.parse(config_file.read_text(encoding="utf-8"))
+    return str(document.get("model_provider", "openai"))
+
+
+def _recovered_rollout_relative_path(rollout_path: Path, source_home: Path) -> Path | None:
+    try:
+        return rollout_path.relative_to(source_home)
+    except ValueError:
+        for index, part in enumerate(rollout_path.parts):
+            if part.startswith(_TEMP_HOME_PREFIX):
+                return Path(*rollout_path.parts[index + 1 :])
+    return None
+
+
+def _thread_rollout_paths(connection: sqlite3.Connection, schema: str) -> dict[Any, str]:
+    tables = _database_schema(connection, schema)
+    if "threads" not in tables:
+        return {}
+    columns = {str(column[1]) for column in _table_columns(connection, schema, "threads")}
+    if not {"id", "rollout_path"}.issubset(columns):
+        return {}
+    return dict(
+        connection.execute(f"SELECT id, rollout_path FROM {_quote(schema)}.threads").fetchall()
+    )
+
+
+def _normalize_recovered_threads(
+    connection: sqlite3.Connection,
+    *,
+    source_home: Path,
+    target_home: Path,
+    replacement_provider: str | None,
+    source_rollout_paths: dict[Any, str],
+) -> None:
+    tables = _database_schema(connection, "main")
+    if "threads" not in tables:
+        return
+    columns = {str(column[1]) for column in _table_columns(connection, "main", "threads")}
+    if not {"id", "rollout_path"}.issubset(columns):
+        return
+    select_columns = "id, rollout_path"
+    if "model_provider" in columns:
+        select_columns += ", model_provider"
+    rows = connection.execute(f"SELECT {select_columns} FROM threads").fetchall()
+    for row in rows:
+        thread_id, rollout_path = row[:2]
+        if source_rollout_paths.get(thread_id) != str(rollout_path):
+            continue
+        relative = _recovered_rollout_relative_path(Path(str(rollout_path)), source_home)
+        if relative is None:
+            continue
+        durable_rollout = target_home / relative
+        if not durable_rollout.is_file():
+            raise RuntimeError(f"recovered rollout is missing for thread {thread_id}")
+        connection.execute(
+            "UPDATE threads SET rollout_path = ? WHERE id = ?",
+            (str(durable_rollout), thread_id),
+        )
+        if replacement_provider is not None and len(row) == 3 and row[2] == "headroom":
+            connection.execute(
+                "UPDATE threads SET model_provider = ? WHERE id = ?",
+                (replacement_provider, thread_id),
+            )
+
+
+def _merge_database(
+    source: Path,
+    target: Path,
+    *,
+    source_home: Path,
+    target_home: Path,
+    replacement_provider: str | None,
+) -> None:
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        connection = sqlite3.connect(target)
+        try:
+            source_rollout_paths = _thread_rollout_paths(connection, "main")
+            _normalize_recovered_threads(
+                connection,
+                source_home=source_home,
+                target_home=target_home,
+                replacement_provider=replacement_provider,
+                source_rollout_paths=source_rollout_paths,
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
         return
     source_is_newer = source.stat().st_mtime_ns > target.stat().st_mtime_ns
     connection = sqlite3.connect(target)
@@ -260,6 +441,7 @@ def _merge_database(source: Path, target: Path) -> None:
             connection, "main"
         ) != _database_schema_objects(connection, "incoming"):
             raise RuntimeError(f"SQLite schema mismatch for {target.name}")
+        source_rollout_paths = _thread_rollout_paths(connection, "incoming")
         if "_sqlx_migrations" in target_schema:
             migration_columns = [
                 str(column[1]) for column in _table_columns(connection, "main", "_sqlx_migrations")
@@ -305,6 +487,13 @@ def _merge_database(source: Path, target: Path) -> None:
                     f"{verb} INTO {_quote(table)} ({quoted_columns}) VALUES ({placeholders})",
                     rows,
                 )
+            _normalize_recovered_threads(
+                connection,
+                source_home=source_home,
+                target_home=target_home,
+                replacement_provider=replacement_provider,
+                source_rollout_paths=source_rollout_paths,
+            )
             connection.commit()
             integrity = connection.execute("PRAGMA integrity_check").fetchone()
             if not integrity or integrity[0] != "ok":
@@ -321,8 +510,18 @@ def _merge_database(source: Path, target: Path) -> None:
         connection.close()
 
 
-def _merge_pinned_home(pinned: Path, target: Path, report: RecoveryReport) -> None:
+def _merge_pinned_home(
+    pinned: Path,
+    target: Path,
+    report: RecoveryReport,
+    *,
+    source_home: Path,
+) -> None:
     quarantine = report.backup_dir / "quarantine"
+    source_config = pinned / "config.toml"
+    replace_legacy_provider = source_config.is_file() and _uses_legacy_headroom_routing(
+        tomlkit.parse(source_config.read_text(encoding="utf-8"))
+    )
     for source in sorted(pinned.rglob("*")):
         relative = source.relative_to(pinned)
         destination = target / relative
@@ -348,7 +547,17 @@ def _merge_pinned_home(pinned: Path, target: Path, report: RecoveryReport) -> No
             _merge_jsonl(source, destination, quarantine, report)
             report.merged.append(str(relative))
         elif source.suffix in _SQLITE_SUFFIXES:
-            _merge_database(source, destination)
+            _merge_database(
+                source,
+                destination,
+                source_home=source_home,
+                target_home=target,
+                replacement_provider=(
+                    _active_model_provider(target / "config.toml")
+                    if replace_legacy_provider
+                    else None
+                ),
+            )
             report.merged.append(str(relative))
         elif not destination.exists() or source.stat().st_mtime_ns > destination.stat().st_mtime_ns:
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -421,7 +630,7 @@ def recover_codex_home(*, source: Path, target: Path) -> RecoveryReport:
     else:
         target.mkdir(mode=0o700, parents=True)
     try:
-        _merge_pinned_home(pinned, target, report)
+        _merge_pinned_home(pinned, target, report, source_home=source)
     except Exception:
         _restore_target(target, target_backup, target_existed)
         if target_existed:

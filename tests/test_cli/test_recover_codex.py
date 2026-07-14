@@ -6,6 +6,7 @@ import socket
 import sqlite3
 import stat
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,20 @@ def _write_sqlx_db(path: Path, checksum: bytes) -> None:
         connection.close()
 
 
+def _write_thread_db(
+    path: Path,
+    rows: list[tuple[str, str, str]],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, model_provider TEXT NOT NULL"
+            ")"
+        )
+        connection.executemany("INSERT INTO threads VALUES (?, ?, ?)", rows)
+
+
 def test_discover_dangling_homes_only_returns_codex_homes(tmp_path: Path) -> None:
     candidate = tmp_path / "headroom-codex-home-abc"
     candidate.mkdir()
@@ -70,6 +85,26 @@ def test_discover_dangling_homes_uses_newest_state_not_directory_mtime(
     os.utime(newest_directory, ns=(500, 500))
 
     assert discover_dangling_homes(tmp_path) == [newest_state, newest_directory]
+
+
+def test_discover_dangling_homes_searches_tmpdir_and_python_temp_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_root = tmp_path / "env-tmp"
+    python_root = tmp_path / "python-tmp"
+    env_candidate = env_root / "headroom-codex-home-env"
+    python_candidate = python_root / "headroom-codex-home-python"
+    env_candidate.mkdir(parents=True)
+    python_candidate.mkdir(parents=True)
+    (env_candidate / "history.jsonl").write_text("{}\n", encoding="utf-8")
+    (python_candidate / "history.jsonl").write_text("{}\n", encoding="utf-8")
+    os.utime(env_candidate / "history.jsonl", ns=(100, 100))
+    os.utime(python_candidate / "history.jsonl", ns=(200, 200))
+    monkeypatch.setenv("TMPDIR", str(env_root))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(python_root))
+
+    assert discover_dangling_homes() == [python_candidate, env_candidate]
 
 
 def test_recovery_merges_files_config_and_sqlite_with_backups(tmp_path: Path) -> None:
@@ -110,6 +145,97 @@ def test_recovery_merges_files_config_and_sqlite_with_backups(tmp_path: Path) ->
     assert (report.backup_dir / "target-before").is_dir()
     assert (report.backup_dir / "source-pinned").is_dir()
     assert (report.backup_dir / "manifest.json").is_file()
+
+
+def test_recovery_relocates_thread_rollout_paths_to_durable_home(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    relative_rollout = Path("sessions/2026/07/14/rollout-2026-07-14T10-00-00-thread-1.jsonl")
+    source_rollout = source / relative_rollout
+    source_rollout.parent.mkdir(parents=True)
+    source_rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    _write_thread_db(target / "state_5.sqlite", [])
+    _write_thread_db(
+        source / "state_5.sqlite",
+        [("thread-1", str(source_rollout), "openai")],
+    )
+
+    recover_codex_home(source=source, target=target)
+
+    durable_rollout = target / relative_rollout
+    assert durable_rollout.is_file()
+    with sqlite3.connect(target / "state_5.sqlite") as connection:
+        assert connection.execute(
+            "SELECT rollout_path FROM threads WHERE id = 'thread-1'"
+        ).fetchone() == (str(durable_rollout),)
+
+
+def test_recovery_ignores_unrelated_dangling_target_thread(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    unrelated_rollout = Path("/private/tmp/headroom-codex-home-deleted/sessions/unrelated.jsonl")
+    relative_rollout = Path("sessions/2026/07/14/rollout-recovered.jsonl")
+    source_rollout = source / relative_rollout
+    source_rollout.parent.mkdir(parents=True)
+    source_rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    _write_thread_db(
+        target / "state_5.sqlite",
+        [("unrelated", str(unrelated_rollout), "openai")],
+    )
+    _write_thread_db(
+        source / "state_5.sqlite",
+        [("recovered", str(source_rollout), "openai")],
+    )
+
+    recover_codex_home(source=source, target=target)
+
+    with sqlite3.connect(target / "state_5.sqlite") as connection:
+        rows = dict(connection.execute("SELECT id, rollout_path FROM threads"))
+    assert rows == {
+        "unrelated": str(unrelated_rollout),
+        "recovered": str(target / relative_rollout),
+    }
+
+
+def test_recovery_restores_legacy_headroom_threads_to_active_provider(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    (target / "config.toml").write_text(
+        'model_provider = "azure"\n'
+        "[model_providers.azure]\n"
+        'base_url = "https://azure.example/v1"\n',
+        encoding="utf-8",
+    )
+    (source / "config.toml").write_text(
+        'model_provider = "headroom"\n'
+        "[model_providers.headroom]\n"
+        'base_url = "http://127.0.0.1:8787/v1"\n',
+        encoding="utf-8",
+    )
+    relative_rollout = Path("sessions/2026/07/14/rollout-thread-1.jsonl")
+    source_rollout = source / relative_rollout
+    source_rollout.parent.mkdir(parents=True)
+    source_rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    _write_thread_db(target / "state_5.sqlite", [])
+    _write_thread_db(
+        source / "state_5.sqlite",
+        [("thread-1", str(source_rollout), "headroom")],
+    )
+
+    recover_codex_home(source=source, target=target)
+
+    with sqlite3.connect(target / "state_5.sqlite") as connection:
+        assert connection.execute(
+            "SELECT model_provider FROM threads WHERE id = 'thread-1'"
+        ).fetchone() == ("azure",)
 
 
 def test_recovery_rolls_back_when_sqlite_schema_differs(tmp_path: Path) -> None:
@@ -160,6 +286,62 @@ def test_recover_codex_cli_previews_then_merges(tmp_path: Path) -> None:
     assert json.loads((target / "history.jsonl").read_text(encoding="utf-8"))["session_id"] == (
         "new"
     )
+
+
+def test_recover_codex_cli_reports_deleted_referenced_temp_home(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    target.mkdir()
+    deleted = Path("/private/tmp/headroom-codex-home-deleted")
+    (target / "history.jsonl").write_text(
+        json.dumps({"session_id": "thread-1", "text": f"rollout: {deleted}/sessions/x"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["recover", "codex", "--target", str(target), "--yes"],
+        env={"TMPDIR": str(tmp_path / "empty-tmp")},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Referenced temporary Codex homes were already deleted:" in result.output
+    assert str(deleted) in result.output
+    assert "No recoverable Headroom Codex homes were found." in result.output
+
+
+def test_recover_codex_cli_reuses_source_pinned_by_failed_recovery(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    target.mkdir()
+    pinned = tmp_path / ".headroom-codex-recovery" / "interrupted-attempt" / "source-pinned"
+    pinned.mkdir(parents=True)
+    (pinned / "history.jsonl").write_text(
+        json.dumps({"session_id": "recovered", "text": "retained"}) + "\n",
+        encoding="utf-8",
+    )
+    relative_rollout = Path("sessions/2026/07/14/rollout-retained.jsonl")
+    pinned_rollout = pinned / relative_rollout
+    pinned_rollout.parent.mkdir(parents=True)
+    pinned_rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    deleted_source = Path("/private/tmp/headroom-codex-home-deleted")
+    _write_thread_db(
+        pinned / "state_5.sqlite",
+        [("retained", str(deleted_source / relative_rollout), "openai")],
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["recover", "codex", "--target", str(target), "--yes"],
+        env={"TMPDIR": str(tmp_path / "empty-tmp")},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert str(pinned) in result.output
+    assert "Recovery complete." in result.output
+    assert '"session_id": "recovered"' in (target / "history.jsonl").read_text(encoding="utf-8")
+    with sqlite3.connect(target / "state_5.sqlite") as connection:
+        assert connection.execute(
+            "SELECT rollout_path FROM threads WHERE id = 'retained'"
+        ).fetchone() == (str(target / relative_rollout),)
 
 
 def test_recover_codex_cli_decline_changes_nothing(tmp_path: Path) -> None:
