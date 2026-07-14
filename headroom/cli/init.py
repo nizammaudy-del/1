@@ -476,24 +476,43 @@ def _ensure_codex_feature_flag(path: Path) -> None:
 def _ensure_codex_hooks(path: Path, profile: str) -> None:
     logger.debug("ensure codex hooks: %s (profile=%s)", path, profile)
     command = f"{_hook_command('--profile', profile)} --marker {_CODEX_HOOK_MARKER}"
-    payload = {
-        "hooks": {
-            "SessionStart": [
-                {
-                    "matcher": "startup|resume",
-                    "hooks": [{"type": "command", "command": command, "timeout": 15}],
-                }
-            ],
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": command, "timeout": 15}],
-                }
-            ],
-        }
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    # Read-merge-write rather than overwrite: the previous version wrote a fresh
+    # payload wholesale, destroying any user-managed hooks (and other top-level
+    # keys) in codex hooks.json. Merge per event and dedup on the Headroom
+    # marker, matching _ensure_claude_hooks / _ensure_copilot_hooks.
+    payload = _json_file(path)
+    hooks = dict(payload.get("hooks") or {}) if isinstance(payload.get("hooks"), dict) else {}
+    for event, matcher in (
+        ("SessionStart", "startup|resume"),
+        ("PreToolUse", "Bash"),
+    ):
+        entries = list(hooks.get(event) or []) if isinstance(hooks.get(event), list) else []
+        retained: list[dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                retained.append(entry)
+                continue
+            hook_items = entry.get("hooks")
+            if not isinstance(hook_items, list):
+                retained.append(entry)
+                continue
+            has_headroom = any(
+                isinstance(item, dict)
+                and item.get("command")
+                and _CODEX_HOOK_MARKER in str(item.get("command"))
+                for item in hook_items
+            )
+            if not has_headroom:
+                retained.append(entry)
+        retained.append(
+            {
+                "matcher": matcher,
+                "hooks": [{"type": "command", "command": command, "timeout": 15}],
+            }
+        )
+        hooks[event] = retained
+    payload["hooks"] = hooks
+    _write_json(path, payload)
 
 
 def _manifest_changed(

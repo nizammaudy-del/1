@@ -337,7 +337,15 @@ def install_status(profile: str) -> None:
     click.echo(f"Healthy:    {'yes' if probe_ready(manifest.health_url) else 'no'}")
     if payload and isinstance(payload, dict):
         click.echo(f"Health URL: {manifest.health_url.replace('/readyz', '/health')}")
-        click.echo(f"Backend:    {payload.get('config', {}).get('backend', manifest.backend)}")
+        # `config` may be a non-dict (null / string / list) if a different or
+        # older service is answering on the port. `payload.get('config', {})`
+        # only defaults on a MISSING key, so a present-but-non-dict value would
+        # reach `.get('backend', ...)` and crash with AttributeError. Guard on
+        # isinstance, mirroring wrap.py's _proxy_health_config.
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            config = {}
+        click.echo(f"Backend:    {config.get('backend', manifest.backend)}")
 
 
 @install.command("start")
