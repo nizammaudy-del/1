@@ -43,6 +43,8 @@ Repeat `--source` to merge multiple homes. Headroom shows the target and every s
 
 ## What gets migrated
 
+When a source used the localhost `headroom` model provider injected by the old wrapper, recovery rewrites that provider in both SQLite thread rows and rollout `session_meta` records to the active target provider. This also repairs newer target records left by an earlier broken recovery. A user-defined remote provider named `headroom` is preserved.
+
 - `history.jsonl` and other JSONL indexes are combined without duplicate records. Malformed input is excluded from the result and copied to the backup quarantine.
 - Session rollouts under `sessions/` and `archived_sessions/` keep the newer file when the same path exists in both homes.
 - SQLite databases are merged only when their tables, indexes, triggers, views, and migration checksums are compatible. Primary-key conflicts keep rows from the newer database. Recovered thread rows are rewritten to the durable rollout path, including rows restored from a pinned source after the original temporary home was deleted.

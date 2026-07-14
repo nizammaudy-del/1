@@ -369,12 +369,35 @@ def _merge_jsonl(source: Path, target: Path, quarantine: Path, report: RecoveryR
     target.write_text("".join(f"{line}\n" for line in merged), encoding="utf-8")
 
 
-def _merge_rollout(source: Path, target: Path, quarantine: Path, report: RecoveryReport) -> None:
+def _merge_rollout(
+    source: Path,
+    target: Path,
+    quarantine: Path,
+    report: RecoveryReport,
+    replacement_provider: str | None,
+) -> None:
     incoming = _read_jsonl(source, quarantine, report)
-    if target.exists() and source.stat().st_mtime_ns <= target.stat().st_mtime_ns:
+    keep_target = target.exists() and source.stat().st_mtime_ns <= target.stat().st_mtime_ns
+    lines = _read_jsonl(target, quarantine, report) if keep_target else incoming
+    provider_replaced = False
+    if replacement_provider is not None:
+        for index, line in enumerate(lines):
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                continue
+            payload = record.get("payload")
+            if (
+                record.get("type") == "session_meta"
+                and isinstance(payload, dict)
+                and payload.get("model_provider") == "headroom"
+            ):
+                payload["model_provider"] = replacement_provider
+                lines[index] = json.dumps(record, separators=(",", ":"))
+                provider_replaced = True
+    if keep_target and not provider_replaced:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("".join(f"{line}\n" for line in incoming), encoding="utf-8")
+    target.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
 
 
 def _quote(identifier: str) -> str:
@@ -454,12 +477,15 @@ def _normalize_recovered_threads(
     rows = connection.execute(f"SELECT {select_columns} FROM threads").fetchall()
     for row in rows:
         thread_id, rollout_path = row[:2]
-        if source_rollout_paths.get(thread_id) != str(rollout_path):
+        source_rollout_path = source_rollout_paths.get(thread_id)
+        if source_rollout_path is None:
             continue
-        relative = _recovered_rollout_relative_path(Path(str(rollout_path)), source_home)
+        relative = _recovered_rollout_relative_path(Path(source_rollout_path), source_home)
         if relative is None:
             continue
         durable_rollout = target_home / relative
+        if str(rollout_path) not in {source_rollout_path, str(durable_rollout)}:
+            continue
         if not durable_rollout.is_file():
             raise RuntimeError(f"recovered rollout is missing for thread {thread_id}")
         connection.execute(
@@ -593,6 +619,9 @@ def _merge_pinned_home(
     replace_legacy_provider = source_config.is_file() and _uses_legacy_headroom_routing(
         tomlkit.parse(source_config.read_text(encoding="utf-8"))
     )
+    replacement_provider = (
+        _active_model_provider(target / "config.toml") if replace_legacy_provider else None
+    )
     for source in sorted(pinned.rglob("*")):
         relative = source.relative_to(pinned)
         destination = target / relative
@@ -612,7 +641,13 @@ def _merge_pinned_home(
             "sessions",
             "archived_sessions",
         }:
-            _merge_rollout(source, destination, quarantine, report)
+            _merge_rollout(
+                source,
+                destination,
+                quarantine,
+                report,
+                replacement_provider,
+            )
             report.merged.append(str(relative))
         elif source.suffix == ".jsonl":
             _merge_jsonl(source, destination, quarantine, report)
@@ -623,11 +658,7 @@ def _merge_pinned_home(
                 destination,
                 source_home=source_home,
                 target_home=target,
-                replacement_provider=(
-                    _active_model_provider(target / "config.toml")
-                    if replace_legacy_provider
-                    else None
-                ),
+                replacement_provider=replacement_provider,
             )
             report.merged.append(str(relative))
         elif not destination.exists() or source.stat().st_mtime_ns > destination.stat().st_mtime_ns:

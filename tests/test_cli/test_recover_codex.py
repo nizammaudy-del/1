@@ -225,7 +225,19 @@ def test_recovery_restores_legacy_headroom_threads_to_active_provider(
     relative_rollout = Path("sessions/2026/07/14/rollout-thread-1.jsonl")
     source_rollout = source / relative_rollout
     source_rollout.parent.mkdir(parents=True)
-    source_rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    source_rollout.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": "thread-1",
+                    "model_provider": "headroom",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     _write_thread_db(target / "state_5.sqlite", [])
     _write_thread_db(
         source / "state_5.sqlite",
@@ -238,6 +250,103 @@ def test_recovery_restores_legacy_headroom_threads_to_active_provider(
         assert connection.execute(
             "SELECT model_provider FROM threads WHERE id = 'thread-1'"
         ).fetchone() == ("azure",)
+    session_meta = json.loads((target / relative_rollout).read_text(encoding="utf-8"))
+    assert session_meta["payload"]["model_provider"] == "azure"
+
+
+def test_recovery_repairs_legacy_provider_after_a_previous_broken_recovery(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-broken"
+    target.mkdir()
+    source.mkdir()
+    (target / "config.toml").write_text(
+        'model_provider = "azure"\n'
+        "[model_providers.azure]\n"
+        'base_url = "https://azure.example/v1"\n',
+        encoding="utf-8",
+    )
+    (source / "config.toml").write_text(
+        'model_provider = "headroom"\n'
+        "[model_providers.headroom]\n"
+        'base_url = "http://127.0.0.1:8787/v1"\n',
+        encoding="utf-8",
+    )
+    relative_rollout = Path("sessions/2026/06/01/rollout-thread-1.jsonl")
+    source_rollout = source / relative_rollout
+    target_rollout = target / relative_rollout
+    source_rollout.parent.mkdir(parents=True)
+    target_rollout.parent.mkdir(parents=True)
+    session_meta = json.dumps(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-1", "model_provider": "headroom"},
+        }
+    )
+    source_rollout.write_text(session_meta + "\n", encoding="utf-8")
+    response_item = '{"type":"response_item","payload":{"text":"kept"}}'
+    target_rollout.write_text(session_meta + "\n" + response_item + "\n", encoding="utf-8")
+    os.utime(source_rollout, ns=(1, 1))
+    os.utime(target_rollout, ns=(2, 2))
+    target_db = target / "state_5.sqlite"
+    source_db = source / "state_5.sqlite"
+    _write_thread_db(target_db, [("thread-1", str(target_rollout), "headroom")])
+    _write_thread_db(source_db, [("thread-1", str(source_rollout), "headroom")])
+    os.utime(source_db, ns=(1, 1))
+    os.utime(target_db, ns=(2, 2))
+
+    recover_codex_home(source=source, target=target)
+    recover_codex_home(source=source, target=target)
+
+    with sqlite3.connect(target_db) as connection:
+        assert connection.execute(
+            "SELECT model_provider, rollout_path FROM threads WHERE id = 'thread-1'"
+        ).fetchone() == ("azure", str(target_rollout))
+    recovered_meta = json.loads(target_rollout.read_text(encoding="utf-8").splitlines()[0])
+    assert recovered_meta["payload"]["model_provider"] == "azure"
+    assert target_rollout.read_text(encoding="utf-8").splitlines()[1] == response_item
+
+
+def test_recovery_preserves_nonlocal_provider_named_headroom(tmp_path: Path) -> None:
+    target = tmp_path / "codex"
+    source = tmp_path / "headroom-codex-home-remote"
+    target.mkdir()
+    source.mkdir()
+    (target / "config.toml").write_text('model = "gpt-5"\n', encoding="utf-8")
+    (source / "config.toml").write_text(
+        'model_provider = "headroom"\n'
+        "[model_providers.headroom]\n"
+        'base_url = "https://gateway.example/v1"\n',
+        encoding="utf-8",
+    )
+    relative_rollout = Path("archived_sessions/rollout-thread-1.jsonl")
+    source_rollout = source / relative_rollout
+    source_rollout.parent.mkdir(parents=True)
+    source_rollout.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"id": "thread-1", "model_provider": "headroom"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_thread_db(target / "state_5.sqlite", [])
+    _write_thread_db(
+        source / "state_5.sqlite",
+        [("thread-1", str(source_rollout), "headroom")],
+    )
+
+    recover_codex_home(source=source, target=target)
+
+    recovered_meta = json.loads((target / relative_rollout).read_text(encoding="utf-8"))
+    assert recovered_meta["payload"]["model_provider"] == "headroom"
+    with sqlite3.connect(target / "state_5.sqlite") as connection:
+        assert connection.execute(
+            "SELECT model_provider FROM threads WHERE id = 'thread-1'"
+        ).fetchone() == ("headroom",)
 
 
 def test_recovery_rolls_back_when_sqlite_schema_differs(tmp_path: Path) -> None:
