@@ -33,6 +33,16 @@ from headroom.proxy import (
     wire_debug_format_policy,
     wire_debug_redaction_policy,
 )
+from headroom.proxy.beta_header_merge import (
+    merge_anthropic_beta as merge_anthropic_beta,
+)
+from headroom.proxy.beta_header_merge import (
+    merge_beta_tokens,
+    split_beta_tokens,
+)
+from headroom.proxy.beta_header_merge import (
+    merge_openai_beta as merge_openai_beta,
+)
 from headroom.proxy.beta_header_policy import (
     BETA_HEADER_STICKY_DEFAULT,
     BETA_HEADER_STICKY_ENV,
@@ -609,6 +619,20 @@ try:
     )
 except ValueError:
     COMPRESSION_TIMEOUT_SECONDS = 30.0
+
+# Cold-start fast-pass timeout in seconds. When background compression defers
+# a cold-start-large request, the handler still runs the pipeline synchronously
+# with skip_kompress=True (everything except the ML stage) under this budget so
+# the FORWARDED — and therefore provider-cached and byte-identically frozen —
+# form carries the cheap savings instead of the raw transcript. Without the ML
+# stage the pass is bounded by routing + statistical crushers (seconds, not the
+# 30s Kompress budget). Fail-open: on timeout the request forwards as before.
+try:
+    COLD_START_FAST_PASS_TIMEOUT_SECONDS = float(
+        os.environ.get("HEADROOM_COLD_START_FAST_PASS_TIMEOUT_SECONDS", "10")
+    )
+except ValueError:
+    COLD_START_FAST_PASS_TIMEOUT_SECONDS = 10.0
 
 # Eager startup preload timeout in seconds. The preload (compressor/parser models,
 # cache-only, allow_download=False) runs off the event loop during startup; this
@@ -1565,79 +1589,10 @@ def get_beta_tracker_max_sessions() -> int:
     return resolve_beta_tracker_max_sessions(os.environ.get(_BETA_TRACKER_MAX_SESSIONS_ENV))
 
 
-def _split_beta_tokens(value: str | None) -> list[str]:
-    """Split a comma-separated beta-header value into trimmed tokens.
-
-    Empty/whitespace-only entries are dropped. Pure function, no regex.
-    """
-    if not value:
-        return []
-    out: list[str] = []
-    for raw in value.split(","):
-        token = raw.strip()
-        if token:
-            out.append(token)
-    return out
+_split_beta_tokens = split_beta_tokens
 
 
-def _merge_beta_tokens(client_value: str | None, headroom_required: list[str]) -> str:
-    """Shared deterministic merge for `anthropic-beta` / `OpenAI-Beta` tokens.
-
-    Rules (per Anthropic guide §6.3 #6 "sticky-on; add but never reorder"):
-
-    * Client tokens come first, in their original order.
-    * Headroom-required tokens append in the order given, skipping any
-      token already present (case-insensitive).
-    * Dedupe is case-insensitive but the FIRST occurrence's casing wins
-      (prevents drift when client uses one casing across turns).
-    * Returns ``""`` when both inputs are empty.
-
-    Pure function. No regex. No global state.
-    """
-    seen_lower: set[str] = set()
-    out: list[str] = []
-    for token in _split_beta_tokens(client_value):
-        lower = token.lower()
-        if lower in seen_lower:
-            continue
-        seen_lower.add(lower)
-        out.append(token)
-    for token in headroom_required:
-        if not token:
-            continue
-        token = token.strip()
-        if not token:
-            continue
-        lower = token.lower()
-        if lower in seen_lower:
-            continue
-        seen_lower.add(lower)
-        out.append(token)
-    return ",".join(out)
-
-
-def merge_anthropic_beta(client_value: str | None, headroom_required: list[str]) -> str:
-    """Merge client `anthropic-beta` value with Headroom-required tokens.
-
-    See `_merge_beta_tokens` for full semantics. Order is deterministic:
-    client tokens first (in their original order), then headroom tokens
-    (in the order passed). No sorting — sticky-on per Anthropic guide
-    §6.3 #6 means we add but never reorder. Dedupe is case-insensitive
-    but preserves the original casing of the first occurrence.
-
-    Returns ``""`` when both inputs are empty.
-    """
-    return _merge_beta_tokens(client_value, headroom_required)
-
-
-def merge_openai_beta(client_value: str | None, headroom_required: list[str]) -> str:
-    """Merge client `OpenAI-Beta` value with Headroom-required tokens.
-
-    Mirror of `merge_anthropic_beta`. Same semantics — the OpenAI header
-    follows the same comma-separated convention and the same cache-stable
-    rules apply.
-    """
-    return _merge_beta_tokens(client_value, headroom_required)
+_merge_beta_tokens = merge_beta_tokens
 
 
 class SessionBetaTracker:
@@ -2438,6 +2393,61 @@ async def _read_request_body_bytes(request: Request) -> bytes:
     return cast(bytes, raw)
 
 
+# ---------------------------------------------------------------------------
+# Output-only content blocks
+# ---------------------------------------------------------------------------
+# The Anthropic *response* schema can emit signaling blocks that the *request*
+# schema (messages[].content[]) does not accept. The primary case is the
+# server-side refusal fallback notification introduced with the
+# ``server-side-fallback-2026-06-01`` beta::
+#
+#     {"type": "fallback",
+#      "from": {"model": "claude-fable-5"},
+#      "to":   {"model": "claude-opus-4-8"}}
+#
+# The API returns it inside an assistant turn to signal that a refused request
+# was transparently re-served by the fallback model. When a client replays that
+# assistant turn on the next call, the request validator rejects it::
+#
+#     400 invalid_request_error: messages.N.content.0: Input tag 'fallback'
+#     found using 'type' does not match any of the expected tags
+#
+# These blocks are output-only and carry no state the model needs on input, so
+# they are safe to drop before forwarding.
+OUTPUT_ONLY_REQUEST_BLOCK_TYPES: frozenset[str] = frozenset({"fallback"})
+
+
+def strip_output_only_request_blocks(messages: Any) -> bool:
+    """Remove output-only content blocks from request ``messages`` in place.
+
+    Returns ``True`` if any block was removed. If stripping empties a message's
+    ``content`` list it is backfilled with a single benign text block, because
+    the API also rejects an empty ``content`` array. Idempotent.
+    """
+    if not isinstance(messages, list):
+        return False
+    changed = False
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        kept = [
+            block
+            for block in content
+            if not (
+                isinstance(block, dict) and block.get("type") in OUTPUT_ONLY_REQUEST_BLOCK_TYPES
+            )
+        ]
+        if len(kept) != len(content):
+            changed = True
+            if not kept:
+                kept = [{"type": "text", "text": "(model fallback)"}]
+            msg["content"] = kept
+    return changed
+
+
 async def _read_request_json(request: Request) -> dict[str, Any]:
     """Read and parse JSON from a request, handling compressed bodies.
 
@@ -2460,6 +2470,17 @@ async def _read_request_json(request: Request) -> dict[str, Any]:
     result = json.loads(text)
     if not isinstance(result, dict):
         raise ValueError("Request body must be a JSON object, not " + type(result).__name__)
+
+    # Drop output-only blocks the request schema rejects (see
+    # ``strip_output_only_request_blocks``). Callers of this bytes-less reader
+    # (e.g. the Gemini path) re-serialize ``result`` themselves.
+    if strip_output_only_request_blocks(result.get("messages")):
+        logger.warning(
+            "removed output-only content block(s) (%s) from request messages "
+            "before forwarding (not valid on the request path)",
+            ",".join(sorted(OUTPUT_ONLY_REQUEST_BLOCK_TYPES)),
+        )
+
     return result
 
 
@@ -2481,6 +2502,21 @@ async def read_request_json_with_bytes(request: Request) -> tuple[dict[str, Any]
     result = json.loads(text)
     if not isinstance(result, dict):
         raise ValueError("Request body must be a JSON object, not " + type(result).__name__)
+
+    # Drop output-only blocks (see ``strip_output_only_request_blocks``) before
+    # any downstream deepcopy / compression / 400-retry path. This is the shared
+    # reader for the Anthropic, OpenAI, and Bedrock handlers, so one guard here
+    # covers every client that routes through the proxy. When a block is removed
+    # we re-encode ``raw`` so a byte-faithful passthrough forwarder cannot leak
+    # the pre-strip body; unchanged requests keep their exact original bytes.
+    if strip_output_only_request_blocks(result.get("messages")):
+        raw = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        logger.warning(
+            "removed output-only content block(s) (%s) from request messages "
+            "before forwarding (not valid on the request path)",
+            ",".join(sorted(OUTPUT_ONLY_REQUEST_BLOCK_TYPES)),
+        )
+
     return result, raw
 
 

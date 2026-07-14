@@ -58,6 +58,8 @@ class GeminiHandlerMixin:
         - fileData: File references (URI + MIME type)
         - functionCall: Function calls from model
         - functionResponse: Responses to function calls
+        - executableCode / codeExecutionResult: Gemini code-execution parts,
+          echoed back in contents[] on later turns
 
         Args:
             content: A single Gemini content entry with 'parts' list.
@@ -69,7 +71,14 @@ class GeminiHandlerMixin:
         for part in parts:
             if any(
                 key in part
-                for key in ("inlineData", "fileData", "functionCall", "functionResponse")
+                for key in (
+                    "inlineData",
+                    "fileData",
+                    "functionCall",
+                    "functionResponse",
+                    "executableCode",
+                    "codeExecutionResult",
+                )
             ):
                 return True
         return False
@@ -654,7 +663,15 @@ class GeminiHandlerMixin:
                     # Gemini returns cachedContentTokenCount for context-cached tokens
                     # These are charged at 10-25% of the input price depending on model
                     cache_read_tokens = usage.get("cachedContentTokenCount", 0)
-                except (KeyError, TypeError, AttributeError) as e:
+                except (json.JSONDecodeError, ValueError, KeyError, TypeError, AttributeError) as e:
+                    # A non-JSON upstream body (HTML/empty error page from an
+                    # overloaded Google/Vertex frontend) makes response.json()
+                    # raise JSONDecodeError (a ValueError). Without those in the
+                    # tuple it escaped to the outer `except Exception` and became
+                    # a synthetic 502, discarding the real upstream status/body
+                    # and defeating client retry/backoff. Match the all-non-text
+                    # sibling branch above, which falls through to forward the
+                    # real status/content verbatim.
                     logger.debug(
                         f"[{request_id}] Failed to extract cached tokens from Gemini response: {e}"
                     )

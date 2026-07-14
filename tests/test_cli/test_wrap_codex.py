@@ -10,7 +10,9 @@ way a user would from the shell.
 from __future__ import annotations
 
 import shutil
+import socket
 import sqlite3
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1081,6 +1083,38 @@ def test_codex_session_home_overlay_seeds_active_home_and_cleans_up(
     assert auth_file.read_text(encoding="utf-8") == original_auth
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32" or not hasattr(socket, "AF_UNIX"),
+    reason="requires POSIX Unix domain sockets",
+)
+def test_codex_session_home_overlay_skips_unix_sockets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_test_home(monkeypatch, tmp_path)
+    codex_home = tmp_path / "custom-codex-home"
+    socket_dir = codex_home / "vendor_imports" / "skills" / ".git"
+    socket_dir.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(codex_home)
+
+    head_file = socket_dir / "HEAD"
+    head_file.write_text("ref: refs/heads/main\n", encoding="utf-8")
+    socket_file = socket_dir / "fsmonitor--daemon.ipc"
+    relative_socket_file = socket_file.relative_to(codex_home)
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as fsmonitor_socket:
+        fsmonitor_socket.bind(str(relative_socket_file))
+
+        with wrap_mod._codex_session_home_overlay() as session_home:
+            session_socket_dir = session_home / socket_dir.relative_to(codex_home)
+            assert (session_socket_dir / "HEAD").read_text(encoding="utf-8") == (
+                "ref: refs/heads/main\n"
+            )
+            assert not (session_socket_dir / socket_file.name).exists()
+
+        assert socket_file.is_socket()
+
+
 def test_wrap_codex_launch_uses_session_scoped_codex_home(
     runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1919,3 +1953,63 @@ class TestCodexPortResolution:
         assert call_kw.get("port") == 8787
         assert call_kw.get("no_proxy") is False
         assert call_kw.get("prepare_only") is False
+
+
+class TestCodexLaunchExportsCustomUpstream:
+    """`_run_codex_wrap` must export the detected custom upstream base URL into
+    the launch env so Codex emits the ``X-Headroom-Base-Url`` header. Otherwise
+    the proxy falls back to api.openai.com and the user's gateway key is sent to
+    the wrong host (regression of #1614)."""
+
+    def _launch_env(self, monkeypatch, tmp_path, *, custom_upstream):
+        from contextlib import contextmanager
+
+        captured: dict = {}
+
+        monkeypatch.setattr(wrap_mod.shutil, "which", lambda name: "/usr/bin/codex")
+        monkeypatch.setattr(wrap_mod, "_codex_home_dir", lambda: tmp_path)
+
+        @contextmanager
+        def _fake_overlay():
+            yield tmp_path / "session"
+
+        monkeypatch.setattr(wrap_mod, "_codex_session_home_overlay", _fake_overlay)
+        # Stand in for the heavy prepare step; only its return value matters here.
+        monkeypatch.setattr(wrap_mod, "_prepare_codex_wrap_state", lambda **kwargs: custom_upstream)
+
+        def _fake_launch(*, env, **kwargs):
+            captured["env"] = env
+
+        monkeypatch.setattr(wrap_mod, "_launch_tool", _fake_launch)
+
+        wrap_mod._run_codex_wrap(
+            port=8787,
+            no_rtk=True,
+            no_mcp=True,
+            no_tokensave=True,
+            serena=False,
+            no_serena=True,
+            code_graph=False,
+            no_proxy=True,
+            learn=False,
+            memory=False,
+            backend=None,
+            anyllm_provider=None,
+            region=None,
+            verbose=False,
+            prepare_only=False,
+            codex_args=(),
+        )
+        return captured["env"]
+
+    def test_custom_upstream_exported_into_launch_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env = self._launch_env(monkeypatch, tmp_path, custom_upstream="https://api.freemodel.dev")
+        assert env[wrap_mod._UPSTREAM_BASE_URL_ENV_VAR] == "https://api.freemodel.dev"
+
+    def test_no_custom_upstream_leaves_env_var_unset(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env = self._launch_env(monkeypatch, tmp_path, custom_upstream=None)
+        assert wrap_mod._UPSTREAM_BASE_URL_ENV_VAR not in env

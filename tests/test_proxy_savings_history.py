@@ -51,6 +51,11 @@ def test_savings_tracker_helpers_normalize_inputs_and_paths(tmp_path, monkeypatc
     assert savings_tracker_module.get_default_savings_storage_path() == str(override_path)
 
     monkeypatch.delenv(HEADROOM_SAVINGS_PATH_ENV_VAR, raising=False)
+    # HEADROOM_WORKSPACE_DIR overrides the default savings path too (see
+    # headroom/paths.py); unset it so this assertion checks the actual
+    # library default rather than whatever workspace a live deployment on
+    # this machine happens to have exported.
+    monkeypatch.delenv("HEADROOM_WORKSPACE_DIR", raising=False)
     default_path = savings_tracker_module.get_default_savings_storage_path()
     assert Path(default_path).as_posix().endswith(".headroom/proxy_savings.json")
 
@@ -73,6 +78,8 @@ def test_savings_tracker_helpers_normalize_inputs_and_paths(tmp_path, monkeypatc
         "model": "unknown",
         "total_tokens_saved": 12,
         "compression_savings_usd": 0.5,
+        "cache_read_tokens": 0,
+        "cache_savings_usd": 0.0,
         "total_input_tokens": 0,
         "total_input_cost_usd": 0.0,
     }
@@ -134,6 +141,8 @@ def test_savings_tracker_sanitizes_legacy_state_and_applies_retention(tmp_path):
             "model": "unknown",
             "total_tokens_saved": 30,
             "compression_savings_usd": 0.03,
+            "cache_read_tokens": 0,
+            "cache_savings_usd": 0.0,
             "total_input_tokens": 0,
             "total_input_cost_usd": 0.0,
         }
@@ -1577,6 +1586,37 @@ def test_cache_read_savings_accumulate_and_survive_restart(tmp_path, monkeypatch
     assert reloaded.history_response()["lifetime"]["cache_read_tokens"] == 1_600_000
 
 
+def test_by_model_savings_accumulate_and_survive_restart(tmp_path):
+    path = tmp_path / "proxy_savings.json"
+    tracker = SavingsTracker(path=str(path))
+
+    tracker.record_request(
+        model="gpt-4o",
+        input_tokens=100,
+        tokens_saved=40,
+        timestamp="2026-07-01T09:00:00Z",
+    )
+    tracker.record_request(
+        model="claude-sonnet-4-6",
+        input_tokens=300,
+        tokens_saved=60,
+        timestamp="2026-07-01T09:01:00Z",
+    )
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert set(persisted["by_model"]) == {"gpt-4o", "claude-sonnet-4-6"}
+    assert persisted["by_model"]["gpt-4o"]["tokens_saved"] == 40
+    assert persisted["by_model"]["gpt-4o"]["total_input_tokens"] == 100
+
+    reloaded = SavingsTracker(path=str(path))
+    stats_by_model = reloaded.stats_preview()["by_model"]
+    assert set(stats_by_model) == {"gpt-4o", "claude-sonnet-4-6"}
+    assert stats_by_model["claude-sonnet-4-6"]["tokens_saved"] == 60
+    assert stats_by_model["claude-sonnet-4-6"]["total_input_tokens"] == 300
+    assert stats_by_model["claude-sonnet-4-6"]["savings_percent"] == 16.67
+    assert reloaded.history_response()["by_model"] == stats_by_model
+
+
 def test_v3_state_without_cache_fields_loads_clean_and_saves_v4(tmp_path):
     path = tmp_path / "proxy_savings.json"
     path.write_text(
@@ -1847,3 +1887,83 @@ def test_non_finite_state_values_coerce_to_defaults(tmp_path):
         timestamp="2026-07-02T00:00:00Z",
     )
     assert tracker.snapshot()["lifetime"]["cache_read_tokens"] == 5
+
+
+def test_cache_only_request_still_appends_a_history_point(tmp_path):
+    # Regression: in --mode cache, tokens_saved is ~always 0 (the frozen
+    # prefix is byte-replayed, not lossy-compressed, to keep the provider's
+    # prompt cache warm). The history-append guard used to gate on
+    # tokens_saved alone, so a cache-only deployment silently wrote zero
+    # history points regardless of real cache_read_tokens/cache_savings_usd —
+    # making headroom-monthly-style tooling read as a total collapse.
+    path = tmp_path / "proxy_savings.json"
+    tracker = SavingsTracker(path=str(path))
+
+    assert tracker.snapshot()["history"] == []
+
+    tracker.record_request(
+        model="claude-sonnet-5",
+        input_tokens=60_000,
+        tokens_saved=0,
+        cache_read_tokens=50_000,
+        timestamp="2026-07-13T22:15:00Z",
+    )
+
+    history = tracker.snapshot()["history"]
+    assert len(history) == 1
+    entry = history[0]
+    assert entry["total_tokens_saved"] == 0
+    assert entry["cache_read_tokens"] == 50_000
+    assert entry["cache_savings_usd"] > 0.0
+
+    # A request with neither compression nor cache savings still appends
+    # nothing — this isn't "always append," only "append on either saving."
+    tracker.record_request(
+        model="claude-sonnet-5",
+        input_tokens=60_000,
+        tokens_saved=0,
+        cache_read_tokens=0,
+        timestamp="2026-07-13T22:16:00Z",
+    )
+    assert len(tracker.snapshot()["history"]) == 1
+
+
+def test_normalize_history_entry_defaults_missing_cache_fields(tmp_path):
+    # Regression: history points written before cache-savings tracking existed
+    # have no cache_read_tokens/cache_savings_usd keys at all. Loading them
+    # back must default to 0/0.0, not raise or silently drop the entry.
+    path = tmp_path / "proxy_savings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 4,
+                "lifetime": {
+                    "requests": 1,
+                    "tokens_saved": 40,
+                    "compression_savings_usd": 0.04,
+                    "total_input_tokens": 200,
+                    "total_input_cost_usd": 0.4,
+                },
+                "history": [
+                    {
+                        "timestamp": "2026-07-01T00:00:00Z",
+                        "provider": "anthropic",
+                        "model": "claude-sonnet-5",
+                        "total_tokens_saved": 40,
+                        "compression_savings_usd": 0.04,
+                        "total_input_tokens": 200,
+                        "total_input_cost_usd": 0.4,
+                    }
+                ],
+                "projects": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tracker = SavingsTracker(path=str(path))
+    history = tracker.snapshot()["history"]
+    assert len(history) == 1
+    assert history[0]["cache_read_tokens"] == 0
+    assert history[0]["cache_savings_usd"] == 0.0
+    assert history[0]["total_tokens_saved"] == 40

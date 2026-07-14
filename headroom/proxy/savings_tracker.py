@@ -209,7 +209,11 @@ def _estimate_compression_savings_usd(model: str, tokens_saved: int) -> float:
         resolved = _resolve_litellm_model(model)
         info = litellm.model_cost.get(resolved, {})
         input_cost_per_token = info.get("input_cost_per_token")
-        if not input_cost_per_token:
+        # Distinguish "price unknown" (missing key → fall back) from a model that
+        # is legitimately free (input_cost_per_token == 0.0). `if not ...` treated
+        # a real 0.0 as unavailable and billed the $3/M fallback — phantom savings
+        # for a model that costs nothing.
+        if input_cost_per_token is None:
             raise RuntimeError("input cost unavailable")
         return float(tokens_saved) * float(input_cost_per_token)
     except Exception:
@@ -290,7 +294,9 @@ def _estimate_input_cost_usd(
         resolved = _resolve_litellm_model(model)
         info = litellm.model_cost.get(resolved, {})
         input_cost_per_token = info.get("input_cost_per_token")
-        if not input_cost_per_token:
+        # A missing key means the model is unknown → fall back to a blended rate.
+        # A present 0.0 means the model is free and must cost $0, not the fallback.
+        if input_cost_per_token is None:
             raise RuntimeError("input cost unavailable")
 
         if use_breakdown:
@@ -318,6 +324,8 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
     timestamp: datetime | None = None
     total_tokens_saved = 0
     compression_savings_usd = 0.0
+    cache_read_tokens = 0
+    cache_savings_usd = 0.0
     total_input_tokens = 0
     total_input_cost_usd = 0.0
     provider = PROVIDER_UNKNOWN
@@ -327,6 +335,11 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
         timestamp = _parse_timestamp(entry.get("timestamp"))
         total_tokens_saved = _coerce_int(entry.get("total_tokens_saved"))
         compression_savings_usd = _coerce_float(entry.get("compression_savings_usd"))
+        # Older history points predate cache-savings tracking and omit these
+        # keys entirely; default to 0/0.0 rather than raising or dropping the
+        # entry, matching how every other field here handles legacy shapes.
+        cache_read_tokens = _coerce_int(entry.get("cache_read_tokens"))
+        cache_savings_usd = _coerce_float(entry.get("cache_savings_usd"))
         total_input_tokens = _coerce_int(entry.get("total_input_tokens"))
         total_input_cost_usd = _coerce_float(entry.get("total_input_cost_usd"))
         provider = _normalize_provider(entry.get("provider"))
@@ -352,6 +365,8 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
         "model": model,
         "total_tokens_saved": total_tokens_saved,
         "compression_savings_usd": round(compression_savings_usd, 6),
+        "cache_read_tokens": cache_read_tokens,
+        "cache_savings_usd": round(cache_savings_usd, 6),
         "total_input_tokens": total_input_tokens,
         "total_input_cost_usd": round(total_input_cost_usd, 6),
     }
@@ -369,6 +384,16 @@ def _empty_display_session() -> dict[str, Any]:
         "savings_percent": 0.0,
         "started_at": None,
         "last_activity_at": None,
+    }
+
+
+def _empty_by_model_entry() -> dict[str, Any]:
+    return {
+        "requests": 0,
+        "tokens_saved": 0,
+        "compression_savings_usd": 0.0,
+        "total_input_tokens": 0,
+        "total_input_cost_usd": 0.0,
     }
 
 
@@ -414,6 +439,28 @@ def _normalize_projects(raw: Any) -> dict[str, dict[str, Any]]:
         )[:DEFAULT_MAX_PROJECTS]
         projects = dict(kept)
     return projects
+
+
+def _normalize_by_model(raw: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for model_name, entry in raw.items():
+        model = _normalize_model(model_name)
+        if not isinstance(entry, dict):
+            continue
+        normalized = _empty_by_model_entry()
+        normalized["requests"] = _coerce_int(entry.get("requests"))
+        normalized["tokens_saved"] = _coerce_int(entry.get("tokens_saved"))
+        normalized["compression_savings_usd"] = round(
+            _coerce_float(entry.get("compression_savings_usd")), 6
+        )
+        normalized["total_input_tokens"] = _coerce_int(entry.get("total_input_tokens"))
+        normalized["total_input_cost_usd"] = round(
+            _coerce_float(entry.get("total_input_cost_usd")), 6
+        )
+        result[model] = normalized
+    return result
 
 
 def _normalize_display_session(entry: Any) -> dict[str, Any]:
@@ -553,6 +600,12 @@ class SavingsTracker:
                 6,
             )
 
+            self._record_by_model_locked(
+                model,
+                tokens_saved_delta=delta_tokens,
+                savings_usd_delta=delta_usd,
+            )
+
             self._state["history"].append(
                 {
                     "timestamp": _to_utc_iso(timestamp_dt),
@@ -687,6 +740,15 @@ class SavingsTracker:
             if session.get("started_at") is None:
                 session["started_at"] = session["last_activity_at"]
 
+            self._record_by_model_locked(
+                model,
+                requests_delta=1,
+                tokens_saved_delta=delta_tokens_saved,
+                savings_usd_delta=delta_savings_usd,
+                input_tokens_delta=delta_input_tokens,
+                input_cost_usd_delta=delta_input_cost_usd,
+            )
+
             self._record_project_locked(
                 project,
                 timestamp_dt=timestamp_dt,
@@ -697,7 +759,13 @@ class SavingsTracker:
                 input_cost_usd_delta=delta_input_cost_usd,
             )
 
-            if delta_tokens_saved > 0:
+            # In --mode cache, headroom's own compression (tokens_saved) is
+            # near-always 0 by design — the frozen prefix is byte-replayed,
+            # not lossy-compressed, to keep Bedrock's prompt cache warm. Gating
+            # on tokens_saved alone silently dropped every history point on
+            # those requests even though real cache-read savings occurred.
+            # Append whenever either mechanism produced a saving.
+            if delta_tokens_saved > 0 or delta_cache_read_tokens > 0:
                 self._state["history"].append(
                     {
                         "timestamp": _to_utc_iso(timestamp_dt),
@@ -705,6 +773,8 @@ class SavingsTracker:
                         "model": _normalize_model(model),
                         "total_tokens_saved": lifetime["tokens_saved"],
                         "compression_savings_usd": lifetime["compression_savings_usd"],
+                        "cache_read_tokens": lifetime["cache_read_tokens"],
+                        "cache_savings_usd": lifetime["cache_savings_usd"],
                         "total_input_tokens": lifetime["total_input_tokens"],
                         "total_input_cost_usd": lifetime["total_input_cost_usd"],
                     }
@@ -756,6 +826,34 @@ class SavingsTracker:
             )
             del projects[evict]
 
+    def _record_by_model_locked(
+        self,
+        model: str,
+        *,
+        requests_delta: int = 0,
+        tokens_saved_delta: int = 0,
+        savings_usd_delta: float = 0.0,
+        input_tokens_delta: int = 0,
+        input_cost_usd_delta: float = 0.0,
+    ) -> None:
+        """Accumulate per-model savings. Caller must hold ``self._lock``.
+
+        Lazy-inits ``by_model`` so existing state files without the key work
+        without migration.
+        """
+        by_model: dict[str, dict[str, Any]] = self._state.setdefault("by_model", {})
+        key = _normalize_model(model)
+        entry = by_model.setdefault(key, _empty_by_model_entry())
+        entry["requests"] += max(requests_delta, 0)
+        entry["tokens_saved"] += max(tokens_saved_delta, 0)
+        entry["compression_savings_usd"] = round(
+            entry["compression_savings_usd"] + max(savings_usd_delta, 0.0), 6
+        )
+        entry["total_input_tokens"] += max(input_tokens_delta, 0)
+        entry["total_input_cost_usd"] = round(
+            entry["total_input_cost_usd"] + max(input_cost_usd_delta, 0.0), 6
+        )
+
     def _projects_snapshot_locked(self) -> dict[str, dict[str, Any]]:
         """Per-project stats with a derived ``savings_percent``, sorted by savings."""
         projects = self._state.get("projects", {})
@@ -775,6 +873,25 @@ class SavingsTracker:
             result[name] = view
         return result
 
+    def _by_model_snapshot_locked(self) -> dict[str, dict[str, Any]]:
+        """Per-model stats ranked by savings."""
+        by_model = self._state.get("by_model", {})
+        ranked = sorted(
+            by_model.items(),
+            key=lambda item: item[1]["tokens_saved"],
+            reverse=True,
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for model, entry in ranked:
+            view = dict(entry)
+            total_before = entry["tokens_saved"] + entry["total_input_tokens"]
+            view["savings_percent"] = round(
+                (entry["tokens_saved"] / total_before * 100) if total_before > 0 else 0.0,
+                2,
+            )
+            result[model] = view
+        return result
+
     def stats_preview(self, recent_points: int = 20) -> dict[str, Any]:
         """Return a compact preview for `/stats`."""
         snapshot = self.snapshot()
@@ -789,6 +906,7 @@ class SavingsTracker:
             "retention": snapshot["retention"],
             "projects": snapshot["projects"],
             "projects_limit": DEFAULT_MAX_PROJECTS,
+            "by_model": snapshot["by_model"],
         }
 
     def history_response(self, history_mode: str = "compact") -> dict[str, Any]:
@@ -818,6 +936,7 @@ class SavingsTracker:
             },
             "retention": snapshot["retention"],
             "projects": snapshot["projects"],
+            "by_model": snapshot["by_model"],
             "history_summary": {
                 "mode": history_mode,
                 "stored_points": len(raw_history),
@@ -882,6 +1001,7 @@ class SavingsTracker:
                     "max_response_history_points": self._max_response_history_points,
                 },
                 "projects": self._projects_snapshot_locked(),
+                "by_model": self._by_model_snapshot_locked(),
             }
 
     def _default_state(self) -> dict[str, Any]:
@@ -899,6 +1019,7 @@ class SavingsTracker:
             "display_session": _empty_display_session(),
             "history": [],
             "projects": {},
+            "by_model": {},
         }
 
     def _load_state(self) -> dict[str, Any]:
@@ -978,6 +1099,7 @@ class SavingsTracker:
             "display_session": _normalize_display_session(raw.get("display_session")),
             "history": normalized_history,
             "projects": _normalize_projects(raw.get("projects")),
+            "by_model": _normalize_by_model(raw.get("by_model")),
         }
 
         if normalized_history:
@@ -1093,6 +1215,7 @@ class SavingsTracker:
                 "display_session": self._state["display_session"],
                 "history": self._state["history"],
                 "projects": self._state.get("projects", {}),
+                "by_model": self._state.get("by_model", {}),
             }
             json_data = json.dumps(payload, indent=2)
 
