@@ -17,18 +17,26 @@ from headroom.providers.codex.recovery import discover_dangling_homes, recover_c
 
 def _write_db(path: Path, rows: list[tuple[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    connection = sqlite3.connect(path)
+    try:
         connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
         connection.executemany("INSERT INTO threads VALUES (?, ?)", rows)
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def _write_sqlx_db(path: Path, checksum: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    connection = sqlite3.connect(path)
+    try:
         connection.execute(
             "CREATE TABLE _sqlx_migrations (version INTEGER PRIMARY KEY, checksum BLOB NOT NULL)"
         )
         connection.execute("INSERT INTO _sqlx_migrations VALUES (1, ?)", (checksum,))
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def test_discover_dangling_homes_only_returns_codex_homes(tmp_path: Path) -> None:
@@ -75,6 +83,8 @@ def test_recovery_merges_files_config_and_sqlite_with_backups(tmp_path: Path) ->
     (source / "config.toml").write_text(
         'model = "source-model"\n[features]\nfrom_wrap = true\n', encoding="utf-8"
     )
+    os.utime(target / "config.toml", ns=(100, 100))
+    os.utime(source / "config.toml", ns=(200, 200))
     rollout = source / "sessions" / "2026" / "07" / "14" / "rollout.jsonl"
     rollout.parent.mkdir(parents=True)
     rollout.write_text('{"type":"session_meta"}\n', encoding="utf-8")
@@ -121,8 +131,9 @@ def test_recovery_rolls_back_when_sqlite_schema_differs(tmp_path: Path) -> None:
         recover_codex_home(source=source, target=target)
 
     assert (target / "config.toml").read_text(encoding="utf-8") == original
-    assert stat.S_IMODE(target.stat().st_mode) == 0o755
-    assert stat.S_IMODE((target / "config.toml").stat().st_mode) == 0o644
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o755
+        assert stat.S_IMODE((target / "config.toml").stat().st_mode) == 0o644
     with sqlite3.connect(target / "sqlite" / "state_5.sqlite") as connection:
         assert connection.execute("SELECT id, title FROM threads").fetchall() == [
             ("target", "Target")
@@ -217,8 +228,12 @@ def test_recovery_rolls_back_when_sqlite_indexes_differ(tmp_path: Path) -> None:
     target_db = target / "sqlite" / "state_5.sqlite"
     source_db = source / "sqlite" / "state_5.sqlite"
     _write_db(target_db, [("target", "Target")])
-    with sqlite3.connect(target_db) as connection:
+    connection = sqlite3.connect(target_db)
+    try:
         connection.execute("CREATE UNIQUE INDEX thread_title ON threads(title)")
+        connection.commit()
+    finally:
+        connection.close()
     _write_db(source_db, [("source", "Source")])
 
     with pytest.raises(RuntimeError, match="schema mismatch"):

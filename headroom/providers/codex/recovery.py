@@ -248,7 +248,8 @@ def _merge_database(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
         return
     source_is_newer = source.stat().st_mtime_ns > target.stat().st_mtime_ns
-    with sqlite3.connect(target) as connection:
+    connection = sqlite3.connect(target)
+    try:
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("ATTACH DATABASE ? AS incoming", (str(source),))
         target_schema = _database_schema(connection, "main")
@@ -314,6 +315,8 @@ def _merge_database(source: Path, target: Path) -> None:
             raise
         finally:
             connection.execute("DETACH DATABASE incoming")
+    finally:
+        connection.close()
 
 
 def _merge_pinned_home(pinned: Path, target: Path, report: RecoveryReport) -> None:
