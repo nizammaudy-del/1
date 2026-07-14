@@ -331,6 +331,37 @@ def test_wrap_opencode_idempotent_no_duplicate_block(
     assert content.count(wrap_mod._RTK_MARKER) == 1
 
 
+def test_wrap_opencode_ctx_forge_skips_rtk_installer(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ctx-forge mode has no downloadable binary and must not install rtk."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HEADROOM_CONTEXT_TOOL", "ctx-forge")
+    _set_test_home(monkeypatch, tmp_path)
+
+    seen: dict[str, object] = {}
+
+    def fake_setup_ctx_forge(agent_display: str, **kwargs) -> None:  # noqa: ANN003
+        seen["agent_display"] = agent_display
+        seen["kwargs"] = kwargs
+
+    def fail_rtk(*args, **kwargs):  # noqa: ANN003
+        raise AssertionError("rtk installer must not run in ctx-forge mode")
+
+    with patch.object(wrap_mod.shutil, "which", return_value="opencode"):
+        with patch.object(wrap_mod, "_launch_tool"):
+            with patch.object(wrap_mod, "_setup_ctx_forge_agent", side_effect=fake_setup_ctx_forge):
+                with patch.object(wrap_mod, "_ensure_rtk_binary", side_effect=fail_rtk):
+                    result = runner.invoke(
+                        main, ["wrap", "opencode", "--port", "9000", "--no-mcp", "--no-proxy"]
+                    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["agent_display"] == "OpenCode"
+
+
 # ---------------------------------------------------------------------------
 # Unwrap opencode
 # ---------------------------------------------------------------------------
