@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from headroom._compat import DATACLASS_SLOTS
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class ProviderPassthroughRoute:
     """A direct provider passthrough route handled by ``HeadroomProxy.handle_passthrough``."""
 
@@ -15,7 +17,7 @@ class ProviderPassthroughRoute:
     sub_path: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class ProviderHandlerRoute:
     """A route that delegates directly to a named proxy handler."""
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from headroom._compat import AsyncLock
 from headroom.memory.adapters.graph_models import Entity, Relationship, Subgraph
 from headroom.memory.models import Memory
 from headroom.memory.ports import MemorySearchResult
@@ -128,7 +129,7 @@ class LocalBackend:
     def _get_init_lock(self) -> asyncio.Lock:
         """Lazily create the init lock bound to the running event loop."""
         if self._init_lock is None:
-            self._init_lock = asyncio.Lock()
+            self._init_lock = AsyncLock()
         return self._init_lock
 
     async def _ensure_initialized(self) -> None:

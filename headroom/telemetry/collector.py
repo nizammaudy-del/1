@@ -500,7 +500,7 @@ class TelemetryCollector:
                 type_counts["string"] = type_counts.get("string", 0) + 1
             elif isinstance(v, bool):
                 type_counts["boolean"] = type_counts.get("boolean", 0) + 1
-            elif isinstance(v, int | float):
+            elif isinstance(v, (int, float)):
                 type_counts["numeric"] = type_counts.get("numeric", 0) + 1
             elif isinstance(v, list):
                 type_counts["array"] = type_counts.get("array", 0) + 1
@@ -532,7 +532,7 @@ class TelemetryCollector:
                 dist.looks_like_id = dist.unique_ratio > 0.9 and dist.avg_length > 5
 
         elif field_type == "numeric":
-            num_values = [v for v in values if isinstance(v, int | float)]
+            num_values = [v for v in values if isinstance(v, (int, float))]
             # Filter out infinity and NaN which can cause issues
             num_values = [
                 v

@@ -39,7 +39,9 @@ from collections.abc import Callable
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypedDict, cast
+
+from headroom._compat import AsyncLock, AsyncSemaphore
 
 if TYPE_CHECKING:
     from ..backends.base import Backend
@@ -707,7 +709,7 @@ class HeadroomProxy(
             tool_profiles=config.tool_profiles,
             read_lifecycle=ReadLifecycleConfig(enabled=config.read_lifecycle),
             smart_crusher_max_items_after_crush=cast(
-                int | None,
+                Optional[int],
                 profile_kwargs.get("max_items_after_crush"),
             ),
             smart_crusher_with_compaction=cast(
@@ -920,7 +922,7 @@ class HeadroomProxy(
             config.anthropic_pre_upstream_memory_context_timeout_seconds
         )
         if _pre_upstream_resolved > 0:
-            self.anthropic_pre_upstream_sem: asyncio.Semaphore | None = asyncio.Semaphore(
+            self.anthropic_pre_upstream_sem: asyncio.Semaphore | None = AsyncSemaphore(
                 _pre_upstream_resolved
             )
         else:
@@ -1002,7 +1004,7 @@ class HeadroomProxy(
 
         # Request counter for IDs
         self._request_counter = 0
-        self._request_counter_lock = asyncio.Lock()
+        self._request_counter_lock = AsyncLock()
 
         # CCR tool injectors (one per provider)
         self.anthropic_tool_injector = CCRToolInjector(
@@ -2260,7 +2262,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
     def _uptime_seconds() -> float:
         started_at = getattr(app.state, "started_at", None)
-        if not isinstance(started_at, int | float):
+        if not isinstance(started_at, (int, float)):
             return 0.0
         return round(max(0.0, time.time() - float(started_at)), 3)
 
@@ -2458,7 +2460,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         if include_config:
             profile_kwargs = proxy_pipeline_kwargs(config)
             effective_target_ratio = cast(
-                float | None,
+                Optional[float],
                 profile_kwargs.get("target_ratio", config.target_ratio),
             )
             payload["config"] = {
@@ -2538,7 +2540,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         "error": None,
         "url": None,
     }
-    _upstream_check_lock = asyncio.Lock()
+    _upstream_check_lock = AsyncLock()
 
     def _upstream_target_url() -> str:
         """Return the primary upstream base URL to probe."""
@@ -2956,18 +2958,18 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         return Response(status_code=204)
 
     DASHBOARD_STATS_CACHE_TTL_SECONDS = 5.0
-    _stats_snapshot_lock = asyncio.Lock()
+    _stats_snapshot_lock = AsyncLock()
     _stats_snapshot: dict[str, Any] = {"expires_at": 0.0, "value": None}
 
     THROUGHPUT_CACHE_TTL_SECONDS = 10.0
-    _throughput_cache_lock = asyncio.Lock()
+    _throughput_cache_lock = AsyncLock()
     _throughput_cache: dict[str, Any] = {"expires_at": 0.0, "value": None}
 
     RECENT_REQUEST_LOG_WINDOW = 100
 
     def _is_recent_request_number(value: Any) -> bool:
         return (
-            isinstance(value, int | float)
+            isinstance(value, (int, float))
             and not isinstance(value, bool)
             and math.isfinite(float(value))
         )
@@ -3592,7 +3594,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         profile_kwargs = proxy_pipeline_kwargs(config)
         target_ratio = profile_kwargs.get("target_ratio", config.target_ratio)
         target_savings_percent = None
-        if isinstance(target_ratio, int | float):
+        if isinstance(target_ratio, (int, float)):
             target_savings_percent = round(max(0.0, min(1.0, 1.0 - float(target_ratio))) * 100, 1)
         return {
             "savings_profile": config.savings_profile,
@@ -3623,13 +3625,13 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     async def _get_cached_stats_payload() -> dict[str, Any]:
         """Return a short-TTL cached `/stats` snapshot for dashboard polling."""
         now = time.monotonic()
-        cached_payload = cast(dict[str, Any] | None, _stats_snapshot.get("value"))
+        cached_payload = cast(Optional[dict[str, Any]], _stats_snapshot.get("value"))
         if cached_payload is not None and now < float(_stats_snapshot["expires_at"]):
             return cached_payload
 
         async with _stats_snapshot_lock:
             now = time.monotonic()
-            cached_payload = cast(dict[str, Any] | None, _stats_snapshot.get("value"))
+            cached_payload = cast(Optional[dict[str, Any]], _stats_snapshot.get("value"))
             if cached_payload is not None and now < float(_stats_snapshot["expires_at"]):
                 return cached_payload
 
@@ -4343,7 +4345,7 @@ def _json_ready(value: Any) -> Any:
         return {field.name: _json_ready(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {str(key): _json_ready(item) for key, item in value.items()}
-    if isinstance(value, list | tuple | set):
+    if isinstance(value, (list, tuple, set)):
         return [_json_ready(item) for item in value]
     return value
 

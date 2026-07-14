@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +13,11 @@ from headroom.models import (
     get_model_info,
     list_models,
     register_model,
+)
+
+requires_litellm = pytest.mark.skipif(
+    importlib.util.find_spec("litellm") is None,
+    reason="pricing/model info comes from litellm (unavailable on Python 3.9/3.14)",
 )
 
 
@@ -196,6 +202,7 @@ class TestModelRegistry:
         limit = ModelRegistry.get_context_limit("unknown", default=32000)
         assert limit == 32000
 
+    @requires_litellm
     def test_estimate_cost(self):
         """Test cost estimation."""
         cost = ModelRegistry.estimate_cost(
@@ -207,6 +214,7 @@ class TestModelRegistry:
         # GPT-4o: $2.50/1M input + $10.00/1M output * 0.5 = $2.50 + $5.00 = $7.50
         assert abs(cost - 7.50) < 0.01
 
+    @requires_litellm
     def test_estimate_cost_with_cache(self):
         """Test cost estimation with cached tokens.
 
@@ -260,6 +268,7 @@ class TestConvenienceFunctions:
 class TestBuiltInModels:
     """Tests for built-in model data."""
 
+    @requires_litellm
     def test_gpt4o_info(self):
         """Test GPT-4o model info."""
         info = get_model_info("gpt-4o")
@@ -280,6 +289,7 @@ class TestBuiltInModels:
         assert info.context_window == 200000  # 200K context
         assert info.max_output_tokens == 100000  # 100K output
 
+    @requires_litellm
     def test_claude_info(self):
         """Test Claude model info."""
         info = get_model_info("claude-3-5-sonnet-20241022")

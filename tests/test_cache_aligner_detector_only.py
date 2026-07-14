@@ -162,7 +162,7 @@ def test_apply_never_mutates_input(tokenizer: Tokenizer) -> None:
     aligner = CacheAligner(CacheAlignerConfig(enabled=True))
     aligner.apply(messages, tokenizer)
 
-    for original, current in zip(snapshot, messages, strict=True):
+    for original, current in zip(snapshot, messages):
         assert original == current
 
 

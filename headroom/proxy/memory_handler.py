@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from headroom._compat import AsyncLock
 from headroom.memory import qdrant_env
 from headroom.memory.storage_router import (
     BackendRouter,
@@ -212,7 +213,7 @@ class MemoryHandler:
         ``MemoryHandler`` is constructed before the loop is set up.
         """
         if self._init_lock is None:
-            self._init_lock = asyncio.Lock()
+            self._init_lock = AsyncLock()
         return self._init_lock
 
     async def _close_backend_instance(self, backend: Any, *, reason: str) -> None:

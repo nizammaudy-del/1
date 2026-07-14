@@ -1,5 +1,7 @@
 """Storage modules for Headroom SDK."""
 
+from headroom._compat import entry_points_group
+
 from .base import Storage
 from .jsonl import JSONLStorage
 from .sqlite import SQLiteStorage
@@ -44,9 +46,7 @@ def create_storage(store_url: str) -> Storage:
         scheme = store_url.split("://", 1)[0].lower() if "://" in store_url else ""
         if scheme:
             try:
-                from importlib.metadata import entry_points
-
-                all_eps = entry_points(group="headroom.storage_backend")
+                all_eps = entry_points_group("headroom.storage_backend")
                 ep = next((e for e in all_eps if e.name == scheme), None)
                 if ep is not None:
                     create_fn = ep.load()

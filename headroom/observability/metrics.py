@@ -11,6 +11,7 @@ from typing import Any, Literal
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 
+from headroom._compat import DATACLASS_SLOTS
 from headroom._version import get_version
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def _parse_key_value_pairs(raw: str | None) -> dict[str, str]:
     return pairs
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class OTelMetricsConfig:
     """Configuration for Headroom-managed OTEL metric export."""
 

@@ -105,7 +105,7 @@ def _redact_value(value: Any, *, in_image_path: bool) -> RedactionResult:
             redactions += item_result.redactions
         return RedactionResult(value=redacted, redactions=redactions)
 
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         redactions = 0
         redacted_items: list[Any] = []
         for item in value:

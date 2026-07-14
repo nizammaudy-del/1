@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from headroom._compat import DATACLASS_SLOTS
 from headroom.providers.registry import DEFAULT_VERTEX_API_URL
 
 VERTEX_GOOGLE_PUBLISHER = "google"
@@ -12,7 +13,7 @@ VERTEX_GOOGLE_PROVIDER_NAME = "vertex:google"
 VERTEX_ANTHROPIC_PROVIDER_NAME = "vertex:anthropic"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class VertexPublisherAction:
     """A Vertex publisher action exposed by route registration."""
 

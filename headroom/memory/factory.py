@@ -8,10 +8,10 @@ and proper wiring between components.
 from __future__ import annotations
 
 import threading
-from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from headroom._compat import entry_points_group
 from headroom.memory.config import (
     EmbedderBackend,
     MemoryConfig,
@@ -54,7 +54,7 @@ def _load_external_backend(
             f"{field_name} is required when backend is EXTERNAL; "
             f"set it to the entry-point name registered under '{group}'."
         )
-    ep = next((e for e in entry_points(group=group) if e.name == name), None)
+    ep = next((e for e in entry_points_group(group) if e.name == name), None)
     if ep is None:
         raise ValueError(
             f"No entry point registered under '{group}' with name '{name}'. "

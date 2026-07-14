@@ -1305,7 +1305,7 @@ class KompressCompressor(Transform):
                     question=question,
                     target_ratio=r,
                 )
-                for content, r in zip(contents, ratios, strict=True)
+                for content, r in zip(contents, ratios)
             ]
 
         results: list[KompressResult | None] = [None] * n
@@ -1314,7 +1314,7 @@ class KompressCompressor(Transform):
         # Short texts short-circuit to passthrough — no model call needed.
         max_chunk_words = self.config.chunk_words
         chunk_queue: list[tuple[int, int, list[str], float | None]] = []
-        for i, (words, ratio) in enumerate(zip(word_lists, ratios, strict=True)):
+        for i, (words, ratio) in enumerate(zip(word_lists, ratios)):
             if len(words) < 10:
                 results[i] = self._passthrough(contents[i], len(words))
                 continue

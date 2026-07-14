@@ -8,10 +8,11 @@ from typing import Any, cast
 from fastapi import Request
 from fastapi.responses import Response
 
+from headroom._compat import DATACLASS_SLOTS
 from headroom.providers.codex.model_metadata import handle_chatgpt_model_metadata
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class ModelMetadataEndpoint:
     """OpenAI-compatible model metadata endpoint shape."""
 

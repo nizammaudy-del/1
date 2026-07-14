@@ -12,6 +12,8 @@ from urllib.parse import quote
 from fastapi import Request
 from fastapi.responses import Response
 
+from headroom._compat import DATACLASS_SLOTS
+
 from .endpoints import chatgpt_backend_url, codex_backend_url
 from .headers import drop_header, header_name
 from .runtime import resolve_codex_routing
@@ -20,7 +22,7 @@ logger = logging.getLogger("headroom.providers.codex.model_metadata")
 DEFAULT_CODEX_CLIENT_VERSION = "0.130.0"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class CodexModelRegistryOptions:
     """Configuration for ChatGPT Codex model-registry lookups."""
 

@@ -20,7 +20,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 
 from headroom import paths as _paths
 from headroom._subprocess import run
@@ -1262,7 +1262,7 @@ def _get_context_tool_stats() -> dict[str, Any] | None:
     tool = _selected_context_tool()
     now = time.monotonic()
     with _context_tool_stats_cache_lock:
-        cached_value = cast(dict[str, Any] | None, _context_tool_stats_cache["value"])
+        cached_value = cast(Optional[dict[str, Any]], _context_tool_stats_cache["value"])
         if (
             _context_tool_stats_cache["has_value"]
             and now < float(_context_tool_stats_cache["expires_at"])

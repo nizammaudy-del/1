@@ -402,7 +402,7 @@ class OpenAIProvider(Provider):
 
         # Handle pricing (can be tuple or list from JSON)
         for model, pricing in custom_config["pricing"].items():
-            if isinstance(pricing, list | tuple) and len(pricing) >= 2:
+            if isinstance(pricing, (list, tuple)) and len(pricing) >= 2:
                 self._pricing[model] = (float(pricing[0]), float(pricing[1]))
 
         # Explicit overrides take precedence

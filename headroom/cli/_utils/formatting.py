@@ -1,5 +1,7 @@
 """Formatting utilities for CLI output using Rich."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 

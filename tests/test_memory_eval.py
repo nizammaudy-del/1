@@ -1,5 +1,11 @@
 """Tests for the memory evaluation framework."""
 
+import pytest
+
+pytest.importorskip(
+    "litellm", reason="headroom.evals.memory requires litellm (unavailable on Python 3.9/3.14)"
+)
+
 from headroom.evals.memory.judge import _parse_judge_response, simple_judge
 from headroom.evals.memory.locomo import (
     LOCOMO_CATEGORIES,

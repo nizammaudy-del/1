@@ -228,7 +228,7 @@ class TestKillSignalFallback:
         """The actual getattr pattern in wrap.py works on this platform."""
         _kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
         # On any platform, we should get a valid signal number
-        assert isinstance(_kill_signal, int | signal.Signals)
+        assert isinstance(_kill_signal, (int, signal.Signals))
 
 
 # ---------------------------------------------------------------------------

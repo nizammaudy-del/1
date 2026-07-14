@@ -1,5 +1,7 @@
 """Tests for session analyzer — digest builder and LLM-based analysis."""
 
+from __future__ import annotations
+
 import io
 import json
 import subprocess

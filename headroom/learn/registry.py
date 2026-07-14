@@ -12,6 +12,8 @@ import importlib
 import logging
 import pkgutil
 
+from headroom._compat import entry_points_group
+
 from .base import LearnPlugin
 
 logger = logging.getLogger(__name__)
@@ -37,11 +39,9 @@ def _discover() -> dict[str, LearnPlugin]:
         except Exception:
             logger.debug("Failed to load built-in plugin: %s", mod_name, exc_info=True)
 
-    # 2. External: entry_points(group="headroom.learn_plugin")
+    # 2. External: entry_points_group("headroom.learn_plugin")
     try:
-        from importlib.metadata import entry_points
-
-        for ep in entry_points(group="headroom.learn_plugin"):
+        for ep in entry_points_group("headroom.learn_plugin"):
             try:
                 obj = ep.load()
                 # Support both instances and factory callables

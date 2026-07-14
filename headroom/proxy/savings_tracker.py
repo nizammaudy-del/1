@@ -337,7 +337,7 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
         total_input_cost_usd = _coerce_float(entry.get("total_input_cost_usd"))
         provider = _normalize_provider(entry.get("provider"))
         model = _normalize_model(entry.get("model"))
-    elif isinstance(entry, list | tuple) and len(entry) >= 2:
+    elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
         timestamp = _parse_timestamp(entry[0])
         total_tokens_saved = _coerce_int(entry[1])
         if len(entry) >= 3:

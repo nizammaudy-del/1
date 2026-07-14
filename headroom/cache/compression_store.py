@@ -42,6 +42,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from headroom._compat import entry_points_group
+
 if TYPE_CHECKING:
     from ..memory.tracker import ComponentStats
     from .backends import CompressionStoreBackend
@@ -975,9 +977,7 @@ def _create_default_ccr_backend() -> CompressionStoreBackend | None:
             )
             return None
     try:
-        from importlib.metadata import entry_points
-
-        all_eps = entry_points(group="headroom.ccr_backend")
+        all_eps = entry_points_group("headroom.ccr_backend")
         ep = next((e for e in all_eps if e.name == backend_type), None)
         if ep is None:
             logger.warning(

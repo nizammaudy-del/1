@@ -241,8 +241,8 @@ def test_discover_pipeline_extensions_handles_load_and_init_failures(monkeypatch
     ]
 
     monkeypatch.setattr(
-        pipeline_module.importlib.metadata,
-        "entry_points",
+        pipeline_module,
+        "entry_points_group",
         lambda group: entries if group == pipeline_module.ENTRY_POINT_GROUP else [],
     )
 
@@ -256,8 +256,8 @@ def test_discover_pipeline_extensions_handles_load_and_init_failures(monkeypatch
 def test_discover_pipeline_extensions_returns_empty_when_entrypoint_lookup_fails(monkeypatch):
     pipeline_module = importlib.import_module("headroom.pipeline")
     monkeypatch.setattr(
-        pipeline_module.importlib.metadata,
-        "entry_points",
+        pipeline_module,
+        "entry_points_group",
         lambda group: (_ for _ in ()).throw(RuntimeError("lookup failed")),
     )
 

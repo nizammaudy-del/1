@@ -151,7 +151,7 @@ def _restore_responses_text_parts(
         return original_messages
 
     restored: list[dict[str, Any]] = []
-    for original, compressed in zip(original_messages, compressed_messages, strict=True):
+    for original, compressed in zip(original_messages, compressed_messages):
         if not isinstance(compressed, dict):
             return original_messages
         original_content = original.get("content")
@@ -167,9 +167,7 @@ def _restore_responses_text_parts(
             return original_messages
 
         restored_parts: list[dict[str, Any]] = []
-        for original_part, compressed_part in zip(
-            original_content, compressed_content, strict=True
-        ):
+        for original_part, compressed_part in zip(original_content, compressed_content):
             if not isinstance(compressed_part, dict) or not isinstance(
                 compressed_part.get("text"), str
             ):
@@ -206,7 +204,7 @@ def _splice_compressed_messages(
     A defensive fallback retains an original item if a compressor unexpectedly
     returns fewer messages than it received.
     """
-    compressed_by_index = dict(zip(chat_indices, compressed_items, strict=False))
+    compressed_by_index = dict(zip(chat_indices, compressed_items))
     return [compressed_by_index.get(index, item) for index, item in enumerate(original_items)]
 
 

@@ -9,10 +9,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from headroom._compat import DATACLASS_SLOTS
+
 DEFAULT_API_URL = "https://api.openai.com"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class CodexRoutingDecision:
     """Resolved Codex routing headers and whether they target ChatGPT auth."""
 

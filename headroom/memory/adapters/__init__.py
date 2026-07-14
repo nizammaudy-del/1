@@ -16,6 +16,8 @@ Note: Some adapters require optional dependencies. Import errors are
 deferred until the adapter is actually used.
 """
 
+from __future__ import annotations
+
 # Core adapters (no external dependencies beyond sqlite3)
 from headroom.memory.adapters.cache import LRUMemoryCache
 from headroom.memory.adapters.fts5 import FTS5TextIndex

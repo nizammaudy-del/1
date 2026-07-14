@@ -19,6 +19,7 @@ from urllib import request as urllib_request
 from urllib.parse import urlparse
 
 from headroom import paths
+from headroom._compat import AsyncLock
 from headroom._subprocess import run
 from headroom.copilot_linux_secret import read_copilot_oauth_token as read_linux_secret_token
 from headroom.copilot_macos_keychain import read_copilot_oauth_token as read_macos_keychain_token
@@ -367,7 +368,7 @@ def _parse_expiry(value: Any) -> float | None:
     if value in (None, ""):
         return None
 
-    if isinstance(value, int | float):
+    if isinstance(value, (int, float)):
         number = float(value)
         if number > 10_000_000_000:
             return number / 1000.0
@@ -985,7 +986,7 @@ class CopilotTokenProvider:
     """Resolve and cache short-lived Copilot API tokens."""
 
     def __init__(self) -> None:
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
         self._cached: CopilotAPIToken | None = None
 
     async def get_api_token(self) -> CopilotAPIToken:
@@ -1042,7 +1043,7 @@ class CopilotTokenProvider:
             token=token,
             expires_at=expires_at,
             api_url=api_url,
-            refresh_in=int(refresh_in) if isinstance(refresh_in, int | float) else None,
+            refresh_in=int(refresh_in) if isinstance(refresh_in, (int, float)) else None,
             sku=str(sku) if isinstance(sku, str) and sku.strip() else None,
         )
 

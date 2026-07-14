@@ -12,6 +12,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from headroom._compat import AsyncQueue, aclosing
 from headroom.proxy.auth_mode import classify_client
 from headroom.proxy.helpers import (
     RETRYABLE_OVERLOAD_STATUSES,
@@ -91,7 +92,7 @@ class StreamingMixin:
     def _queue_mid_turn_message(self, session_key: str, body: dict) -> dict:
         """Queue a mid-turn message and return a 202 response."""
         if session_key not in self._mid_turn_queues:
-            self._mid_turn_queues[session_key] = asyncio.Queue()
+            self._mid_turn_queues[session_key] = AsyncQueue()
         self._mid_turn_queues[session_key].put_nowait(body)
         return {"status": 202, "event": "headroom_queued"}
 
@@ -1372,7 +1373,7 @@ class StreamingMixin:
             pending_messages: list[dict] = []
 
             try:
-                async with contextlib.aclosing(upstream_response) as response:
+                async with aclosing(upstream_response) as response:
                     sse_chunk_index = 0
                     async for chunk in response.aiter_bytes():
                         sse_chunk_index += 1

@@ -263,7 +263,7 @@ def _pair_exchanges(
         direct_items = direct_by_key.get(key, [])
         headroom_items = headroom_by_key.get(key, [])
         shared = min(len(direct_items), len(headroom_items))
-        pairs.extend(zip(direct_items[:shared], headroom_items[:shared], strict=False))
+        pairs.extend(zip(direct_items[:shared], headroom_items[:shared]))
         only_direct.extend([item.route_key for item in direct_items[shared:]])
         only_headroom.extend([item.route_key for item in headroom_items[shared:]])
     return pairs, only_direct, only_headroom

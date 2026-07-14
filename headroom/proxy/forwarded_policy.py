@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
+from typing import Union
 
-Network = ipaddress.IPv4Network | ipaddress.IPv6Network
-Address = ipaddress.IPv4Address | ipaddress.IPv6Address
+Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
+Address = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
 @dataclass(frozen=True)

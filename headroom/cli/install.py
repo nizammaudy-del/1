@@ -92,7 +92,7 @@ def _start_deployment(manifest: DeploymentManifest, *, assume_start_lock: bool =
     except subprocess.CalledProcessError as e:
         raise click.ClickException(
             f"Cannot start deployment '{manifest.profile}': command failed "
-            f"({' '.join(map(str, e.cmd)) if isinstance(e.cmd, list | tuple) else e.cmd})"
+            f"({' '.join(map(str, e.cmd)) if isinstance(e.cmd, (list, tuple)) else e.cmd})"
         ) from None
 
     if not wait_ready(manifest, timeout_seconds=45):
@@ -291,7 +291,7 @@ def install_apply(
             _restore_deployment(existing)
         # Surface non-Click errors (OSError, CalledProcessError, …) as a clean
         # message rather than a raw traceback; Click errors pass through as-is.
-        if isinstance(exc, click.ClickException | click.Abort):
+        if isinstance(exc, (click.ClickException, click.Abort)):
             raise
         raise click.ClickException(f"Failed to install deployment '{profile}': {exc}") from exc
 

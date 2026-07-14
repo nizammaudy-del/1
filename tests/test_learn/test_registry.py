@@ -103,7 +103,7 @@ class TestExternalPlugin:
         mock_ep.load.return_value = mock_plugin
         mock_ep.name = "cursor"
 
-        with patch("importlib.metadata.entry_points", return_value=[mock_ep]):
+        with patch("headroom.learn.registry.entry_points_group", return_value=[mock_ep]):
             reset_registry()
             reg = get_registry()
             assert "cursor" in reg

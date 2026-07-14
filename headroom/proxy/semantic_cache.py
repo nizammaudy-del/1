@@ -7,11 +7,12 @@ Extracted from server.py for maintainability.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from collections import OrderedDict
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+from headroom._compat import AsyncLock
 
 if TYPE_CHECKING:
     from ..memory.tracker import ComponentStats
@@ -33,7 +34,7 @@ class SemanticCache:
         self.ttl_seconds = ttl_seconds
         # OrderedDict maintains insertion order and supports O(1) move_to_end/popitem
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
 
     def _compute_key(self, messages: list[dict], model: str, **key_fields: Any) -> str:
         """Compute cache key from messages, model, and response-shaping fields.

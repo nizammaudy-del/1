@@ -17,7 +17,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib  # type: ignore[no-redef]
 from click.testing import CliRunner
 
 from headroom.cli import wrap as wrap_mod
@@ -840,7 +844,10 @@ class TestInjectAvoidsDuplicateTopLevelKeys:
     def test_inject_does_not_create_duplicate_model_provider(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        import tomllib  # Python 3.11+ stdlib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib  # type: ignore[no-redef]
 
         _set_test_home(monkeypatch, tmp_path)
         config_dir = tmp_path / ".codex"
@@ -903,8 +910,10 @@ class TestInjectAvoidsDuplicateTopLevelKeys:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Idempotent re-wrap on a config that already has top-level keys."""
-        import tomllib
-
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib  # type: ignore[no-redef]
         _set_test_home(monkeypatch, tmp_path)
         config_dir = tmp_path / ".codex"
         config_dir.mkdir()
@@ -939,7 +948,10 @@ class TestInjectAvoidsDuplicateTopLevelKeys:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Existing headroom provider table must not create duplicate TOML keys."""
-        import tomllib  # Python 3.11+ stdlib
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python < 3.11
+            import tomli as tomllib  # type: ignore[no-redef]
 
         _set_test_home(monkeypatch, tmp_path)
         config_dir = tmp_path / ".codex"

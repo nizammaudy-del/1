@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Optional
 
 from headroom.install.models import DeploymentManifest, ManagedMutation
 from headroom.providers.aider.install import build_install_env as _build_aider_install_env
@@ -44,7 +45,7 @@ from headroom.providers.opencode.install import (
 )
 
 _InstallEnvBuilder = Callable[..., dict[str, str]]
-_ProviderScopeApplier = Callable[[DeploymentManifest], ManagedMutation | None]
+_ProviderScopeApplier = Callable[[DeploymentManifest], Optional[ManagedMutation]]
 _ProviderScopeReverter = Callable[[ManagedMutation, DeploymentManifest], None]
 
 _ENV_BUILDERS: dict[str, _InstallEnvBuilder] = {

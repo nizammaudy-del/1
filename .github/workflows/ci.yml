@@ -149,6 +149,32 @@ jobs:
           path: dist/*.whl
           retention-days: 1
 
+  py39-smoke:
+    # Oldest supported Python: install the abi3 wheel and smoke-test imports/CLI.
+    needs: [changes, build-wheel]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+      - name: Download prebuilt wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: headroom-wheel
+          path: dist
+      - name: Install wheel on 3.9 and smoke-test
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python -c "import headroom; print(headroom.__version__)"
+          headroom --help >/dev/null
+      - name: Bytecode-compile the whole package on 3.9
+        run: |
+          python -m compileall -q "$(python -c 'import headroom, os; print(os.path.dirname(headroom.__file__))')"
+
   build-wheel-windows:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'

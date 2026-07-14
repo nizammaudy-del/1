@@ -11,6 +11,8 @@ from fastapi import Request
 from fastapi.responses import Response
 from starlette.requests import ClientDisconnect
 
+from headroom._compat import DATACLASS_SLOTS
+
 logger = logging.getLogger("headroom.providers.openai.responses")
 
 
@@ -19,7 +21,7 @@ def _sanitize_for_log(value: str) -> str:
     return value.replace("\r", "").replace("\n", "")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class OpenAIResponsesSubpathRoute:
     """Responses API subpath alias exposed by provider route registration."""
 

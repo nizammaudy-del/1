@@ -11,6 +11,8 @@ from typing import Any
 
 from opentelemetry import trace
 
+from headroom._compat import DATACLASS_SLOTS
+
 from .metrics import _headroom_version, _parse_bool, _parse_key_value_pairs
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,7 @@ _owned_tracer_provider: Any | None = None
 _owned_langfuse_config: LangfuseTracingConfig | None = None
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class LangfuseTracingConfig:
     """Configuration for Headroom-managed Langfuse OTLP trace export."""
 

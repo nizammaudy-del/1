@@ -9,12 +9,13 @@ Extracted from server.py for maintainability.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 from collections import defaultdict
 from datetime import datetime
 from typing import TYPE_CHECKING
+
+from headroom._compat import AsyncLock
 
 if TYPE_CHECKING:
     from headroom.observability import HeadroomOtelMetrics
@@ -260,7 +261,7 @@ class PrometheusMetrics:
             0.0,
         )
 
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
         # Tiny synchronous critical section for stage-timing triple updates
         # (sum + count + max must move together for a consistent scrape).
         # threading.Lock is cheaper than asyncio.Lock and does NOT contend

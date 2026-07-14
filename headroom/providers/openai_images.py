@@ -8,10 +8,11 @@ from typing import Any, cast
 from fastapi import Request
 from fastapi.responses import Response
 
+from headroom._compat import DATACLASS_SLOTS
 from headroom.providers.codex.images import handle_chatgpt_codex_images
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class OpenAIImageEndpoint:
     """An OpenAI image endpoint with a possible Codex ChatGPT-auth override."""
 

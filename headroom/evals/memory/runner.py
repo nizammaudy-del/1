@@ -22,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from headroom._compat import AsyncSemaphore
 from headroom.evals.memory.locomo import (
     LOCOMO_CATEGORIES,
     LoCoMoCase,
@@ -708,7 +709,7 @@ IMPORTANT: Every event MUST have a specific date. If you cannot determine the da
             # Parallel evaluation using semaphore to limit concurrency
             import asyncio
 
-            semaphore = asyncio.Semaphore(self.config.parallel_workers)
+            semaphore = AsyncSemaphore(self.config.parallel_workers)
             completed = 0
 
             async def eval_with_semaphore(case: LoCoMoCase) -> MemoryEvalResult:

@@ -12,6 +12,8 @@ Evaluation metrics:
 3. Retrievability: Can LLM identify what data exists for CCR retrieval?
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 

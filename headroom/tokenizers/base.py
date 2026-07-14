@@ -208,7 +208,7 @@ class BaseTokenizer(ABC):
                     doc = part["document"]
                     source = doc.get("source", {})
                     doc_bytes = source.get("bytes", b"")
-                    if isinstance(doc_bytes, bytes | bytearray):
+                    if isinstance(doc_bytes, (bytes, bytearray)):
                         estimated_pages = max(1, len(doc_bytes) // 3000)
                         total += estimated_pages * 1500
                     else:
@@ -226,7 +226,7 @@ class BaseTokenizer(ABC):
                     vid = part["video"]
                     source = vid.get("source", {})
                     vid_bytes = source.get("bytes", b"")
-                    if isinstance(vid_bytes, bytes | bytearray):
+                    if isinstance(vid_bytes, (bytes, bytearray)):
                         frames = max(1, len(vid_bytes) // 30000)
                         total += frames * 1000
                     else:
@@ -274,7 +274,7 @@ class BaseTokenizer(ABC):
         source = image_data.get("source", {})
         img_bytes = source.get("bytes", b"")
 
-        if isinstance(img_bytes, bytes | bytearray) and len(img_bytes) > 0:
+        if isinstance(img_bytes, (bytes, bytearray)) and len(img_bytes) > 0:
             try:
                 import io
 
@@ -293,7 +293,7 @@ class BaseTokenizer(ABC):
 
         # Fallback: estimate from byte size.
         # Typical screenshot: ~200KB ≈ 1200x800 ≈ 1280 tokens
-        if isinstance(img_bytes, bytes | bytearray):
+        if isinstance(img_bytes, (bytes, bytearray)):
             size_kb = len(img_bytes) / 1024
             if size_kb < 50:
                 return 400  # Small icon/thumbnail

@@ -17,6 +17,8 @@ Usage:
     python benchmarks/comprehensive_eval.py
 """
 
+from __future__ import annotations
+
 import json
 import os
 import time

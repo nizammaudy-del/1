@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from headroom._compat import AsyncLock, AsyncSemaphore
 from headroom.models.config import ML_MODEL_DEFAULTS
 from headroom.onnx_runtime import create_cpu_session_options, hf_hub_download_local_first
 
@@ -220,7 +221,7 @@ class LocalEmbedder:
         self._model: SentenceTransformer | None = None
         self._device: str | None = None
         self._dimension: int | None = None
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
         # Dedicated single-worker executor, created only when the resolved device
         # is MPS (see _load_model). torch-MPS is not thread-safe, so every encode()
         # must run on one thread. Stays None for CPU/CUDA → default shared executor.
@@ -437,7 +438,7 @@ class OnnxLocalEmbedder:
         self._session: Any = None
         self._tokenizer: Any = None
         self._input_names: list[str] = []
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
 
     def _load_model(self) -> None:
         """Lazy-load the ONNX model and tokenizer."""
@@ -859,7 +860,7 @@ class OllamaEmbedder:
         self._explicit_dimension = dimension
         self._detected_dimension: int | None = None
         self._client: Any = None  # httpx.AsyncClient when initialized
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
 
     def _check_dependencies(self) -> None:
         """Check that required dependencies are installed."""
@@ -991,7 +992,7 @@ class OllamaEmbedder:
 
         # Make concurrent requests for non-empty texts
         # Use a semaphore to limit concurrency and avoid overwhelming the server
-        semaphore = asyncio.Semaphore(10)
+        semaphore = AsyncSemaphore(10)
 
         async def embed_with_semaphore(text: str) -> np.ndarray:
             async with semaphore:

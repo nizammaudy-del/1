@@ -44,12 +44,12 @@ def _patch_entry_points(monkeypatch, expected_group: str, name: str, target):
     """Patch headroom.memory.factory.entry_points to return our fake EP."""
     from headroom.memory import factory as factory_mod
 
-    def fake_entry_points(*, group: str):
+    def fake_entry_points(group: str):
         if group == expected_group:
             return [_FakeEntryPoint(name, target)]
         return []
 
-    monkeypatch.setattr(factory_mod, "entry_points", fake_entry_points)
+    monkeypatch.setattr(factory_mod, "entry_points_group", fake_entry_points)
 
 
 class TestExternalStoreBackend:
@@ -78,7 +78,7 @@ class TestExternalStoreBackend:
     def test_external_unknown_name_raises(self, monkeypatch):
         from headroom.memory import factory as factory_mod
 
-        monkeypatch.setattr(factory_mod, "entry_points", lambda *, group: [])
+        monkeypatch.setattr(factory_mod, "entry_points_group", lambda group: [])
 
         config = MemoryConfig(
             store_backend=StoreBackend.EXTERNAL,

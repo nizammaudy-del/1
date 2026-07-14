@@ -37,7 +37,7 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 CODE_BLOCK_RE = re.compile(r"```(?:[\w.+-]+)?\n(?P<content>.*?)```", re.DOTALL)
 
 
-@dataclass(slots=True)
+@dataclass()
 class GovernanceReport:
     """Serializable PR governance result."""
 

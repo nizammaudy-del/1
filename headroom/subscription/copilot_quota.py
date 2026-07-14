@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
+from headroom._compat import AsyncEvent
 from headroom.subscription.base import QuotaTracker
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ class _CopilotQuotaTracker(QuotaTracker):
         """Start the background polling loop."""
         if self._task is not None and not self._task.done():
             return
-        self._stop_event = asyncio.Event()
+        self._stop_event = AsyncEvent()
         self._task = asyncio.create_task(self._poll_loop())
 
     async def stop(self) -> None:

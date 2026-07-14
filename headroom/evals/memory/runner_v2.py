@@ -26,6 +26,7 @@ from typing import Any
 
 import litellm
 
+from headroom._compat import AsyncSemaphore
 from headroom.evals.memory.locomo import (
     LOCOMO_CATEGORIES,
     LoCoMoCase,
@@ -606,7 +607,7 @@ Categories to use:
 
         if self._config.parallel_workers > 1:
             # Parallel evaluation
-            semaphore = asyncio.Semaphore(self._config.parallel_workers)
+            semaphore = AsyncSemaphore(self._config.parallel_workers)
 
             async def eval_with_semaphore(case: LoCoMoCase) -> MemoryEvalResultV2:
                 async with semaphore:

@@ -1525,7 +1525,7 @@ def test_savings_tracker_loads_non_finite_persisted_state_without_crashing(tmp_p
 
     # Non-finite fields fail open to safe defaults, not crash or NaN.
     for key, value in lifetime.items():
-        assert isinstance(value, int | float)
+        assert isinstance(value, (int, float))
         assert math.isfinite(value), f"{key} is non-finite: {value}"
     assert lifetime["tokens_saved"] == 0
     assert lifetime["total_input_tokens"] == 0

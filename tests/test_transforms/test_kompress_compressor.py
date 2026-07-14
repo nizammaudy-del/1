@@ -8,6 +8,8 @@ Covers:
 - Transform interface: apply() method
 """
 
+from __future__ import annotations
+
 import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -456,7 +458,7 @@ class TestKompressCompressorBatch:
         results = compressor.compress_batch(contents, target_ratio=0.3)
 
         assert len(results) == 3
-        for r, original in zip(results, contents, strict=True):
+        for r, original in zip(results, contents):
             assert r.compressed == original  # short passthrough
 
     def test_per_item_ratio_list_with_nones(self) -> None:

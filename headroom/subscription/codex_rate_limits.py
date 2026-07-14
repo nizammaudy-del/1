@@ -342,7 +342,9 @@ class CodexRateLimitState(QuotaTracker):
     def __init__(self) -> None:
         self._lock = Lock()
         self._latest: CodexRateLimitSnapshot | None = None
-        self._last_poll_monotonic: float = 0.0
+        # None = never polled. A 0.0 sentinel breaks on Python 3.9/macOS where
+        # time.monotonic() starts near 0 at process start.
+        self._last_poll_monotonic: float | None = None
         self._poll_inflight: bool = False
 
     def update_from_headers(self, headers: dict[str, str]) -> None:
@@ -375,7 +377,10 @@ class CodexRateLimitState(QuotaTracker):
         with self._lock:
             if self._poll_inflight:
                 return False
-            if (now - self._last_poll_monotonic) < min_interval_s:
+            if (
+                self._last_poll_monotonic is not None
+                and (now - self._last_poll_monotonic) < min_interval_s
+            ):
                 return False
             self._poll_inflight = True
             self._last_poll_monotonic = now

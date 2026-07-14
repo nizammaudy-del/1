@@ -22,6 +22,7 @@ import math
 import os
 from dataclasses import dataclass
 
+from headroom._compat import DATACLASS_SLOTS
 from headroom.proxy.auth_mode import AuthMode
 
 # ── F2.2 per-mode default values (CONSERVATIVE pending bake telemetry) ──
@@ -66,7 +67,7 @@ CACHE_WRITE_MULTIPLIER: float = 1.25
 CACHE_READ_MULTIPLIER: float = 0.1
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class CompressionPolicy:
     """Per-auth-mode policy that downstream compression stages consult.
 

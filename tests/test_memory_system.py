@@ -10,6 +10,8 @@ Tests cover:
 Following the patterns established in test_memory_eval.py and test_memory/test_hierarchical.py.
 """
 
+from __future__ import annotations
+
 # CRITICAL: Must set TOKENIZERS_PARALLELISM before any imports that might
 # trigger sentence_transformers/transformers loading.
 import os

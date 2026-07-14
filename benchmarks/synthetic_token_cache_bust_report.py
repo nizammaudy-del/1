@@ -160,7 +160,7 @@ def _build_bust_events(replay: SessionReplay) -> dict[str, list[dict[str, object
                         (
                             idx
                             for idx, (prev_msg, curr_msg) in enumerate(
-                                zip(previous_forwarded_request, forwarded, strict=False)
+                                zip(previous_forwarded_request, forwarded)
                             )
                             if prev_msg != curr_msg
                         ),

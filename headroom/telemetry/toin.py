@@ -71,6 +71,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from headroom._compat import entry_points_group
+
 from .models import FieldSemantics, ToolSignature
 
 logger = logging.getLogger(__name__)
@@ -1071,11 +1073,11 @@ class ToolIntelligenceNetwork:
             canonical = "null"
         elif isinstance(value, bool):
             canonical = "true" if value else "false"
-        elif isinstance(value, int | float):
+        elif isinstance(value, (int, float)):
             canonical = str(value)
         elif isinstance(value, str):
             canonical = value
-        elif isinstance(value, list | dict):
+        elif isinstance(value, (list, dict)):
             # For complex types, use JSON serialization
             try:
                 canonical = json.dumps(value, sort_keys=True, default=str)
@@ -1532,9 +1534,7 @@ def _create_default_toin_backend() -> Any:
     if backend_type == "none":
         return None  # Explicit in-memory-only (e.g. --stateless mode)
     try:
-        from importlib.metadata import entry_points
-
-        all_eps = entry_points(group="headroom.toin_backend")
+        all_eps = entry_points_group("headroom.toin_backend")
         ep = next((e for e in all_eps if e.name == backend_type), None)
         if ep is None:
             logger.warning(

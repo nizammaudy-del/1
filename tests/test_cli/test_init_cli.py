@@ -128,8 +128,13 @@ def test_init_verbose_enables_debug_logging_on_stderr(monkeypatch) -> None:
 
     result = runner.invoke(fake_main, ["init", "-v", "-g"])
 
-    # Newer Click: stderr captured separately.
-    stderr = getattr(result, "stderr", None) or ""
+    # Newer Click: stderr captured separately. On Click 8.1 accessing
+    # result.stderr RAISES ValueError ("stderr not separately captured"),
+    # so getattr alone doesn't protect — wrap the access.
+    try:
+        stderr = result.stderr or ""
+    except (ValueError, AttributeError):
+        stderr = ""
     if not stderr:
         # Older Click: everything in result.output.
         stderr = result.output

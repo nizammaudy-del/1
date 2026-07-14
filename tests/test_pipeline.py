@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import importlib.metadata
 from dataclasses import dataclass
 
+import headroom.pipeline as pipeline_mod
 from headroom.pipeline import (
     CANONICAL_PIPELINE_STAGES,
     ENTRY_POINT_GROUP,
@@ -37,8 +37,8 @@ def test_discover_pipeline_extensions_handles_load_and_init_failures(
             raise RuntimeError("bad init")
 
     monkeypatch.setattr(
-        importlib.metadata,
-        "entry_points",
+        pipeline_mod,
+        "entry_points_group",
         lambda group=None: (
             [
                 FakeEntryPoint("working-instance", WorkingExtension()),
@@ -58,8 +58,8 @@ def test_discover_pipeline_extensions_handles_load_and_init_failures(
 
 def test_discover_pipeline_extensions_handles_enumeration_failure(monkeypatch) -> None:
     monkeypatch.setattr(
-        importlib.metadata,
-        "entry_points",
+        pipeline_mod,
+        "entry_points_group",
         lambda group=None: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert discover_pipeline_extensions() == []

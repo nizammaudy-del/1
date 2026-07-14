@@ -7,6 +7,8 @@ Tests cover:
 4. optimize_messages() - Standalone optimization function
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from datetime import datetime

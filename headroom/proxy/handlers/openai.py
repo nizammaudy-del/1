@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlparse
 
+from headroom._compat import aclosing
 from headroom.proxy.helpers import (
     COMPRESSION_TIMEOUT_SECONDS,
     _headroom_bypass_enabled,
@@ -1085,10 +1086,10 @@ def _extract_codex_handshake_headers(upstream: Any) -> list[tuple[str, str]]:
         return []
     out: list[tuple[str, str]] = []
     for name, value in items:
-        name_str = name.decode("latin-1") if isinstance(name, bytes | bytearray) else str(name)
+        name_str = name.decode("latin-1") if isinstance(name, (bytes, bytearray)) else str(name)
         if name_str.lower().startswith("x-codex-"):
             value_str = (
-                value.decode("latin-1") if isinstance(value, bytes | bytearray) else str(value)
+                value.decode("latin-1") if isinstance(value, (bytes, bytearray)) else str(value)
             )
             out.append((name_str, value_str))
     return out
@@ -7808,7 +7809,7 @@ class OpenAIHandlerMixin:
 
         async def generate():
             try:
-                async with contextlib.aclosing(upstream_response) as response:
+                async with aclosing(upstream_response) as response:
                     async for chunk in response.aiter_bytes():
                         if stream_state["ttfb_ms"] is None:
                             stream_state["ttfb_ms"] = (time.time() - start_time) * 1000

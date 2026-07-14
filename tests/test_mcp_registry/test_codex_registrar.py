@@ -12,7 +12,10 @@ from headroom.mcp_registry.codex import CodexRegistrar
 from headroom.mcp_registry.install import build_headroom_spec
 
 if sys.version_info >= (3, 11):
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib  # type: ignore[no-redef]
 else:  # pragma: no cover
     import tomli as tomllib
 
@@ -412,8 +415,10 @@ def test_round_trip(tmp_path: Path, spec: ServerSpec) -> None:
 
 def test_register_does_not_double_crlf(tmp_path: Path) -> None:
     """A pre-existing CRLF config must not gain ``\\r\\r\\n`` after register."""
-    import tomllib
-
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib  # type: ignore[no-redef]
     cfg = _config_path(tmp_path)
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_bytes(b'model = "gpt-5"\r\nworkers = 1\r\n')
@@ -428,8 +433,10 @@ def test_register_does_not_double_crlf(tmp_path: Path) -> None:
 
 def test_register_preserves_non_ascii_values(tmp_path: Path) -> None:
     """A config with non-ASCII (Chinese) values survives register and stays parseable."""
-    import tomllib
-
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib  # type: ignore[no-redef]
     cfg = _config_path(tmp_path)
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text('model = "gpt-5"\nproject = "比赛/机器人"\n', encoding="utf-8")

@@ -1,5 +1,7 @@
 """Tests for DeepSeek model pricing and cost estimation."""
 
+import importlib.util
+
 import pytest
 
 from headroom.pricing.deepseek_prices import (
@@ -7,6 +9,11 @@ from headroom.pricing.deepseek_prices import (
     get_deepseek_registry,
 )
 from headroom.pricing.registry import PricingRegistry
+
+requires_litellm = pytest.mark.skipif(
+    importlib.util.find_spec("litellm") is None,
+    reason="litellm prefix resolution needs litellm (unavailable on Python 3.9/3.14)",
+)
 
 
 class TestDeepSeekPricingModule:
@@ -127,6 +134,7 @@ class TestDeepSeekLiteLLMInjection:
         assert input_cost == pytest.approx(0.14, rel=0.01)
         assert output_cost == pytest.approx(0.28, rel=0.01)
 
+    @requires_litellm
     def test_resolve_litellm_model_prefixes_deepseek(self):
         from headroom.pricing.litellm_pricing import resolve_litellm_model
 

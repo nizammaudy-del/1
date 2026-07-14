@@ -15,6 +15,8 @@ Usage:
     provider = AnthropicProvider()  # Warning: approximate counting
 """
 
+from __future__ import annotations
+
 import importlib.util
 import json
 import logging

@@ -54,7 +54,7 @@ def _json_default(obj: Any) -> Any:
         return asdict(obj)
     if hasattr(obj, "value") and hasattr(obj, "name"):  # enum.Enum
         return obj.value
-    if isinstance(obj, set | frozenset):
+    if isinstance(obj, (set, frozenset)):
         return sorted(obj)
     if isinstance(obj, bytes):
         return obj.decode("utf-8", errors="replace")
@@ -145,7 +145,7 @@ def _write_fixture(
     # Resolve the primary input. If this is a bound method, args[0] is self
     # and the actual input lives at args[input_arg + 1].
     is_method = bool(args) and not isinstance(
-        args[0], str | bytes | list | dict | int | float | bool | type(None)
+        args[0], (str, bytes, list, dict, int, float, bool, type(None))
     )
     self_obj = args[0] if is_method else None
     positional_inputs = args[1:] if is_method else args

@@ -103,7 +103,7 @@ def _tool_call_args_text(raw: Any) -> str:
     if isinstance(raw, str):
         text = raw
     elif isinstance(raw, dict):
-        text = " ".join(str(v) for v in raw.values() if isinstance(v, str | int | float | bool))
+        text = " ".join(str(v) for v in raw.values() if isinstance(v, (str, int, float, bool)))
     else:
         return ""
     return " ".join(text.split())[:300]

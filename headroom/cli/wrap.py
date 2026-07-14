@@ -3414,7 +3414,7 @@ def _identity_mismatch(src: Any, recorded: Any, pid: int) -> bool:
     without proof, since the caller uses this to decide whether to trust or
     discard state tied to a live PID.
     """
-    if not isinstance(src, str) or not isinstance(recorded, int | float):
+    if not isinstance(src, str) or not isinstance(recorded, (int, float)):
         return False  # legacy / identity-less record — can't tell
     ident = _proc_identity(pid)
     if ident is None or ident[0] != src:

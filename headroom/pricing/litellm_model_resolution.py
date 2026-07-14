@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from headroom._compat import DATACLASS_SLOTS
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class LiteLLMModelPrefixRule:
     """Case-insensitive bare-model prefix mapping to a LiteLLM provider key."""
 

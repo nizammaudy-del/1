@@ -31,6 +31,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from headroom._compat import AsyncQueue
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +59,7 @@ class BackgroundCompressor:
         max_queue: int = 256,
     ) -> None:
         self._run_in_executor = run_in_executor
-        self._queue: asyncio.Queue[_Job] = asyncio.Queue(maxsize=max_queue)
+        self._queue: asyncio.Queue[_Job] = AsyncQueue(maxsize=max_queue)
         self._pending: set[str] = set()
         self._task: asyncio.Task[None] | None = None
         self._processed = 0

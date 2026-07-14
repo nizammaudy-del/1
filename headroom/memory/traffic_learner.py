@@ -32,6 +32,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from headroom._compat import AsyncQueue
+
 if TYPE_CHECKING:
     from headroom.learn.models import ProjectInfo
     from headroom.memory.backends.local import LocalBackend
@@ -445,14 +447,15 @@ class TrafficLearner:
         self._requests_processed = 0
 
         # Background save queue
-        self._save_queue: asyncio.Queue[ExtractedPattern] = asyncio.Queue(maxsize=100)
+        self._save_queue: asyncio.Queue[ExtractedPattern] = AsyncQueue(maxsize=100)
         self._save_task: asyncio.Task[None] | None = None
         self._stopping = False
 
         # Dirty-flag debounced flush to CLAUDE.md / MEMORY.md. Set whenever
         # a pattern is accumulated; checked by _flush_worker.
         self._flush_dirty = False
-        self._last_flush_at = 0.0
+        # None = never flushed (0.0 breaks on 3.9/macOS where monotonic starts at ~0)
+        self._last_flush_at: float | None = None
         self._flush_task: asyncio.Task[None] | None = None
 
         # Cached project roots discovered via the learn plugin registry.
@@ -526,7 +529,10 @@ class TrafficLearner:
                 await asyncio.sleep(2.0)
                 if not self._flush_dirty:
                     continue
-                if time.monotonic() - self._last_flush_at < FLUSH_DEBOUNCE_SECONDS:
+                if (
+                    self._last_flush_at is not None
+                    and time.monotonic() - self._last_flush_at < FLUSH_DEBOUNCE_SECONDS
+                ):
                     continue
                 # Reset before flushing so patterns accumulated during the
                 # flush still trigger a follow-up.

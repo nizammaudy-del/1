@@ -4,6 +4,8 @@ These tests verify that Headroom correctly compresses MCP tool outputs
 while preserving 100% of critical data (errors, anomalies).
 """
 
+from __future__ import annotations
+
 import json
 import random
 from datetime import datetime, timedelta

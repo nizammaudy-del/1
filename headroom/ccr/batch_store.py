@@ -17,6 +17,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from headroom._compat import AsyncLock
+
 if TYPE_CHECKING:
     from ..memory.tracker import ComponentStats
 
@@ -125,7 +127,7 @@ class BatchContextStore:
         self._contexts: dict[str, BatchContext] = {}
         self._ttl = ttl
         self._max_contexts = max_contexts
-        self._lock = asyncio.Lock()
+        self._lock = AsyncLock()
         self._cleanup_task: asyncio.Task | None = None
 
     async def store(self, context: BatchContext) -> None:

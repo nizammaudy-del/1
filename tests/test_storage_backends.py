@@ -105,13 +105,14 @@ def test_create_storage_builtin_entrypoint_and_fallback(monkeypatch, tmp_path: P
             return lambda store_url: created
 
     monkeypatch.setattr(
-        "importlib.metadata.entry_points",
+        "headroom.storage.entry_points_group",
         lambda group: [FakeEntryPoint()] if group == "headroom.storage_backend" else [],
     )
     assert create_storage("custom://memory") is created
 
     monkeypatch.setattr(
-        "importlib.metadata.entry_points", lambda group: (_ for _ in ()).throw(RuntimeError("boom"))
+        "headroom.storage.entry_points_group",
+        lambda group: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     created_fallback: list[str] = []
 
@@ -129,7 +130,7 @@ def test_create_storage_builtin_entrypoint_and_fallback(monkeypatch, tmp_path: P
     fallback.close()
 
     monkeypatch.setattr(
-        "importlib.metadata.entry_points",
+        "headroom.storage.entry_points_group",
         lambda group: [SimpleNamespace(name="other", load=lambda: lambda url: created)],
     )
     missing_ep = create_storage("custom://missing.db")
@@ -288,7 +289,7 @@ def test_sqlite_storage_get_conn_reuses_connection_and_create_storage_entrypoint
 
     created = DummyStorage()
     monkeypatch.setattr(
-        "importlib.metadata.entry_points",
+        "headroom.storage.entry_points_group",
         lambda group: [SimpleNamespace(name="custom", load=lambda: lambda url: created)],
     )
     assert create_storage("custom://db") is created

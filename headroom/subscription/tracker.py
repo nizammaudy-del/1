@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from headroom import paths as _paths
+from headroom._compat import AsyncEvent
 from headroom.subscription.base import QuotaTracker
 from headroom.subscription.client import SubscriptionClient
 from headroom.subscription.models import (
@@ -244,7 +245,7 @@ class SubscriptionTracker(QuotaTracker):
         """Start the background polling loop."""
         if self._poll_task and not self._poll_task.done():
             return
-        self._stop_event = asyncio.Event()
+        self._stop_event = AsyncEvent()
         self._poll_task = asyncio.create_task(self._poll_loop(), name="subscription-tracker")
         logger.info("Subscription tracker started (poll_interval=%ds)", self._poll_interval_s)
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
+
+from headroom._compat import entry_points_group
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def discover_pipeline_extensions() -> list[PipelineExtension]:
 
     discovered: list[PipelineExtension] = []
     try:
-        entries = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
+        entries = entry_points_group(ENTRY_POINT_GROUP)
     except Exception as exc:  # noqa: BLE001 - importlib metadata varies by runtime
         log.debug("pipeline extensions: entry-point enumeration failed: %s", exc)
         return discovered

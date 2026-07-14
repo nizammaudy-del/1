@@ -1,5 +1,7 @@
 """Tests for per-project savings attribution (X-Headroom-Project)."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 

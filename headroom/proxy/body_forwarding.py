@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from headroom._compat import DATACLASS_SLOTS
 from headroom.proxy import python_forwarder_mode_policy
 
 _PYTHON_FORWARDER_MODE_ENV = python_forwarder_mode_policy.PYTHON_FORWARDER_MODE_ENV
@@ -25,7 +26,7 @@ OutboundBodySource = Literal["passthrough", "canonical", "legacy"]
 _PYTHON_FORWARDER_MODE_DEFAULT = python_forwarder_mode_policy.PYTHON_FORWARDER_MODE_DEFAULT
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **DATACLASS_SLOTS)
 class OutboundBody:
     """Concrete outbound body bytes plus their provenance."""
 
