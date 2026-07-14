@@ -22,7 +22,14 @@ if TYPE_CHECKING:
 
 from headroom import savings_ledger
 from headroom.observability import get_otel_metrics
-from headroom.proxy.savings_tracker import SavingsTracker
+from headroom.proxy.savings_tracker import (
+    SavingsTracker,
+    _estimate_cache_savings_usd,
+    _estimate_compression_savings_usd,
+    _estimate_input_cost_usd,
+    _to_utc_iso,
+    _utc_now,
+)
 
 logger = logging.getLogger("headroom.proxy")
 
@@ -97,6 +104,9 @@ class PrometheusMetrics:
         self.tokens_input_total = 0
         self.tokens_output_total = 0
         self.tokens_saved_total = 0
+        self.input_cost_usd_total = 0.0
+        self.compression_savings_usd_total = 0.0
+        self.cache_savings_usd_total = 0.0
         # Sum of tokens we actually attempted to compress across the
         # session: extracted units that passed all gates + tool-schema
         # tokens we ran compaction against. Excludes prefix-frozen
@@ -282,6 +292,7 @@ class PrometheusMetrics:
             float(tracker_lifetime.get("total_input_cost_usd", 0.0) or 0.0),
             0.0,
         )
+        self.process_started_at = _to_utc_iso(_utc_now())
 
         self._lock = asyncio.Lock()
         # Tiny synchronous critical section for stage-timing triple updates
@@ -313,6 +324,9 @@ class PrometheusMetrics:
             self.tokens_input_total = 0
             self.tokens_output_total = 0
             self.tokens_saved_total = 0
+            self.input_cost_usd_total = 0.0
+            self.compression_savings_usd_total = 0.0
+            self.cache_savings_usd_total = 0.0
             self.attempted_input_tokens_total = 0
 
             self.compressions_by_strategy.clear()
@@ -378,6 +392,7 @@ class PrometheusMetrics:
             self.cache_bust_count = 0
             self.cache_miss_attribution_by_provider.clear()
             self.savings_history = []
+            self.process_started_at = _to_utc_iso(_utc_now())
 
         with self._stage_timing_lock:
             self.stage_timing_sum.clear()
@@ -476,6 +491,11 @@ class PrometheusMetrics:
         saved = original_tokens - compressed_tokens
         if saved > 0:
             self.tokens_saved_by_strategy[strategy] += saved
+        self.savings_tracker.record_compression(
+            strategy=strategy,
+            original_tokens=original_tokens,
+            compressed_tokens=compressed_tokens,
+        )
 
     def record_compression_failed(self, reason: str) -> None:
         """Record one fail-open compression failure, bucketed by ``reason``.
@@ -554,6 +574,19 @@ class PrometheusMetrics:
         self.codex_ws_unit_tokens_before_sum += max(0, int(tokens_before))
         self.codex_ws_unit_tokens_after_sum += max(0, int(tokens_after))
         self.codex_ws_unit_tokens_saved_sum += max(0, int(tokens_saved))
+        self.savings_tracker.record_codex_ws_unit(
+            strategy=strategy,
+            reason_category=reason_category,
+            elapsed_ms=elapsed_ms,
+            text_bytes=text_bytes,
+            tokens_before=tokens_before,
+            tokens_after=tokens_after,
+            tokens_saved=tokens_saved,
+            modified=modified,
+            strategy_chain=strategy_chain,
+            content_type=content_type,
+            text_shape=text_shape,
+        )
 
     def record_codex_ws_frame(
         self,
@@ -590,6 +623,17 @@ class PrometheusMetrics:
         self.codex_ws_frame_bytes_after_sum += max(0, int(bytes_after))
         self.codex_ws_frame_attempted_tokens_sum += max(0, int(attempted_tokens))
         self.codex_ws_frame_tokens_saved_sum += max(0, int(tokens_saved))
+        self.savings_tracker.record_codex_ws_frame(
+            elapsed_ms=elapsed_ms,
+            bytes_before=bytes_before,
+            bytes_after=bytes_after,
+            attempted_tokens=attempted_tokens,
+            tokens_saved=tokens_saved,
+            modified=modified,
+            failed=failed,
+            strategy_chain=strategy_chain,
+            final_strategies=final_strategies,
+        )
 
     def record_inbound_request(self, *, method: str, path: str) -> None:
         self.inbound_requests_total += 1
@@ -653,6 +697,24 @@ class PrometheusMetrics:
                 model,
             )
             tokens_saved = 0
+        compression_savings_usd_delta = _estimate_compression_savings_usd(model, tokens_saved)
+        cache_savings_usd_delta = _estimate_cache_savings_usd(model, cache_read_tokens)
+        input_cost_usd_delta = _estimate_input_cost_usd(
+            model,
+            input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            uncached_input_tokens=uncached_input_tokens,
+        )
+        cache_requests_delta = 0
+        cache_hit_requests_delta = 0
+        cache_provider_bust_count_delta = 0
+        cache_provider_bust_write_tokens_delta = 0
+        cache_write_5m_tokens_delta = 0
+        cache_write_1h_tokens_delta = 0
+        cache_write_5m_requests_delta = 0
+        cache_write_1h_requests_delta = 0
+        uncached_input_tokens_delta = 0
         async with self._lock:
             self.requests_total += 1
             self.requests_by_provider[provider] += 1
@@ -664,25 +726,41 @@ class PrometheusMetrics:
             self.tokens_input_total += input_tokens
             self.tokens_output_total += output_tokens
             self.tokens_saved_total += tokens_saved
+            self.input_cost_usd_total = round(self.input_cost_usd_total + input_cost_usd_delta, 6)
+            self.compression_savings_usd_total = round(
+                self.compression_savings_usd_total + compression_savings_usd_delta,
+                6,
+            )
+            self.cache_savings_usd_total = round(
+                self.cache_savings_usd_total + cache_savings_usd_delta,
+                6,
+            )
             # See the attribute definition for why this is the right
             # denominator for the active-compression ratio.
             self.attempted_input_tokens_total += max(0, int(attempted_input_tokens))
 
             # Track provider-specific prefix cache metrics
             if cache_read_tokens > 0 or cache_write_tokens > 0:
+                cache_requests_delta = 1
+                cache_write_5m_tokens_delta = cache_write_5m_tokens
+                cache_write_1h_tokens_delta = cache_write_1h_tokens
+                cache_write_5m_requests_delta = 1 if cache_write_5m_tokens > 0 else 0
+                cache_write_1h_requests_delta = 1 if cache_write_1h_tokens > 0 else 0
+                uncached_input_tokens_delta = uncached_input_tokens
                 pc = self.cache_by_provider[provider]
                 pc["cache_read_tokens"] += cache_read_tokens
                 pc["cache_write_tokens"] += cache_write_tokens
-                pc["cache_write_5m_tokens"] += cache_write_5m_tokens
-                pc["cache_write_1h_tokens"] += cache_write_1h_tokens
+                pc["cache_write_5m_tokens"] += cache_write_5m_tokens_delta
+                pc["cache_write_1h_tokens"] += cache_write_1h_tokens_delta
                 if cache_write_5m_tokens > 0:
                     pc["cache_write_5m_requests"] += 1
                 if cache_write_1h_tokens > 0:
                     pc["cache_write_1h_requests"] += 1
-                pc["uncached_input_tokens"] += uncached_input_tokens
+                pc["uncached_input_tokens"] += uncached_input_tokens_delta
                 pc["requests"] += 1
                 if cache_read_tokens > 0:
                     pc["hit_requests"] += 1
+                    cache_hit_requests_delta = 1
                 # Model-aware bust detection: the first request for any model
                 # is always a cold start (100% write, 0% read) — not a bust.
                 # Only flag as bust when a previously-warm model suddenly has
@@ -694,6 +772,8 @@ class PrometheusMetrics:
                     if total_cached > 0 and cache_write_tokens > total_cached * 0.5:
                         pc["bust_count"] += 1
                         pc["bust_write_tokens"] += cache_write_tokens
+                        cache_provider_bust_count_delta = 1
+                        cache_provider_bust_write_tokens_delta = cache_write_tokens
 
             self.latency_sum_ms += latency_ms
             self.latency_min_ms = min(self.latency_min_ms, latency_ms)
@@ -741,7 +821,15 @@ class PrometheusMetrics:
                 project=project,
                 cache_read_tokens=cache_read_tokens,
                 cache_write_tokens=cache_write_tokens,
-                uncached_input_tokens=uncached_input_tokens,
+                cache_write_5m_tokens=cache_write_5m_tokens_delta,
+                cache_write_1h_tokens=cache_write_1h_tokens_delta,
+                cache_write_5m_requests=cache_write_5m_requests_delta,
+                cache_write_1h_requests=cache_write_1h_requests_delta,
+                uncached_input_tokens=uncached_input_tokens_delta,
+                cache_requests_delta=cache_requests_delta,
+                cache_hit_requests_delta=cache_hit_requests_delta,
+                cache_provider_bust_count_delta=cache_provider_bust_count_delta,
+                cache_provider_bust_write_tokens_delta=cache_provider_bust_write_tokens_delta,
                 total_input_tokens=total_input_tokens,
                 total_input_cost_usd=total_input_cost_usd,
             )
@@ -828,6 +916,7 @@ class PrometheusMetrics:
         async with self._lock:
             self.cache_bust_tokens_lost += tokens_lost
             self.cache_bust_count += 1
+            self.savings_tracker.record_cache_bust(tokens_lost=tokens_lost)
         self._get_otel_metrics().record_proxy_cache_bust(tokens_lost=tokens_lost)
 
     async def record_cache_miss_attribution(self, provider: str, reason: str) -> None:
@@ -905,7 +994,13 @@ class PrometheusMetrics:
             stage_timing_count_snapshot = dict(self.stage_timing_count)
             stage_timing_max_snapshot = dict(self.stage_timing_max)
         async with self._lock:
-            lifetime_savings = self.savings_tracker.snapshot()["lifetime"]
+            tracker_snapshot = self.savings_tracker.snapshot()
+            lifetime_savings = tracker_snapshot["lifetime"]
+            lifetime_cache = (
+                lifetime_savings.get("aggregates", {}).get("cache", {})
+                if isinstance(lifetime_savings, dict)
+                else {}
+            )
             lines: list[str] = []
             _append_metric(
                 lines,
@@ -1014,6 +1109,104 @@ class PrometheusMetrics:
                     "proxy savings tracker"
                 ),
                 value=lifetime_savings["compression_savings_usd"],
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_read_tokens_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache read tokens",
+                value=lifetime_savings["cache_read_tokens"],
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_savings_usd_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache savings in USD estimated by the proxy savings tracker",
+                value=lifetime_savings["cache_savings_usd"],
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_write_tokens_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache write tokens",
+                value=lifetime_cache.get("cache_write_tokens", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_write_5m_tokens_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache write tokens observed in the 5m TTL bucket",
+                value=lifetime_cache.get("cache_write_5m_tokens", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_write_1h_tokens_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache write tokens observed in the 1h TTL bucket",
+                value=lifetime_cache.get("cache_write_1h_tokens", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_write_5m_requests_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache-observed requests in the 5m TTL bucket",
+                value=lifetime_cache.get("cache_write_5m_requests", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_write_1h_requests_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache-observed requests in the 1h TTL bucket",
+                value=lifetime_cache.get("cache_write_1h_requests", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_uncached_input_tokens_total",
+                metric_type="counter",
+                help_text="Durable lifetime input tokens not served from provider cache",
+                value=lifetime_cache.get("uncached_input_tokens", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_requests_total",
+                metric_type="counter",
+                help_text="Durable lifetime requests with provider cache observations",
+                value=lifetime_cache.get("requests", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_hit_requests_total",
+                metric_type="counter",
+                help_text="Durable lifetime requests with provider cache reads",
+                value=lifetime_cache.get("hit_requests", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_bust_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache bust count",
+                value=lifetime_cache.get("bust_count", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_bust_write_tokens_total",
+                metric_type="counter",
+                help_text="Durable lifetime provider cache write tokens attributed to busts",
+                value=lifetime_cache.get("bust_write_tokens", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_bust_compression_total",
+                metric_type="counter",
+                help_text="Durable lifetime compression-triggered cache bust count",
+                value=lifetime_cache.get("cache_bust_count", 0),
+            )
+            _append_metric(
+                lines,
+                name="headroom_persistent_savings_cache_bust_tokens_lost_total",
+                metric_type="counter",
+                help_text="Durable lifetime tokens that lost cache discount because of compression",
+                value=lifetime_cache.get("cache_bust_tokens_lost", 0),
             )
             # NOTE: per-strategy compression breakdown is tracked
             # internally on `self.compressions_by_strategy` and
