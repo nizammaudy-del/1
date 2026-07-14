@@ -790,7 +790,14 @@ class LiteLLMBackend(Backend):
 
             # Tools (convert Anthropic format to OpenAI format)
             if "tools" in body:
-                kwargs["tools"] = [_convert_anthropic_tool(t) for t in body["tools"]]
+                tools_in = body["tools"]
+                # Bedrock Converse API hard-rejects tool names over 64 chars.
+                # Claude Code injects every globally-added claude.ai MCP connector
+                # tool into every request, even disabled ones; a single oversized
+                # name 401s the whole call. Drop them before conversion instead.
+                if self.provider == "bedrock":
+                    tools_in = [t for t in tools_in if len(t.get("name", "")) <= 64]
+                kwargs["tools"] = [_convert_anthropic_tool(t) for t in tools_in]
             if "tool_choice" in body:
                 kwargs["tool_choice"] = _convert_tool_choice(body["tool_choice"])
 
@@ -900,7 +907,12 @@ class LiteLLMBackend(Backend):
             if "stop_sequences" in body:
                 kwargs["stop"] = body["stop_sequences"]
             if "tools" in body:
-                kwargs["tools"] = [_convert_anthropic_tool(t) for t in body["tools"]]
+                tools_in = body["tools"]
+                # Bedrock Converse API hard-rejects tool names over 64 chars.
+                # See send_message for the full rationale; same filter here.
+                if self.provider == "bedrock":
+                    tools_in = [t for t in tools_in if len(t.get("name", "")) <= 64]
+                kwargs["tools"] = [_convert_anthropic_tool(t) for t in tools_in]
             if "tool_choice" in body:
                 kwargs["tool_choice"] = _convert_tool_choice(body["tool_choice"])
             if "system" in body:

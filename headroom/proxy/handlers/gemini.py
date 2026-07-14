@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from fastapi import Request
     from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from headroom.agent_savings import proxy_pipeline_kwargs
 from headroom.copilot_auth import build_copilot_upstream_url
 from headroom.proxy.auth_mode import classify_client
 from headroom.proxy.compression_decision import CompressionDecision
@@ -57,6 +58,8 @@ class GeminiHandlerMixin:
         - fileData: File references (URI + MIME type)
         - functionCall: Function calls from model
         - functionResponse: Responses to function calls
+        - executableCode / codeExecutionResult: Gemini code-execution parts,
+          echoed back in contents[] on later turns
 
         Args:
             content: A single Gemini content entry with 'parts' list.
@@ -68,7 +71,14 @@ class GeminiHandlerMixin:
         for part in parts:
             if any(
                 key in part
-                for key in ("inlineData", "fileData", "functionCall", "functionResponse")
+                for key in (
+                    "inlineData",
+                    "fileData",
+                    "functionCall",
+                    "functionResponse",
+                    "executableCode",
+                    "codeExecutionResult",
+                )
             ):
                 return True
         return False
@@ -490,6 +500,7 @@ class GeminiHandlerMixin:
                         model_limit=context_limit,
                         context=extract_user_query(messages),
                         waste_messages=waste_messages,
+                        **proxy_pipeline_kwargs(self.config),
                     ),
                     timeout=COMPRESSION_TIMEOUT_SECONDS,
                 )
@@ -846,6 +857,7 @@ class GeminiHandlerMixin:
                         model_limit=context_limit,
                         context=extract_user_query(messages),
                         waste_messages=waste_messages,
+                        **proxy_pipeline_kwargs(self.config),
                     ),
                     timeout=COMPRESSION_TIMEOUT_SECONDS,
                 )
@@ -1106,6 +1118,7 @@ class GeminiHandlerMixin:
                         model=model,
                         model_limit=context_limit,
                         context=extract_user_query(messages),
+                        **proxy_pipeline_kwargs(self.config),
                     ),
                     timeout=COMPRESSION_TIMEOUT_SECONDS,
                 )

@@ -1048,8 +1048,22 @@ class AnthropicHandlerMixin:
             optimized_messages = messages
             optimized_tokens = original_tokens
 
-            # Get prefix cache tracker for this session
-            session_id = self.session_tracker_store.compute_session_id(request, model, messages)
+            # Get prefix cache tracker for this session. Anthropic carries the
+            # system prompt as a top-level field, not a role:"system" message, so
+            # fold it into the session-id inputs as a synthetic system message —
+            # otherwise every conversation on the same model would share one
+            # session id (and its sticky CCR/memory tools, beta headers, and
+            # frozen-prefix state). This synthetic message only derives the id; it
+            # is never forwarded.
+            system_prompt = body.get("system")
+            session_messages = (
+                [{"role": "system", "content": system_prompt}, *messages]
+                if system_prompt is not None
+                else messages
+            )
+            session_id = self.session_tracker_store.compute_session_id(
+                request, model, session_messages
+            )
             prefix_tracker = self.session_tracker_store.get_or_create(session_id, "anthropic")
             frozen_message_count = prefix_tracker.get_frozen_message_count()
             # Idle gap since the previous turn's response, snapshotted at fetch
@@ -2544,11 +2558,16 @@ class AnthropicHandlerMixin:
                         metadata={"path": pipeline_path, "stream": True},
                     )
                     await _finalize_pre_upstream()
+                    explicit_session_header = request.headers.get("x-headroom-session-id")
                     session_key = self._get_session_key(
                         body,
-                        session_header=request.headers.get("x-headroom-session-id"),
+                        session_header=explicit_session_header,
                     )
-                    if session_key in self._active_streams:
+                    # Only opt-in (header-bearing) callers participate in
+                    # mid-turn steering; see StreamingMixin._should_queue_mid_turn
+                    # for why the coarse md5 fallback must not queue concurrent
+                    # independent streams (it wrongly 202s a streaming caller).
+                    if self._should_queue_mid_turn(session_key, explicit_session_header):
                         from fastapi.responses import JSONResponse
 
                         queued = self._queue_mid_turn_message(session_key, body)
@@ -3151,8 +3170,19 @@ class AnthropicHandlerMixin:
                     if _compression_failed:
                         response_headers["x-headroom-compression-failed"] = "true"
 
-                    # Enterprise Security: scan response + de-anonymize
-                    if self.security and _security_ctx and resp_json:
+                    # Enterprise Security: scan response + de-anonymize.
+                    # Gate on a 200 upstream like the sibling CCR/cache/buffered
+                    # blocks below: without this, a non-2xx upstream (rate limit
+                    # 429, overloaded 529, 5xx) whose JSON body is scanned was
+                    # rebuilt as httpx.Response(status_code=200) and returned as
+                    # HTTP 200, so the client's retry/backoff never triggered and
+                    # an error looked like success.
+                    if (
+                        self.security
+                        and _security_ctx
+                        and resp_json
+                        and response.status_code == 200
+                    ):
                         try:
                             resp_json = self.security.scan_response(resp_json, _security_ctx)
                             response = httpx.Response(
@@ -3434,10 +3464,7 @@ class AnthropicHandlerMixin:
                     # blocks every other request for the duration; a timeout
                     # here is caught below and passes the item through.
                     result = await self._run_compression_in_executor(
-                        lambda messages=messages,
-                        model=model,
-                        context_limit=context_limit,
-                        frozen_message_count=frozen_message_count: (
+                        lambda messages=messages, model=model, context_limit=context_limit, frozen_message_count=frozen_message_count: (
                             self.anthropic_pipeline.apply(
                                 messages=messages,
                                 model=model,

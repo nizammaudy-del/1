@@ -66,6 +66,9 @@ dependencies = [
 proxy = [
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0,<1.0",
+    # LiteLLM provider backends (e.g. openrouter) expect orjson at runtime but
+    # litellm only declares it under its own [proxy] extra (GH #2056).
+    "orjson>=3.9.14; platform_python_implementation != 'PyPy'",
     "httpx[http2]>=0.24.0",
     "openai>=2.14.0",             # OpenAI API format support
     "mcp>=1.0.0",                 # MCP server (headroom_compress, retrieve, stats)
@@ -275,6 +278,7 @@ dev = [
     "sentence-transformers>=2.2.0,<6.0",
     "numpy>=1.24.0",
     "openpyxl>=3.1.0",  # exercises spreadsheet_ingest (.xlsx) in the test suite
+    "respx>=0.20.0",    # HTTP mock transport for passthrough handler tests
 ]
 # All optional dependencies (everything you need)
 #
@@ -328,6 +332,8 @@ constraint-dependencies = [
     "lxml-html-clean>=0.4.5",
     # CVE-2026-54293 (High) — transitive via rouge-score/lm-eval; fix at 3.10.0
     "nltk>=3.10.0",
+    # CVE-2026-5241 (High) — direct optional dep for proxy/ml/voice; fix at 5.5.0
+    "transformers>=5.5.0",
 ]
 
 # Pin the project's package index to public PyPI. Without this, `uv lock`
