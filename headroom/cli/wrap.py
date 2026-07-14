@@ -134,9 +134,14 @@ from headroom.providers.opencode.config import (
     snapshot_opencode_config_if_unwrapped,
     strip_opencode_headroom_blocks,
 )
-from headroom.proxy.project_context import with_project_prefix as _with_project_prefix
 
 from .main import main
+
+
+def _with_project_prefix(base_url: str, project: str | None) -> str:
+    from headroom.proxy.project_context import with_project_prefix
+
+    return with_project_prefix(base_url, project)
 
 
 def _read_text(path: Path) -> str:
