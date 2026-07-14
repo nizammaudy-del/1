@@ -2399,9 +2399,14 @@ class OpenAIHandlerMixin:
             upstream_base_url,
             model,
         )
+        config_chat_path = getattr(self.config, "openai_chat_path", "/v1/chat/completions")
+        if not config_chat_path.startswith("/"):
+            config_chat_path = f"/{config_chat_path}"
         handler_path = (
             _resolve_openai_handler_path(request.headers, handler_path=handler_path_suffix)
             if custom_upstream_base_url is not None
+            else config_chat_path
+            if config_chat_path != "/v1/chat/completions"
             else f"/v1{handler_path_suffix}"
         )
         input_event = self.pipeline_extensions.emit(
@@ -2514,13 +2519,16 @@ class OpenAIHandlerMixin:
             request_id=request_id,
         )
         upstream_base_url = _resolve_openai_upstream_base(request.headers)
+        config_chat_path = getattr(self.config, "openai_chat_path", "/v1/chat/completions")
+        if not config_chat_path.startswith("/"):
+            config_chat_path = f"/{config_chat_path}"
         handler_path = (
             _resolve_openai_handler_path(
                 request.headers,
                 handler_path=_OPENAI_CHAT_COMPLETIONS_PATH,
             )
             if upstream_base_url is not None
-            else "/v1/chat/completions"
+            else config_chat_path
         )
         _, custom_chat_provider = _custom_base_passthrough_telemetry(
             request.method,
