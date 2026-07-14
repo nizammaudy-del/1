@@ -62,6 +62,40 @@ from headroom.proxy.request_scope import normalize_request_path
 
 logger = logging.getLogger("headroom.proxy.routes")
 
+# Allowlist of GitHub Copilot LLM hostnames that the patched VS Code extension
+# may forward via X-Original-Host. Only these hosts are trusted; any other value
+# is rejected to prevent SSRF attacks (localhost, link-local metadata addresses,
+# internal service names, or arbitrary external hosts).
+_COPILOT_ALLOWED_HOSTS: frozenset[str] = frozenset(
+    {
+        "api.githubcopilot.com",
+        "api.individual.githubcopilot.com",
+        "api.business.githubcopilot.com",
+        "api.enterprise.githubcopilot.com",
+        "api-model-lab.githubcopilot.com",
+    }
+)
+
+
+def _resolve_copilot_or_custom_base(request: Request) -> str | None:
+    """Resolve an explicit upstream base URL from request headers, if present.
+
+    `x-headroom-base-url` takes precedence. Otherwise, honor `X-Original-Host`
+    sent by the patched VS Code Copilot extension, but only for hostnames in
+    `_COPILOT_ALLOWED_HOSTS`; any other value is rejected to prevent SSRF
+    (localhost, link-local metadata addresses, internal service names, or
+    arbitrary external hosts).
+    """
+    custom_base = request.headers.get("x-headroom-base-url")
+    if custom_base:
+        return custom_base
+    original_host = request.headers.get("x-original-host", "")
+    if original_host in _COPILOT_ALLOWED_HOSTS:
+        return f"https://{original_host}"
+    if original_host:
+        logger.warning("Rejected X-Original-Host %r: not in Copilot allowlist", original_host)
+    return None
+
 
 def _register_provider_passthrough_route(
     app: FastAPI,
@@ -412,6 +446,10 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.get("/v1/models")
     async def list_models(request: Request):
+        custom_base = _resolve_copilot_or_custom_base(request)
+        if custom_base:
+            return await proxy.handle_passthrough(request, custom_base.rstrip("/"))
+
         provider_name = proxy.provider_runtime.model_metadata_provider(dict(request.headers))
         return await handle_model_metadata_endpoint(
             proxy,
@@ -423,6 +461,10 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.get("/v1/models/{model_id}")
     async def get_model(request: Request, model_id: str):
+        custom_base = _resolve_copilot_or_custom_base(request)
+        if custom_base:
+            return await proxy.handle_passthrough(request, custom_base.rstrip("/"))
+
         provider_name = proxy.provider_runtime.model_metadata_provider(dict(request.headers))
         return await handle_model_metadata_endpoint(
             proxy,
@@ -438,7 +480,7 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD"])
     async def passthrough(request: Request, path: str):
-        custom_base = request.headers.get("x-headroom-base-url")
+        custom_base = _resolve_copilot_or_custom_base(request)
         if custom_base:
             base_url = custom_base.rstrip("/")
             endpoint_name, provider_name = _custom_base_passthrough_telemetry(
