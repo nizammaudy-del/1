@@ -561,6 +561,19 @@ class LocalBackend:
 
         return new_memory
 
+    async def detach_supersession(
+        self,
+        old_memory_id: str,
+        new_memory_id: str,
+    ) -> tuple[Memory, Memory]:
+        """Detach one explicit supersession edge and refresh indexes."""
+        await self._ensure_initialized()
+        assert self._hierarchical_memory is not None
+        return await self._hierarchical_memory.detach_supersession(
+            old_memory_id,
+            new_memory_id,
+        )
+
     async def delete_memory(
         self,
         memory_id: str,
