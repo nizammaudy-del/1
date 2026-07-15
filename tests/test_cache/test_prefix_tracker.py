@@ -454,6 +454,133 @@ class TestSessionTrackerStore:
         assert isinstance(session_id, str)
         assert len(session_id) == 16
 
+    def test_compute_session_id_distinguishes_shared_system_prompt(self, store):
+        """Conversations sharing one fixed system prompt must not collide (#1808).
+
+        #1827 disambiguated conversations whose *system* content differs. A
+        client that ships a single fixed system prompt (identical across every
+        conversation) and no per-conversation system block would still collapse
+        every conversation onto one session id. The first user turn keeps them
+        apart.
+        """
+
+        class MockRequest:
+            headers = {}
+
+        fixed_system = "You are ACME-Agent. Follow the house style guide. " * 40
+        conv_a = [
+            {"role": "system", "content": [{"type": "text", "text": fixed_system}]},
+            {"role": "user", "content": [{"type": "text", "text": "Refactor billing."}]},
+        ]
+        conv_b = [
+            {"role": "system", "content": [{"type": "text", "text": fixed_system}]},
+            {"role": "user", "content": [{"type": "text", "text": "Write release notes."}]},
+        ]
+
+        id_a = store.compute_session_id(MockRequest(), "gpt-4o", conv_a)
+        id_b = store.compute_session_id(MockRequest(), "gpt-4o", conv_b)
+
+        assert id_a != id_b
+
+    def test_compute_session_id_stable_when_conversation_grows(self, store):
+        """The same conversation stays on one id as later turns are appended."""
+
+        class MockRequest:
+            headers = {}
+
+        fixed_system = "You are ACME-Agent. " * 40
+        turn_1 = [
+            {"role": "system", "content": [{"type": "text", "text": fixed_system}]},
+            {"role": "user", "content": [{"type": "text", "text": "Refactor billing."}]},
+        ]
+        turn_3 = turn_1 + [
+            {"role": "assistant", "content": "On it."},
+            {"role": "user", "content": "Now add tests."},
+        ]
+
+        id_1 = store.compute_session_id(MockRequest(), "gpt-4o", turn_1)
+        id_3 = store.compute_session_id(MockRequest(), "gpt-4o", turn_3)
+
+        assert id_1 == id_3
+
+    def test_shared_system_prompt_does_not_bleed_tracker_state(self, store):
+        """A fresh conversation must not inherit another's frozen-prefix state.
+
+        This is the downstream impact of the collision: a shared session id
+        means a shared PrefixCacheTracker, so a brand-new conversation would
+        inherit a non-zero frozen-message count from an unrelated one and have
+        its leading messages force-frozen (compression silently disabled).
+        """
+
+        class MockRequest:
+            headers = {}
+
+        fixed_system = "You are ACME-Agent. " * 40
+        conv_a = [
+            {"role": "system", "content": [{"type": "text", "text": fixed_system}]},
+            {"role": "user", "content": [{"type": "text", "text": "Refactor billing."}]},
+        ]
+        conv_b = [
+            {"role": "system", "content": [{"type": "text", "text": fixed_system}]},
+            {"role": "user", "content": [{"type": "text", "text": "Write release notes."}]},
+        ]
+
+        # Conversation A runs a turn and accrues a frozen prefix in its tracker.
+        id_a = store.compute_session_id(MockRequest(), "gpt-4o", conv_a)
+        tracker_a = store.get_or_create(id_a, "openai")
+        tracker_a.update_from_response(
+            cache_read_tokens=5000,
+            cache_write_tokens=0,
+            messages=conv_a + [{"role": "assistant", "content": "done"}],
+        )
+        assert tracker_a.get_frozen_message_count() > 0
+
+        # A brand-new, unrelated conversation B must get its own cold tracker.
+        id_b = store.compute_session_id(MockRequest(), "gpt-4o", conv_b)
+        tracker_b = store.get_or_create(id_b, "openai")
+        assert tracker_b is not tracker_a
+        assert tracker_b.get_frozen_message_count() == 0
+
+    def test_compute_session_id_distinguishes_conversations_without_system(self, store):
+        """No role:system message (e.g. the Anthropic top-level ``system`` field
+        never appears in ``messages``): the first user turn must still keep
+        unrelated conversations apart. Before this fix both hashed to
+        ``model:[]`` and collided.
+        """
+
+        class MockRequest:
+            headers = {}
+
+        conv_a = [{"role": "user", "content": "Refactor billing."}]
+        conv_b = [{"role": "user", "content": "Write release notes."}]
+
+        id_a = store.compute_session_id(MockRequest(), "claude-3", conv_a)
+        id_b = store.compute_session_id(MockRequest(), "claude-3", conv_b)
+
+        assert id_a != id_b
+
+    def test_explicit_session_header_disambiguates_identical_conversations(self, store):
+        """The explicit header is the escape hatch for indistinguishable openings."""
+
+        fixed_system = "You are ACME-Agent. " * 40
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": fixed_system}]},
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+        ]
+
+        class MockRequestA:
+            headers = {"x-headroom-session-id": "conv-a"}
+
+        class MockRequestB:
+            headers = {"x-headroom-session-id": "conv-b"}
+
+        id_a = store.compute_session_id(MockRequestA(), "gpt-4o", messages)
+        id_b = store.compute_session_id(MockRequestB(), "gpt-4o", messages)
+
+        assert id_a == "conv-a"
+        assert id_b == "conv-b"
+        assert id_a != id_b
+
 
 class TestMultiTurnScenario:
     """Integration-style tests simulating multi-turn conversations."""

@@ -805,15 +805,13 @@ class SessionTrackerStore:
 
         Priority:
         1. x-headroom-session-id header (explicit)
-        2. Hash of (model + system prompt) — stable per conversation
+        2. Hash of (model + system prompt + first user turn) — stable per
+           conversation, distinct across conversations.
 
         The system prompt is harvested from ``role:"system"`` entries in
         ``messages``. Anthropic carries the system prompt as a top-level
         ``body["system"]`` field instead, so its handler prepends that as a
-        synthetic ``role:"system"`` message before calling this — otherwise every
-        Anthropic conversation on the same model would collapse to one session id
-        and their session-sticky state (CCR/memory tools, beta headers, frozen
-        prefix) would cross-contaminate.
+        synthetic ``role:"system"`` message before calling this.
         """
         # Check for explicit session header
         if hasattr(request, "headers"):
@@ -821,20 +819,47 @@ class SessionTrackerStore:
             if session_header:
                 return str(session_header)
 
-        # Fall back to hashing model + all system-text content.
-        system_parts: list[str] = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    system_parts.append(content)
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            system_parts.append(block.get("text", ""))
+        # Fall back to hashing model + all system text + the first user turn.
+        #
+        # System text alone is an unreliable conversation key: many clients
+        # ship a single fixed system prompt (an "agent constitution") that is
+        # byte-identical across every unrelated conversation, so keying only on
+        # it collapses all of them onto one session id. They then share a
+        # PrefixCacheTracker and bleed frozen-prefix / sticky-header state
+        # across unrelated turns (#1808; #1827 fixed only the case where the
+        # *system* content itself differs between conversations).
+        #
+        # The first user message is the stable, distinguishing anchor: it is
+        # unchanged as a conversation grows (later turns are appended after it)
+        # yet differs between conversations that happen to share a system
+        # prompt. Clients that can't guarantee a distinct opening turn should
+        # send an explicit ``x-headroom-session-id`` (handled above).
+        def _text_blocks(content: Any) -> list[str]:
+            if isinstance(content, str):
+                return [content]
+            if isinstance(content, list):
+                return [
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+            return []
 
-        system_content = json.dumps(system_parts, ensure_ascii=False, separators=(",", ":"))
-        key = f"{model}:{system_content}"
+        system_parts: list[str] = []
+        first_user_parts: list[str] | None = None
+        for msg in messages:
+            role = msg.get("role")
+            if role == "system":
+                system_parts.extend(_text_blocks(msg.get("content", "")))
+            elif role == "user" and first_user_parts is None:
+                first_user_parts = _text_blocks(msg.get("content", ""))
+
+        key_material = json.dumps(
+            [system_parts, first_user_parts or []],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        key = f"{model}:{key_material}"
         return hashlib.md5(key.encode()).hexdigest()[:16]  # nosec B324
 
     def _maybe_cleanup(self) -> None:
