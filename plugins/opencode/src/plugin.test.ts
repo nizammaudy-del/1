@@ -61,8 +61,14 @@ describe("HeadroomPlugin", () => {
 
     expect(result).toBe("original content");
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8787/v1/retrieve/0123456789abcdef01234567",
-      expect.any(Object),
+      "http://127.0.0.1:8787/v1/retrieve",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: "{\"hash\":\"0123456789abcdef01234567\"}",
+      }),
     );
   });
 });
