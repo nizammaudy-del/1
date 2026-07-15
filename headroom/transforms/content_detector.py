@@ -123,7 +123,19 @@ _LOG_PATTERNS = [
     re.compile(r"^npm ERR!|^yarn error|^cargo error"),  # build tools
     re.compile(r"Traceback \(most recent call last\)"),  # Python traceback
     re.compile(r"^\w*(Error|Exception):"),  # Python exception final line
-    re.compile(r"^\s*at\s+[\w.$]+\("),  # JS/Java stack trace
+    re.compile(r"^\s*at\s+[\w.$/]+\("),  # JS/Java stack trace (JPMS module frames incl.)
+    re.compile(r"^\s*at async \S"),  # Node async stack frame (no paren form)
+    re.compile(r"^(panic|fatal error): "),  # Go panic opener
+    re.compile(r"^goroutine \d+ \["),  # Go goroutine dump header
+    re.compile(r"^\t\S+\.go:\d+ \+0x"),  # Go frame file line
+    re.compile(r"^thread '[^']*' panicked at"),  # Rust panic
+    re.compile(r"^stack backtrace:"),  # Rust backtrace header
+    re.compile(r"^\s+\d+: \S"),  # Rust numbered backtrace frame
+    re.compile(r"^\s+at \S+:\d+:\d+$"),  # Rust/JS bare path frame sub-line
+    re.compile(r"^Unhandled exception\."),  # .NET unhandled exception
+    re.compile(r"^\s*at .+\) in .+:line \d+"),  # .NET frame with PDB info
+    re.compile(r"^Caused by: "),  # Java exception chain head
+    re.compile(r"^\s*\.\.\. \d+ more$"),  # Java elided-frames summary
 ]
 
 
