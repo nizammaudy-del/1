@@ -37,6 +37,9 @@ scripts/*
 !scripts/audit_wheel_glibc_symbols.py
 !scripts/replay_codex_ws_load.py
 !scripts/export_kompress_v2_onnx.py
+!scripts/windows/
+!scripts/windows/install-scheduled-task.ps1
+!scripts/windows/uninstall-scheduled-task.ps1
 
 # Rust / Cargo build artifacts
 /target/
