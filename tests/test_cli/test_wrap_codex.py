@@ -1986,22 +1986,28 @@ class TestCodexLaunchExportsCustomUpstream:
     the wrong host (regression of #1614)."""
 
     def _launch_env(self, monkeypatch, tmp_path, *, custom_upstream):
-        from contextlib import contextmanager
-
         captured: dict = {}
 
         monkeypatch.setattr(wrap_mod.shutil, "which", lambda name: "/usr/bin/codex")
         monkeypatch.setattr(wrap_mod, "_codex_home_dir", lambda: tmp_path)
+        monkeypatch.setattr(wrap_mod, "_offer_dangling_codex_recovery", lambda active_home: None)
+        monkeypatch.setattr(wrap_mod, "_prepare_codex_wrap_state", lambda **kwargs: None)
+        if custom_upstream:
+            (tmp_path / "config.toml").write_text(
+                "\n".join(
+                    (
+                        'model_provider = "gateway"',
+                        "[model_providers.gateway]",
+                        f'base_url = "{custom_upstream}"',
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
-        @contextmanager
-        def _fake_overlay():
-            yield tmp_path / "session"
-
-        monkeypatch.setattr(wrap_mod, "_codex_session_home_overlay", _fake_overlay)
-        # Stand in for the heavy prepare step; only its return value matters here.
-        monkeypatch.setattr(wrap_mod, "_prepare_codex_wrap_state", lambda **kwargs: custom_upstream)
-
-        def _fake_launch(*, env, **kwargs):
+        def _fake_launch(*, env, port, configure_launch, args=(), env_vars_display=(), **kwargs):
+            if configure_launch is not None:
+                _args, env, _display = configure_launch(port, args, env, list(env_vars_display))
             captured["env"] = env
 
         monkeypatch.setattr(wrap_mod, "_launch_tool", _fake_launch)
