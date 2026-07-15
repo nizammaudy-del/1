@@ -339,6 +339,60 @@
             </div>
         </div>
 
+        <!-- Plugin Impact — token savings beyond stock Headroom, from active proxy extensions -->
+        <template x-if="extensionSavingsEntries.length > 0">
+            <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
+                <div class="px-4 py-3 border-b border-border flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-300">Savings by Feature</div>
+                        <div class="text-xs text-gray-500">Tokens attributed to Headroom features (plugins &amp; tool-search) — a breakdown of the totals, not added on top · directional</div>
+                    </div>
+                    <span class="px-2 py-0.5 rounded border border-border bg-card-alt font-mono text-emerald-400"
+                          x-text="'+' + formatNumber(extensionSavingsTotal) + ' tokens'"></span>
+                </div>
+                <div class="p-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <template x-for="ext in extensionSavingsEntries" :key="ext.name">
+                            <div class="rounded-lg border border-border bg-card-alt p-3">
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" x-text="formatExtensionName(ext.name)"></div>
+                                <div class="flex items-baseline gap-2">
+                                    <span class="text-2xl font-light tabular-nums text-emerald-400" x-text="'+' + formatNumber(ext.saved || 0)"></span>
+                                    <span class="text-sm text-gray-400">tokens</span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <!-- Savings by Strategy — stock Headroom lossless/compression savings per transform, from /stats.tokens_saved_by_strategy -->
+        <template x-if="strategySavingsEntries.length > 0">
+            <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
+                <div class="px-4 py-3 border-b border-border flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div class="text-sm font-medium text-gray-300">Savings by Strategy</div>
+                        <div class="text-xs text-gray-500">Tokens saved by each stock Headroom compression strategy</div>
+                    </div>
+                    <span class="px-2 py-0.5 rounded border border-border bg-card-alt font-mono text-accent"
+                          x-text="'+' + formatNumber(strategySavingsTotal) + ' tokens'"></span>
+                </div>
+                <div class="p-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <template x-for="strat in strategySavingsEntries" :key="strat.name">
+                            <div class="rounded-lg border border-border bg-card-alt p-3">
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1" x-text="formatExtensionName(strat.name)"></div>
+                                <div class="flex items-baseline gap-2">
+                                    <span class="text-2xl font-light tabular-nums text-accent" x-text="'+' + formatNumber(strat.saved || 0)"></span>
+                                    <span class="text-sm text-gray-400">tokens</span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </template>
+
         <!-- Agent Usage -->
         <div class="bg-surface rounded-lg border border-border overflow-hidden mb-6">
             <div class="px-4 py-3 border-b border-border flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -2085,6 +2139,14 @@
                     return '0.00';
                 },
 
+                formatExtensionName(name) {
+                    return String(name || '')
+                        .split(/[_\-\s]+/)
+                        .filter(Boolean)
+                        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+                        .join(' ') || String(name || '');
+                },
+
                 formatResetTime(seconds) {
                     if (seconds == null || seconds <= 0) return 'now';
                     const h = Math.floor(seconds / 3600);
@@ -2150,6 +2212,30 @@
 
                 get agentRows() {
                     return this.stats.agent_usage?.agents || [];
+                },
+
+                // Per-plugin token savings beyond stock Headroom, from /stats.extension_savings
+                get extensionSavingsEntries() {
+                    const map = this.stats.extension_savings || {};
+                    return Object.entries(map)
+                        .map(([name, saved]) => ({ name, saved: saved || 0 }))
+                        .sort((a, b) => b.saved - a.saved);
+                },
+
+                get extensionSavingsTotal() {
+                    return this.extensionSavingsEntries.reduce((sum, ext) => sum + (ext.saved || 0), 0);
+                },
+
+                // Per-strategy token savings from stock Headroom transforms, from /stats.tokens_saved_by_strategy
+                get strategySavingsEntries() {
+                    const map = this.stats.tokens_saved_by_strategy || {};
+                    return Object.entries(map)
+                        .map(([name, saved]) => ({ name, saved: saved || 0 }))
+                        .sort((a, b) => b.saved - a.saved);
+                },
+
+                get strategySavingsTotal() {
+                    return this.strategySavingsEntries.reduce((sum, strat) => sum + (strat.saved || 0), 0);
                 },
 
                 get agentCoverageLabel() {

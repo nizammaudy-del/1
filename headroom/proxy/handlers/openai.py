@@ -1970,15 +1970,26 @@ class OpenAIHandlerMixin:
         # change cached bytes. Runs on the post-per-unit forms, mirroring the
         # chat path (ContentRouter._cross_turn_dedup_messages runs last there too).
         if getattr(router, "_cross_turn_dedup_enabled", False):
+            _dd_started = time.perf_counter()
             dd_folded, dd_saved = _dedup_responses_output_items(
                 updated_items,
                 self.OPENAI_RESPONSES_OUTPUT_TYPES,
                 tokenizer.count_text,
                 protected_call_ids=verbatim_excluded_call_ids,
             )
+            _add_timing("cross_turn_dedup", _dd_started)
             if dd_folded:
                 modified = True
                 tokens_saved_total += dd_saved
+                # Attribute per-strategy so /stats + dashboard show cross_turn_dedup
+                # (headline already includes dd_saved; this is a separate counter).
+                _m = getattr(self, "metrics", None)
+                _rec = getattr(_m, "record_compression", None) if _m is not None else None
+                if _rec is not None and dd_saved > 0:
+                    try:
+                        _rec("cross_turn_dedup", dd_saved, 0)
+                    except Exception:  # pragma: no cover
+                        pass
                 if "router:responses_cross_turn_dedup" not in transforms:
                     transforms.append("router:responses_cross_turn_dedup")
 
@@ -2112,6 +2123,27 @@ class OpenAIHandlerMixin:
             working["tools"] = _deferred_tools
             modified = True
             transforms.append("openai:responses:tool_search_deferral")
+            # Report per-turn deferred-schema tokens (kept out of the model's
+            # context by tool_search) to the extension-savings counter so /stats +
+            # the dashboard attribute this to Headroom. Guarded; never break the turn.
+            _m = getattr(self, "metrics", None)
+            _rec = getattr(_m, "record_extension_savings", None) if _m is not None else None
+            if _rec is not None:
+                try:
+                    _tc = self.openai_provider.get_token_counter(model)
+                    _dtoks = _tc.count_text(
+                        _json_debug_dumps(
+                            [
+                                t
+                                for t in _deferred_tools
+                                if isinstance(t, dict) and t.get("defer_loading")
+                            ]
+                        )
+                    )
+                    if _dtoks > 0:
+                        _rec("tool_search", _dtoks)
+                except Exception:  # pragma: no cover - never break the turn
+                    pass
 
         # Turn hooks (opt-in extensions): a registered hook may inspect or rewrite
         # the outbound tools before we send — the extensible counterpart to the

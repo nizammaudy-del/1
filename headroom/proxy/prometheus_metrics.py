@@ -117,6 +117,17 @@ class PrometheusMetrics:
         self.compressions_by_strategy: dict[str, int] = defaultdict(int)
         self.tokens_saved_by_strategy: dict[str, int] = defaultdict(int)
 
+        # Per-feature ATTRIBUTION of savings, by name (e.g. "lossless_guard",
+        # "tool_search"). This is a cross-cutting VIEW, NOT an additive bucket:
+        # a lossless provider's fold is also reflected in `tokens_saved_by_strategy`
+        # (which measures the with-feature output), so these amounts OVERLAP the
+        # per-strategy totals — do NOT sum the two. tool-search deferral is the one
+        # kind here that is NOT in `tokens_saved_by_strategy` (it's schema deferral,
+        # not content compression). Accumulated per request → per-turn savings
+        # compound. Units follow the recording site (router ≈ word-count, handler =
+        # model tokens) — treat as directional.
+        self.extension_savings: dict[str, int] = defaultdict(int)
+
         # Fail-open compression failures, keyed by reason ("timeout",
         # "error"). The proxy fails open on any optimization error so the
         # request still succeeds; without this counter the failure is only
@@ -317,6 +328,7 @@ class PrometheusMetrics:
 
             self.compressions_by_strategy.clear()
             self.tokens_saved_by_strategy.clear()
+            self.extension_savings.clear()
             with self._obs_counter_lock:
                 self.compression_failed_by_reason.clear()
                 self.kompress_size_gate_by_outcome.clear()
@@ -476,6 +488,15 @@ class PrometheusMetrics:
         saved = original_tokens - compressed_tokens
         if saved > 0:
             self.tokens_saved_by_strategy[strategy] += saved
+
+    def record_extension_savings(self, name: str, tokens_saved: int) -> None:
+        """Attribute tokens saved to a named Headroom feature/plugin. Called per
+        request (a lossless provider via the router; a turn hook directly), so
+        per-turn savings accumulate. This is an ATTRIBUTION view: for content
+        compression it OVERLAPS ``tokens_saved_by_strategy`` (both measure the
+        with-feature output) — the two are not additive. Directional units."""
+        if tokens_saved > 0:
+            self.extension_savings[name] += tokens_saved
 
     def record_compression_failed(self, reason: str) -> None:
         """Record one fail-open compression failure, bucketed by ``reason``.

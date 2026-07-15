@@ -1072,7 +1072,7 @@ class ContentRouterConfig:
     # Runs in both modes: lossless references verbatim/folded content; CCR mode
     # references the earlier block's kompressed-but-CCR-recoverable form
     # (deterministic content-hash → stable → still cache-safe, no added loss).
-    enable_cross_turn_dedup: bool = False
+    enable_cross_turn_dedup: bool = True  # default-on: lossless, cache-safe (prefix-monotonic)
     # Lossless-then-lossy. In lossy mode (not `lossless`), after a byte/data
     # lossless fold (search/log/text) run the aggressive lossy compressor
     # (Kompress) on the FOLDED remainder and keep it iff it removes a further
@@ -1351,11 +1351,20 @@ class ContentRouter(Transform):
             "HEADROOM_TEXT_CRUSHER", ""
         ).strip().lower() in ("1", "true", "yes", "on")
         self._text_crusher: Any = None
-        # Cross-turn dedup: config field OR env HEADROOM_DEDUPE (robust to how the
-        # config was built). Effective only in lossless mode (guarded in apply()).
+        # Cross-turn dedup: DEFAULT-ON (config field `enable_cross_turn_dedup`),
+        # with explicit env override `HEADROOM_DEDUPE=0|1`. Runs in BOTH lossless
+        # AND lossy/CCR modes (apply() applies it to the final block forms, no
+        # mode gate): lossless mode references verbatim/byte-folded content, CCR
+        # mode references the earlier block's content-hash-stable recoverable form
+        # — keep-earliest + prefix-monotonic either way, so no prompt-cache bust.
+        # Essentially free: lossless span dedup, accuracy- and cache-safe.
+        _dedupe_env = os.environ.get("HEADROOM_DEDUPE", "").strip().lower()
         self._cross_turn_dedup_enabled: bool = (
-            self.config.enable_cross_turn_dedup
-            or os.environ.get("HEADROOM_DEDUPE", "").strip().lower() in ("1", "true", "yes", "on")
+            False
+            if _dedupe_env in ("0", "false", "no", "off")
+            else True
+            if _dedupe_env in ("1", "true", "yes", "on")
+            else self.config.enable_cross_turn_dedup  # default (now True) unless env overrides
         )
         # EXPERIMENT (HEADROOM_EXPERIMENTAL_READ_KEEP_RATIO): file reads are
         # protected verbatim by default so the agent keeps exact bytes to patch.
@@ -2015,6 +2024,33 @@ class ContentRouter(Transform):
                 continue
             if len(cand) < len(best):
                 best, best_label = cand, f"lossless_{kind}"
+
+        # External lossless providers (opt-in; empty by default → no-op). Each
+        # proposal is VERIFIED for byte/JSON equivalence inside best_provider_fold
+        # before it can win, so an external provider can shrink more but can never
+        # introduce loss. Kept AFTER the built-in folds so OSS stays the floor.
+        from headroom.transforms.lossless_provider import (
+            LosslessCtx,
+            best_provider_fold,
+        )
+
+        external = best_provider_fold(content, LosslessCtx(content_type=strategy.value))
+        if external is not None and len(external[0]) < len(best):
+            # Attribute the provider's MARGINAL fold (how much smaller than the best
+            # built-in fold) to its feature name. NOTE: this amount is also inside
+            # the block's per-strategy saving (which reflects this with-provider
+            # output), so extension_savings OVERLAPS tokens_saved_by_strategy here —
+            # it's an attribution view, not additive. Word-count (router-native).
+            if self._observer is not None:
+                delta = len(best.split()) - len(external[0].split())
+                try:
+                    self._observer.record_extension_savings(external[1], delta)
+                except AttributeError:
+                    pass  # observer predates the extension-savings API
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug("record_extension_savings failed", exc_info=True)
+            best, best_label = external
+
         return best, best_label
 
     @staticmethod
@@ -4493,6 +4529,7 @@ class ContentRouter(Transform):
 
             if len(dblocks) < 2:
                 return messages
+            _dedup_t0 = time.perf_counter()
             deduped, stats = dedup_blocks(dblocks)
             if not stats.get("spans_folded"):
                 return messages
@@ -4528,11 +4565,28 @@ class ContentRouter(Transform):
                     blk["content"] = sub_list
                     m["content"][blk_idx] = blk
 
+            # Attribute the per-strategy token savings (word-count, matching the
+            # observer's other counters) so /stats + the dashboard show
+            # cross_turn_dedup's contribution. The headline already reflects the
+            # smaller output; this is the attribution slice (no double-count — a
+            # separate counter from tokens_saved_total).
+            saved_w = 0
+            for (_mi, _bi, _si), od, nd in zip(locs, dblocks, deduped):
+                if not od.protected and nd.text != od.text:
+                    saved_w += max(0, len(od.text.split()) - len(nd.text.split()))
+            _dedup_ms = (time.perf_counter() - _dedup_t0) * 1000.0
+            if self._observer is not None and saved_w > 0:
+                try:
+                    self._observer.record_compression("cross_turn_dedup", saved_w, 0)
+                except Exception:  # pragma: no cover - observer must not break the turn
+                    logger.debug("cross_turn_dedup record_compression failed", exc_info=True)
             if route_counts is not None:
                 route_counts["cross_turn_dedup"] = (
                     route_counts.get("cross_turn_dedup", 0) + stats["spans_folded"]
                 )
-            transforms_applied.append(f"router:cross_turn_dedup:{stats['spans_folded']}")
+            transforms_applied.append(
+                f"router:cross_turn_dedup:{stats['spans_folded']}spans:{saved_w}tok:{_dedup_ms:.1f}ms"
+            )
             return new_messages
         except Exception:  # never break the proxy
             return messages
