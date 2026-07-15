@@ -4923,7 +4923,8 @@ class OpenAIHandlerMixin:
 
         Newer Codex versions use WebSocket instead of HTTP POST for the
         Responses API.  This handler:
-        1. Accepts the client WebSocket
+        1. Validates origin and routing, then accepts ChatGPT-auth sessions
+           immediately or API-key sessions after the upstream handshake
         2. Receives the first message (``response.create`` request)
         3. Opens an upstream WebSocket to OpenAI
         4. Compresses eligible `response.create` text through the Python
@@ -5208,14 +5209,57 @@ class OpenAIHandlerMixin:
             f"{[k for k in upstream_headers if k.lower() != 'authorization']}, "
             f"subprotocols={client_subprotocols}"
         )
+        accept_subprotocol = client_subprotocols[0] if client_subprotocols else None
+        accepted_client_ws = False
+
+        def _register_accepted_session() -> None:
+            nonlocal session_handle
+            if session_handle is not None or ws_sessions is None:
+                return
+            client_addr: str | None = None
+            client_info = getattr(websocket, "client", None)
+            if client_info is not None:
+                host = getattr(client_info, "host", None)
+                port = getattr(client_info, "port", None)
+                if host is not None and port is not None:
+                    client_addr = f"{host}:{port}"
+                elif host is not None:
+                    client_addr = str(host)
+            session_handle = WSSessionHandle(
+                session_id=session_id,
+                request_id=request_id,
+                client_addr=client_addr,
+                upstream_url=upstream_url,
+            )
+            ws_sessions.register(session_handle)
+            metrics = getattr(self, "metrics", None)
+            if metrics is not None and hasattr(metrics, "inc_active_ws_sessions"):
+                try:
+                    metrics.inc_active_ws_sessions()
+                except Exception:  # pragma: no cover - defensive
+                    pass
+
+        def _schedule_usage_poll() -> None:
+            with contextlib.suppress(Exception):
+                from headroom.subscription.codex_rate_limits import (
+                    maybe_schedule_usage_poll,
+                )
+
+                maybe_schedule_usage_poll(ws_headers)
 
         try:
+            # ChatGPT-auth sessions no longer need upstream x-codex-* headers on
+            # the client-facing 101, so accept them before the upstream retry
+            # loop. API-key sessions still connect first so the allowlisted
+            # handshake headers remain attachable there.
+            if is_chatgpt_auth:
+                async with stage_timer.measure("accept"):
+                    await websocket.accept(subprotocol=accept_subprotocol)
+                accepted_client_ws = True
+                _register_accepted_session()
+                _schedule_usage_poll()
+
             # --- Connect to upstream OpenAI WebSocket ---
-            # NOTE: we connect *before* accepting the client. OpenAI delivers the
-            # Codex subscription/rate-limit window only on the upstream WS
-            # handshake response headers, so we must read them here and attach
-            # the x-codex-* subset to the client-facing 101 (below). Once accept()
-            # sends the 101 the headers can no longer be added.
             logger.info(f"[{request_id}] WS /v1/responses connecting to {upstream_url}")
 
             # Use ssl=True to let the websockets library handle SSL natively.
@@ -5285,11 +5329,9 @@ class OpenAIHandlerMixin:
                     )
                     await asyncio.sleep(delay_with_jitter / 1000)
 
-            # Accept the client WS, forwarding OpenAI's x-codex-* subscription
-            # window from the upstream handshake onto the client-facing 101 so
-            # Codex, /stats, and the headroom-desktop gauge can read the live
-            # window. In API-key mode the handshake carries no x-codex-* headers,
-            # so accept_headers stays empty and this behaves exactly as before.
+            # Preserve any upstream x-codex-* handshake headers for internal
+            # rate-limit state, and forward them onto the client-facing 101 only
+            # for API-key sessions that have not been accepted yet.
             accept_headers: list[tuple[bytes, bytes]] = []
             if ws_connected:
                 _codex_handshake = _extract_codex_handshake_headers(upstream)
@@ -5306,46 +5348,15 @@ class OpenAIHandlerMixin:
                     with contextlib.suppress(Exception):
                         get_codex_rate_limit_state().update_from_headers(dict(_codex_handshake))
 
-            # Current Codex no longer ships x-codex-* on the handshake, so the
-            # block above is usually a no-op. Pull the live subscription window
-            # from the dedicated usage endpoint instead (throttled, scoped to
-            # ChatGPT-session traffic, fire-and-forget so accept isn't blocked).
-            with contextlib.suppress(Exception):
-                from headroom.subscription.codex_rate_limits import (
-                    maybe_schedule_usage_poll,
-                )
-
-                maybe_schedule_usage_poll(ws_headers)
-            async with stage_timer.measure("accept"):
-                await websocket.accept(
-                    subprotocol=client_subprotocols[0] if client_subprotocols else None,
-                    headers=accept_headers or None,
-                )
-
-            # --- Unit 3: register the session as soon as accept succeeds ---
-            client_addr: str | None = None
-            client_info = getattr(websocket, "client", None)
-            if client_info is not None:
-                host = getattr(client_info, "host", None)
-                port = getattr(client_info, "port", None)
-                if host is not None and port is not None:
-                    client_addr = f"{host}:{port}"
-                elif host is not None:
-                    client_addr = str(host)
-            if ws_sessions is not None:
-                session_handle = WSSessionHandle(
-                    session_id=session_id,
-                    request_id=request_id,
-                    client_addr=client_addr,
-                    upstream_url=upstream_url,
-                )
-                ws_sessions.register(session_handle)
-                metrics = getattr(self, "metrics", None)
-                if metrics is not None and hasattr(metrics, "inc_active_ws_sessions"):
-                    try:
-                        metrics.inc_active_ws_sessions()
-                    except Exception:  # pragma: no cover - defensive
-                        pass
+            if not accepted_client_ws:
+                _schedule_usage_poll()
+                async with stage_timer.measure("accept"):
+                    await websocket.accept(
+                        subprotocol=accept_subprotocol,
+                        headers=accept_headers or None,
+                    )
+                accepted_client_ws = True
+                _register_accepted_session()
             # Receive the first message from client (the response.create request).
             # Bound the wait with WS_FIRST_FRAME_TIMEOUT_SECONDS so a zombie
             # client that opens the WS but never sends a frame cannot hold a

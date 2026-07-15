@@ -38,6 +38,9 @@ class _DummyMetrics:
     async def record_failed(self, **kwargs):
         return None
 
+    def record_compression_failed(self, reason: str) -> None:
+        return None
+
     async def record_rate_limited(self, **kwargs):
         return None
 
