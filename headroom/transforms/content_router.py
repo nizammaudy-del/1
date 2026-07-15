@@ -800,6 +800,10 @@ class CompressionCache:
         self._results: dict[int, tuple[str, float, str, float]] = {}
         # Tier 1: hashes of content that won't compress {hash: timestamp}
         self._skip: dict[int, float] = {}
+        # Callbacks invoked (outside the lock) whenever ``clear()`` runs, so
+        # sibling state keyed by the same content hashes (e.g. the router's
+        # frozen-verdict store) can be reset in lock-step with the cache.
+        self._on_clear: list[Any] = []
         self._ttl_seconds = ttl_seconds
         # Metrics
         self._hits = 0
@@ -888,11 +892,23 @@ class CompressionCache:
                 "cache_avg_lookup_ns": avg_ns,
             }
 
+    def register_on_clear(self, callback: Any) -> None:
+        """Register a callback fired (outside the lock) on every ``clear()``.
+
+        Lets state keyed by the same content hashes — e.g. the router's
+        ``_frozen_verdicts`` store — be reset together with the cache so it
+        cannot outlive the results/skip tiers it shadows.
+        """
+        self._on_clear.append(callback)
+
     def clear(self) -> None:
         """Clear all entries (e.g., on session end).  Thread-safe."""
         with self._lock:
             self._results.clear()
             self._skip.clear()
+        # Fire callbacks outside the lock to avoid cross-lock ordering issues.
+        for callback in self._on_clear:
+            callback()
 
 
 class CompressionStrategy(Enum):
@@ -1386,6 +1402,136 @@ class ContentRouter(Transform):
 
         self._cache = CompressionCache()
 
+        # Cache-churn fix (HEADROOM_FREEZE_BLOCK_DECISION, default off):
+        # freeze each block's compress-vs-passthrough verdict on first
+        # sighting so it stops depending on the per-turn ``min_ratio`` drift.
+        # Keyed by the same ``content_key`` as ``_cache``; value True =
+        # "compress", False = "skip". Only populated when the flag is on.
+        #
+        # Bounding: this store shadows ``_cache`` entries, so left unbounded it
+        # would leak verdicts whose cache entries have long since expired. It is
+        # (a) cleared in lock-step with the cache via ``register_on_clear`` and
+        # (b) capped at ``_frozen_verdicts_max`` with simple insertion-order
+        # (FIFO) eviction, mirroring the cache's bounded posture.
+        #
+        # Locking: ``CompressionCache`` guards every mutation with a lock and
+        # the parallel compression pass writes verdicts from worker threads, so
+        # we match that posture with a dedicated lock rather than relying on
+        # GIL atomicity (which would not protect the read-then-evict sequence).
+        self._frozen_verdicts: dict[int, bool] = {}
+        self._frozen_verdicts_max = 4096
+        self._frozen_lock = threading.Lock()
+        # Reset verdicts whenever the shadowed cache is cleared.
+        self._cache.register_on_clear(self._clear_frozen_verdicts)
+        # Instrumentation for the freeze (HEADROOM_FREEZE_BLOCK_DECISION): a
+        # "pin" is a turn where the frozen compress verdict overrode a tightened
+        # per-turn ``min_ratio`` that would otherwise downgrade the block to
+        # skip — i.e. revert it to original text and bust the provider prefix
+        # cache. Counting pins isolates the freeze's attributable payoff.
+        self._freeze_pin_hits = 0
+        self._freeze_pin_chars = 0
+
+    def _record_freeze_pin(self, content: str, cached_ratio: float) -> None:
+        """Count one freeze divergence (thread-safe) and log it.
+
+        Fires only when the frozen "compress" verdict overrode a tightened
+        per-turn ``min_ratio`` that would have downgraded the block to skip (a
+        provider cache bust). ``preserved`` is a char-based proxy for the
+        compression saving kept alive by not reverting to the original.
+        """
+        preserved = max(0, int(len(content) * (1.0 - cached_ratio)))
+        with self._frozen_lock:
+            self._freeze_pin_hits += 1
+            self._freeze_pin_chars += preserved
+            hits = self._freeze_pin_hits
+        logger.info(
+            f"FREEZE-PIN: pins={hits} cached_ratio={cached_ratio:.3f} "
+            f"preserved_chars~={preserved} (cache bust avoided)"
+        )
+
+    def _record_frozen_verdict(self, content_key: int, verdict: bool) -> None:
+        """Record a frozen verdict (thread-safe, bounded FIFO eviction).
+
+        Caps the store at ``_frozen_verdicts_max`` entries, evicting the
+        oldest insertion when full, so it cannot grow without bound across a
+        long-lived process. Mirrors ``CompressionCache``'s locked mutations.
+        """
+        with self._frozen_lock:
+            if (
+                content_key not in self._frozen_verdicts
+                and len(self._frozen_verdicts) >= self._frozen_verdicts_max
+            ):
+                # Evict oldest insertion (dicts preserve insertion order).
+                oldest = next(iter(self._frozen_verdicts))
+                del self._frozen_verdicts[oldest]
+            self._frozen_verdicts[content_key] = verdict
+
+    def _get_frozen_verdict(self, content_key: int) -> bool | None:
+        """Read a frozen verdict (thread-safe). Returns None if absent."""
+        with self._frozen_lock:
+            return self._frozen_verdicts.get(content_key)
+
+    def _frozen_verdict_recoverable(self, strategy: object, compressed: str | None) -> bool:
+        """Whether a "compress" verdict is safe to freeze under the #1307 rule.
+
+        A lossy-unmarked strategy that emitted no CCR retrieval marker is
+        unrecoverable, so pinning it across turns would keep serving a
+        fabricated summary the agent can't restore. Refuse to freeze those;
+        recoverable (marked or non-lossy) compressions may be pinned.
+
+        ``strategy`` is a ``CompressionStrategy`` on the fresh-compress path but
+        its ``.value`` string on the cache-hit path, so compare by value.
+        """
+        value = getattr(strategy, "value", strategy)
+        lossy_values = {getattr(s, "value", s) for s in self.LOSSY_UNMARKED_STRATEGIES}
+        if value in lossy_values and not CCR_RETRIEVAL_MARKER_RE.search(compressed or ""):
+            return False
+        return True
+
+    def _clear_frozen_verdicts(self) -> None:
+        """Drop all frozen verdicts (thread-safe). Fired on cache clear."""
+        with self._frozen_lock:
+            self._frozen_verdicts.clear()
+
+    def _freeze_block_decision_enabled(self) -> bool:
+        """Whether the per-block verdict freeze is active (default off).
+
+        Reads ``HEADROOM_FREEZE_BLOCK_DECISION`` each call so it can be
+        toggled per-process without restart in tests. Default off → the
+        verdict store is never touched and behaviour is byte-identical.
+        """
+        return os.environ.get("HEADROOM_FREEZE_BLOCK_DECISION", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def _kompress_model_ready(self) -> bool:
+        """Whether the ML compressor is ready (or deliberately disabled).
+
+        Caveat (1): a block that fails to compress *only* because ModernBERT
+        is still lazy-loading must NOT have its "skip" verdict frozen — it has
+        to be re-evaluated once the model is ready. When kompress is disabled
+        or unavailable there is no deferred model, so "skip" is a real verdict
+        and may be frozen.
+        """
+        if not self.config.enable_kompress:
+            return True
+        if getattr(self, "_runtime_kompress_model", None) == "disabled":
+            return True
+        try:
+            compressor = self._get_kompress()
+        except Exception:
+            return True
+        if compressor is None:
+            # No ML compressor available at all — not a deferred load.
+            return True
+        try:
+            return bool(compressor.is_ready())
+        except Exception:
+            return True
+
     def _record_to_toin(
         self,
         strategy: CompressionStrategy,
@@ -1635,6 +1781,23 @@ class ContentRouter(Transform):
                 )
             except Exception as e:  # pragma: no cover - defensive
                 logger.debug("CompressionObserver raised (non-fatal): %s", e)
+
+    def _observe_kompress_size_gate(self, outcome: str) -> None:
+        """Forward one kompress size-gate decision to the observer.
+
+        ``outcome`` is "exceeded" when an eligible block trips the size
+        ceiling and is routed off ML, "within" when it passes the gate.
+        Goes through the same observer hook as ``_observe`` so the metric
+        reaches the PrometheusMetrics singleton without ``content_router``
+        importing ``headroom.proxy`` (no cycle). Defensive: a missing
+        method or a buggy observer must not break the compression.
+        """
+        if self._observer is None:
+            return
+        try:
+            self._observer.record_kompress_size_gate(outcome)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug("CompressionObserver raised (non-fatal): %s", e)
 
     def _determine_strategy(self, content: str) -> CompressionStrategy:
         """Determine the compression strategy from content analysis.
@@ -2367,6 +2530,7 @@ class ContentRouter(Transform):
         # rather than ModernBERT, keeping the request path bounded.
         if self._kompress_max_tokens > 0 and len(text_to_compress) > self._kompress_max_tokens * 4:
             self._kompress_gate_fires += 1
+            self._observe_kompress_size_gate("exceeded")
             logger.info(
                 "kompress size-gate fired: ~%d tok (>%d) routed off ML (fire #%d)",
                 len(text_to_compress) // 4,
@@ -2397,6 +2561,12 @@ class ContentRouter(Transform):
                 out = restore_tags(out, protected)
             return out, _estimate_tokens(out)
 
+        # Reached only when the gate is enabled and this eligible block is
+        # under the ceiling — the counterpart "within" outcome to the
+        # "exceeded" branch above. Lets /metrics prove the gate's hit rate.
+        if self._kompress_max_tokens > 0:
+            self._observe_kompress_size_gate("within")
+
         # Primary: Kompress. On a cold cache the model is fetched once in the
         # background (ensure_background_load) instead of blocking this request
         # thread on a 274MB download that races the compression timeout and
@@ -2419,17 +2589,27 @@ class ContentRouter(Transform):
                         self._kompress_warned = True
                 else:
                     try:
-                        result = compressor.compress(
-                            text_to_compress,
-                            context=context,
-                            question=question,
-                            target_ratio=(
+                        compress_kwargs: dict[str, Any] = {
+                            "context": context,
+                            "question": question,
+                            "target_ratio": (
                                 target_ratio
                                 if target_ratio is not None
                                 else getattr(self, "_runtime_target_ratio", None)
                             ),
-                            allow_download=False,
-                        )
+                            "allow_download": False,
+                        }
+                        # When custom tags are protected, ``text_to_compress`` is
+                        # the placeholdered intermediate ({{HEADROOM_TAG_N}}). Pass
+                        # the pre-protection ``content`` as ``ccr_original`` so CCR
+                        # stores the real text, not the placeholder — otherwise a
+                        # later full retrieval returns {{HEADROOM_TAG_N}} and the
+                        # protected block is lost from the retrieval path. Only set
+                        # it when tags were protected so callers/compressors that
+                        # don't accept the kwarg are unaffected on the common path.
+                        if protected:
+                            compress_kwargs["ccr_original"] = content
+                        result = compressor.compress(text_to_compress, **compress_kwargs)
                         compressed = result.compressed
                         compressed_tokens = result.compressed_tokens
                     except Exception as e:
@@ -3409,6 +3589,27 @@ class ContentRouter(Transform):
             min(self.config.min_ratio_relaxed, min_ratio),
         )
 
+        # Cache-churn fix: when frozen-decision mode is on, accept/skip
+        # decisions use the SAME live ``min_ratio`` gate as flag-off, but once a
+        # block is accepted-and-compressed its "compress" verdict is pinned
+        # (accept_threshold=1.0) on every later turn. So when rising pressure
+        # tightens ``min_ratio`` below the block's ratio — the turn the legacy
+        # path would ``move_to_skip`` and bust the provider prefix cache — the
+        # pin keeps it compressed instead. This is a pure pin: it preserves a
+        # decision the live gate already made; it never loosens the first-sight
+        # gate (which would be a silent ratio bet).
+        #
+        # (Earlier this used a FIXED ``frozen_threshold`` == the ``min_ratio``
+        # aggressive floor (0.65), which made the pin dead code — a block only
+        # froze when ``cached_ratio < 0.65 <= min_ratio``, one the legacy gate
+        # accepts anyway, so the pin never changed an outcome and the flag only
+        # suppressed borderline compression. Verified inert by A/B 2026-06-21.)
+        #
+        # Default off ⇒ the pin branch is never taken and the legacy
+        # ``min_ratio`` path is byte-for-byte untouched.
+        freeze_decision = self._freeze_block_decision_enabled()
+        model_ready = self._kompress_model_ready() if freeze_decision else True
+
         if context_pressure > 0.3:
             logger.debug(
                 "content_router adaptive: pressure=%.2f, min_ratio=%.2f, "
@@ -3748,8 +3949,25 @@ class ContentRouter(Transform):
             cached = self._cache.get(content_key)
             if cached is not None:
                 cached_compressed, cached_ratio, cached_strategy = cached
-                # Re-check ratio against current min_ratio (shifts with context pressure)
-                if cached_ratio < min_ratio:
+                # Cache-churn fix: if a verdict was frozen for this block on a
+                # prior turn, REUSE it and bypass the per-turn ``min_ratio``
+                # re-check + ``move_to_skip`` downgrade. The frozen verdict is
+                # only ever "compress" here (a "skip" verdict never warms the
+                # result cache), so this just pins the accept decision against
+                # ratio drift.
+                frozen_compress = freeze_decision and self._get_frozen_verdict(content_key) is True
+                if frozen_compress:
+                    # Pin: a frozen "compress" verdict always re-accepts,
+                    # overriding the per-turn min_ratio re-check below.
+                    accept_threshold = 1.0
+                else:
+                    # Pre-freeze / unfrozen: identical to the legacy gate. The
+                    # freeze only PINS past accepts; it never loosens the
+                    # first-sighting decision (that would be a silent ratio bet).
+                    accept_threshold = min_ratio
+                # Re-check ratio against the active threshold (shifts with
+                # context pressure unless pinned by a frozen verdict).
+                if cached_ratio < accept_threshold:
                     if netcost_enabled and not self._net_cost_allows(
                         slot_idx=i,
                         original_tokens=tokenizer.count_text(content),
@@ -3767,12 +3985,24 @@ class ContentRouter(Transform):
                         result_slots[i] = {**message, "content": cached_compressed}
                         transforms_applied.append(f"router:{cached_strategy}:{cached_ratio:.2f}")
                         compressed_details.append(f"{cached_strategy}:{cached_ratio:.2f}")
+                        # Freeze the "compress" verdict so future turns skip the
+                        # min_ratio re-check above and never downgrade it.
+                        if freeze_decision:
+                            self._record_frozen_verdict(content_key, True)
+                        # Pin attribution: count a bust avoided only when the
+                        # block actually stayed compressed (past the net-cost
+                        # gate) AND the frozen verdict overrode a tightened
+                        # min_ratio that flag-off would have moved to skip.
+                        if frozen_compress and cached_ratio >= min_ratio:
+                            self._record_freeze_pin(content, cached_ratio)
                         if i in frozen_unlock_slots:
                             transforms_applied.append("router:netcost_frozen_unlock")
                             route_counts.setdefault("netcost_frozen_unlocked", 0)
                             route_counts["netcost_frozen_unlocked"] += 1
                 else:
                     # Threshold tightened — no longer qualifies. Move to skip.
+                    # (Unreachable when the verdict is frozen-compress: the
+                    # accept_threshold is pinned to 1.0 above.)
                     self._cache.move_to_skip(content_key)
                     result_slots[i] = message
                     route_counts["ratio_too_high"] += 1
@@ -3911,6 +4141,10 @@ class ContentRouter(Transform):
                         accept_ratio,
                         result.strategy_used.value,
                     )
+                    # Freeze "compress" so the cache-hit path above never
+                    # re-applies a tighter min_ratio to this block.
+                    if freeze_decision:
+                        self._record_frozen_verdict(content_key, True)
                     if netcost_enabled and not self._net_cost_allows(
                         slot_idx=slot_idx,
                         original_tokens=tokenizer.count_text(task_content),
@@ -3937,6 +4171,13 @@ class ContentRouter(Transform):
                     self._cache.mark_skip(content_key)
                     result_slots[slot_idx] = message
                     route_counts["ratio_too_high"] += 1
+                    # Caveat (1): only freeze a "skip" verdict when the ML model
+                    # is actually ready. A passthrough caused purely by a still-
+                    # loading ModernBERT must stay re-evaluable on later turns,
+                    # so we do NOT freeze it here (the byte-result skip cache
+                    # entry can still expire/refresh per the existing TTL).
+                    if freeze_decision and model_ready:
+                        self._record_frozen_verdict(content_key, False)
 
         # Build final message list from slots
         transformed_messages = [m for m in result_slots if m is not None]
@@ -4693,6 +4934,21 @@ class ContentRouter(Transform):
             ``True`` the caller should update the block with the returned
             content and set ``any_compressed``.
         """
+        # Cache-churn fix (HEADROOM_FREEZE_BLOCK_DECISION, default off):
+        # mirror the plain-STRING path's per-block verdict freeze here, because
+        # for Claude Code / Anthropic traffic the prefix is dominated by
+        # ``tool_result`` content-blocks that flow through this helper. This is a
+        # pure pin: accept/skip uses the SAME live ``min_ratio`` gate as
+        # flag-off, and an accepted "compress" verdict is recorded in
+        # ``_frozen_verdicts`` and pinned on later turns so rising context
+        # pressure can no longer downgrade it (which would churn the prefix
+        # cache). The freeze never loosens the first-sighting decision. See the
+        # STRING-path note above for why the old fixed aggressive threshold
+        # (0.65) made the pin dead code. Default off ⇒ legacy ``min_ratio``
+        # behaviour, byte-identical.
+        freeze_decision = self._freeze_block_decision_enabled()
+        model_ready = self._kompress_model_ready() if freeze_decision else True
+
         # In lossless-only mode a "skip" means no byte-lossless fold exists for
         # this block (e.g. source code) — it is left verbatim, which is NOT a
         # rejected compression. Bucket it honestly so it doesn't masquerade as
@@ -4712,14 +4968,38 @@ class ContentRouter(Transform):
             cached_compressed, cached_ratio, cached_strategy = cached
             if route_counts is not None:
                 route_counts["cache_hit"] = route_counts.get("cache_hit", 0) + 1
-            if cached_ratio < min_ratio:
+            # If a "compress" verdict was frozen for this block, REUSE it and
+            # bypass the per-turn ``min_ratio`` re-check + ``move_to_skip``
+            # downgrade (the frozen verdict here is only ever "compress": a
+            # "skip" verdict never warms the result cache).
+            if freeze_decision and self._get_frozen_verdict(content_key) is True:
+                accept_threshold = 1.0  # already-decided: always accept
+                if cached_ratio >= min_ratio:
+                    # Counterfactual: legacy min_ratio re-check would downgrade
+                    # this block (move_to_skip → original restored → prefix
+                    # cache bust). The frozen verdict prevented it. The block
+                    # path has no net-cost veto, so an accepted frozen block
+                    # always stays compressed — this pin count is exact.
+                    self._record_freeze_pin(content, cached_ratio)
+            else:
+                # Pre-freeze / unfrozen: same live gate as flag-off (pure pin).
+                accept_threshold = min_ratio
+            if cached_ratio < accept_threshold:
                 transforms_applied.append(f"router:{strategy_label}:{cached_strategy}")
                 if compressed_details is not None:
                     compressed_details.append(
                         f"{details_prefix}:{cached_strategy}:{cached_ratio:.2f}"
                     )
+                # Freeze the "compress" verdict so future turns skip the
+                # min_ratio re-check above and never downgrade it.
+                if freeze_decision and self._frozen_verdict_recoverable(
+                    cached_strategy, cached_compressed
+                ):
+                    self._record_frozen_verdict(content_key, True)
                 return cached_compressed, True
-            # Threshold tightened — move result to skip set
+            # Threshold tightened — move result to skip set.
+            # (Unreachable when the verdict is frozen-compress: the
+            # accept_threshold is pinned to 1.0 above.)
             self._cache.move_to_skip(content_key)
             if route_counts is not None:
                 route_counts["ratio_too_high"] = route_counts.get("ratio_too_high", 0) + 1
@@ -4765,6 +5045,8 @@ class ContentRouter(Transform):
             if route_counts is not None:
                 _bucket = "lossless_accept" if _is_pure_lossless else "lossless_then_lossy_accept"
                 route_counts[_bucket] = route_counts.get(_bucket, 0) + 1
+            if freeze_decision and self._frozen_verdict_recoverable(_ll_label, result.compressed):
+                self._record_frozen_verdict(content_key, True)
             return result.compressed, True
         if result.compression_ratio < min_ratio:
             # Tool ground truth must stay reversible: a lossy summarizer
@@ -4799,6 +5081,12 @@ class ContentRouter(Transform):
                 result.compression_ratio,
                 result.strategy_used.value,
             )
+            # Freeze "compress" so the cache-hit path above never re-applies a
+            # tighter min_ratio to this block.
+            if freeze_decision and self._frozen_verdict_recoverable(
+                result.strategy_used, result.compressed
+            ):
+                self._record_frozen_verdict(content_key, True)
             transforms_applied.append(f"router:{strategy_label}:{result.strategy_used.value}")
             if compressed_details is not None:
                 compressed_details.append(
@@ -4811,6 +5099,11 @@ class ContentRouter(Transform):
         self._cache.mark_skip(content_key)
         if route_counts is not None:
             route_counts[_noop_bucket] = route_counts.get(_noop_bucket, 0) + 1
+        # Caveat (1): only freeze a "skip" verdict when the ML model is actually
+        # ready. A passthrough caused purely by a still-loading ModernBERT must
+        # stay re-evaluable on later turns, so we do NOT freeze it here.
+        if freeze_decision and model_ready:
+            self._record_frozen_verdict(content_key, False)
         return None, False
 
     def _detect_analysis_intent(self, messages: list[dict[str, Any]]) -> bool:
