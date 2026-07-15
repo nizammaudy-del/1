@@ -22,6 +22,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlparse
 
+from headroom.providers.codex.runtime import (
+    decode_openai_bearer_payload,
+    resolve_codex_routing_headers,
+)
+from headroom.providers.registry import stream_usage_provider
 from headroom.proxy.helpers import (
     COMPRESSION_TIMEOUT_SECONDS,
     _headroom_bypass_enabled,
@@ -54,12 +59,6 @@ from headroom.providers.codex.responses import (
     codex_responses_websocket_url,
     has_chatgpt_account_header,
 )
-from headroom.providers.codex.runtime import (
-    decode_openai_bearer_payload,
-)
-from headroom.providers.codex.runtime import (
-    resolve_codex_routing_headers as _resolve_codex_routing_headers,
-)
 from headroom.providers.copilot import model_prefers_responses_api
 from headroom.proxy.auth_mode import (
     classify_auth_mode,
@@ -75,6 +74,9 @@ from headroom.proxy.passthrough import (
     custom_base_passthrough_telemetry as _custom_base_passthrough_telemetry,
 )
 from headroom.proxy.project_context import classify_project, set_current_project
+
+_decode_openai_bearer_payload = decode_openai_bearer_payload
+_resolve_codex_routing_headers = resolve_codex_routing_headers
 
 logger = logging.getLogger("headroom.proxy")
 
@@ -127,7 +129,6 @@ _OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions"
 _OPENAI_RESPONSES_PATH = "/responses"
 _OPENAI_ORIGINAL_PATH_HEADER = "x-headroom-original-path"
 _OPENAI_BASE_URL_HEADER = "x-headroom-base-url"
-_decode_openai_bearer_payload = decode_openai_bearer_payload
 
 
 def _normalize_openai_max_tokens(body: dict[str, Any]) -> None:
@@ -7881,7 +7882,7 @@ class OpenAIHandlerMixin:
             return Response(status_code=204)
         headers = await apply_copilot_api_auth(headers, url=url)
         request_id = await self._next_request_id()
-        stream_provider = "gemini" if provider == "vertex:google" else "anthropic"
+        stream_provider = stream_usage_provider(provider)
         stream_state: dict[str, Any] = {
             "input_tokens": None,
             "output_tokens": None,
