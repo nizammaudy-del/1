@@ -2452,6 +2452,8 @@ class AnthropicHandlerMixin:
                             optimization_latency,
                             pipeline_timing=pipeline_timing,
                             original_messages=original_client_messages,
+                            prefix_tracker=prefix_tracker,
+                            optimized_messages=optimized_messages,
                         )
                     else:
                         async with stage_timer.measure("upstream_connect"):
@@ -2535,6 +2537,44 @@ class AnthropicHandlerMixin:
                         )
                         uncached_input_tokens = max(
                             0, attempted_input_tokens - cr_tokens - cw_tokens
+                        )
+
+                        # Update prefix cache tracker for next turn. Mirrors the
+                        # direct-Anthropic-API branch below (~line 3011) — without
+                        # this, PrefixCacheTracker never sees a turn 2+ update on
+                        # the Bedrock path, extract_cache_stable_delta() always
+                        # returns None (no previous_original_messages), and cache
+                        # mode falls back to full unmodified passthrough every
+                        # turn instead of compressing the append-only delta.
+                        next_original_messages = copy.deepcopy(original_client_messages)
+                        next_forwarded_messages = copy.deepcopy(optimized_messages)
+                        assistant_message = self._assistant_message_from_response_json(
+                            backend_response.body
+                        )
+                        if assistant_message is not None:
+                            next_original_messages.append(copy.deepcopy(assistant_message))
+                            next_forwarded_messages.append(copy.deepcopy(assistant_message))
+                        if hasattr(prefix_tracker, "classify_cache_miss"):
+                            miss = prefix_tracker.classify_cache_miss(
+                                cache_read_tokens=cr_tokens,
+                                current_forwarded_messages=optimized_messages,
+                            )
+                            if miss.is_miss:
+                                logger.info(
+                                    f"[{request_id}] CACHE-MISS-ATTRIBUTION: reason={miss.reason} "
+                                    f"idle={miss.idle_seconds:.0f}s ttl={miss.cache_ttl_seconds}s "
+                                    f"expected_cached={miss.expected_cached_tokens:,} "
+                                    f"prefix_changed={miss.prefix_changed} "
+                                    f"ttl_exceeded={miss.ttl_exceeded}"
+                                )
+                                await self.metrics.record_cache_miss_attribution(
+                                    provider_name, miss.reason
+                                )
+                        prefix_tracker.update_from_response(
+                            cache_read_tokens=cr_tokens,
+                            cache_write_tokens=cw_tokens,
+                            messages=next_forwarded_messages,
+                            original_messages=next_original_messages,
                         )
 
                         await self._record_request_outcome(
