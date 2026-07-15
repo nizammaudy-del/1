@@ -317,11 +317,18 @@ headroom wrap aider
 
 # Cursor (starts the proxy and prints settings to paste into Cursor)
 headroom wrap cursor
+
+# Grok Build (updates ~/.grok/config.toml and starts the proxy)
+headroom wrap grok-build
 ```
 
 Cursor reads model endpoints from its settings UI, so `headroom wrap cursor`
 does not rewrite Cursor configuration or launch the app. After it starts the
 proxy, copy the printed base URL into Cursor's model settings.
+
+Grok Build reads model endpoints from `~/.grok/config.toml`. `headroom wrap grok-build`
+injects or updates `[model.grok-build] base_url` to point at the local proxy, then
+run `grok` from the same project directory. See [Grok Build Integration](/docs/grok-build).
 
 For environment-driven clients, you can also set the base URL manually:
 

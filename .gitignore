@@ -234,6 +234,9 @@ pyrightconfig.json
 \#*\#
 .\#*
 
+# Local git worktrees (isolated feature branches)
+.worktrees/
+
 # Local development configuration
 CLAUDE.md
 
