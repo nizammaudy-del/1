@@ -194,7 +194,7 @@ def download_tokensave(version: str | None = None) -> Path:
                         f"/{TOKENSAVE_BIN_NAME}"
                     ):
                         member.name = target_path.name
-                        tar.extract(member, TOKENSAVE_BIN_DIR)
+                        tar.extract(member, TOKENSAVE_BIN_DIR, filter="data")
                         break
                 else:
                     raise RuntimeError("tokensave binary not found in archive")

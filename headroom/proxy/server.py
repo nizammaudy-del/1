@@ -4037,7 +4037,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         telemetry = get_telemetry_collector()
         return telemetry.export_stats()
 
-    @app.post("/v1/telemetry/import")
+    @app.post("/v1/telemetry/import", dependencies=[Depends(_require_loopback)])
     async def telemetry_import(request: Request):
         """Import telemetry data from another source.
 

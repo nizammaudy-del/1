@@ -114,13 +114,17 @@ def download_lean_ctx(version: str | None = None) -> Path:
     except Exception as e:
         raise RuntimeError(f"Failed to download lean-ctx from {url}: {e}") from e
 
+    from headroom.binaries import verify_download_bytes
+
+    verify_download_bytes(data, url=url, name="lean-ctx")
+
     try:
         if ext == "tar.gz":
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
                 for member in tar.getmembers():
                     if member.name.endswith("/lean-ctx") or member.name == "lean-ctx":
                         member.name = target_path.name
-                        tar.extract(member, LEAN_CTX_BIN_DIR)
+                        tar.extract(member, LEAN_CTX_BIN_DIR, filter="data")
                         break
                 else:
                     raise RuntimeError("lean-ctx binary not found in archive")

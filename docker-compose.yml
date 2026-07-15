@@ -7,6 +7,11 @@ services:
     command: ["--host", "0.0.0.0"]
     environment:
       - HEADROOM_HOST=0.0.0.0
+      # The proxy binds 0.0.0.0 *inside* the container (required for Docker port
+      # forwarding); it is confined to host loopback by the published port below.
+      # A proxy token is required so the data plane is never open if you widen the
+      # bind. Generate one with: openssl rand -hex 32
+      - HEADROOM_PROXY_TOKEN=${HEADROOM_PROXY_TOKEN:?set HEADROOM_PROXY_TOKEN (see .env.example; e.g. openssl rand -hex 32)}
       - HOME=/home/nonroot
       # Keep all Headroom read/write state on the named volume below.
       - HEADROOM_WORKSPACE_DIR=/home/nonroot/.headroom
@@ -17,7 +22,9 @@ services:
       # CLI-filtering dashboard figures require the `rtk` binary inside this
       # container; it is not installed by this image. See docs/content/docs/docker-install.mdx.
     ports:
-      - "8787:8787"
+      # Bind to host loopback by default. To expose on the network set
+      # HEADROOM_BIND_ADDR=0.0.0.0 — only do so with HEADROOM_PROXY_TOKEN set.
+      - "${HEADROOM_BIND_ADDR:-127.0.0.1}:8787:8787"
     volumes:
       - headroom_workspace:/home/nonroot/.headroom
     healthcheck:
@@ -34,8 +41,10 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.17.1
     ports:
-      - "6333:6333"  # REST API
-      - "6334:6334"  # gRPC
+      # Loopback-only: Qdrant ships without auth. Services reach it in-cluster
+      # by name (http://qdrant:6333); the published ports are for local debugging.
+      - "127.0.0.1:6333:6333"  # REST API
+      - "127.0.0.1:6334:6334"  # gRPC
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
@@ -45,16 +54,17 @@ services:
   neo4j:
     image: neo4j:5.26
     ports:
-      - "7474:7474"  # HTTP (Browser)
-      - "7687:7687"  # Bolt
+      # Loopback-only to keep the graph store off the network.
+      - "127.0.0.1:7474:7474"  # HTTP (Browser)
+      - "127.0.0.1:7687:7687"  # Bolt
     volumes:
       - neo4j_data:/data
     environment:
-      - NEO4J_AUTH=${NEO4J_AUTH:-neo4j/devpassword}
+      # No default credential — must be supplied (see .env.example).
+      - NEO4J_AUTH=${NEO4J_AUTH:?set NEO4J_AUTH, e.g. neo4j/<strong-password>}
       - NEO4J_PLUGINS=["apoc"]
-      - NEO4J_apoc_export_file_enabled=true
-      - NEO4J_apoc_import_file_enabled=true
-      - NEO4J_apoc_import_file_use__neo4j__config=true
+      # APOC file import/export stays disabled (its Neo4j default) — it grants
+      # filesystem read/write via stored procedures. Do not enable unless required.
 
 volumes:
   headroom_workspace:    # persists dashboard savings/history, logs, config, memory state, session stats, and TOIN

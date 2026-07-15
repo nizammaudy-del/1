@@ -111,6 +111,10 @@ def download_rtk(version: str | None = None) -> Path:
     except Exception as e:
         raise RuntimeError(f"Failed to download rtk from {url}: {e}") from e
 
+    from headroom.binaries import verify_download_bytes
+
+    verify_download_bytes(data, url=url, name="rtk")
+
     # Extract binary
     try:
         if ext == "tar.gz":
@@ -119,7 +123,7 @@ def download_rtk(version: str | None = None) -> Path:
                 for member in tar.getmembers():
                     if member.name.endswith("/rtk") or member.name == "rtk":
                         member.name = target_path.name  # Flatten path
-                        tar.extract(member, RTK_BIN_DIR)
+                        tar.extract(member, RTK_BIN_DIR, filter="data")
                         break
                 else:
                     raise RuntimeError("rtk binary not found in archive")
