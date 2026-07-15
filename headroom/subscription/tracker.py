@@ -484,7 +484,7 @@ class SubscriptionTracker(QuotaTracker):
             return self._rtk_poll_owner
 
         try:
-            import fcntl
+            import fcntl as _fcntl
         except ImportError:
             # Platform without fcntl (Windows). Every worker polls; log
             # loudly so the operator knows the multi-worker invariant is
@@ -492,6 +492,7 @@ class SubscriptionTracker(QuotaTracker):
             logger.warning("event=subscription_rtk_poll_lock_unavailable platform=no-fcntl")
             self._rtk_poll_owner = True
             return True
+        fcntl: Any = _fcntl
 
         lock_path = self._rtk_poll_lock_path()
         fd = None
@@ -527,9 +528,9 @@ class SubscriptionTracker(QuotaTracker):
         if fd is None:
             return
         try:
-            import fcntl
+            import fcntl as _fcntl
 
-            fcntl_any = cast(Any, fcntl)
+            fcntl_any = cast(Any, _fcntl)
             fcntl_any.flock(fd, fcntl_any.LOCK_UN)
         except Exception:
             pass
