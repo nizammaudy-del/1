@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Features
+- **proxy:** `/health?probe=true` adds an opt-in multi-hop upstream probe.
+  `/health` normally makes no upstream call, so a `200` only means Headroom
+  itself is up. With `?probe=true`, it actively `HEAD`s the configured upstream
+  and adds an `upstreamProbe` block (`url`, `status`, `latencyMs`, `error`),
+  flipping the top-level `status` to `degraded` on failure so monitoring can
+  distinguish "Headroom is up" from "the whole chain is healthy". The default
+  path is unchanged and stays fast
+  ([#1618](https://github.com/headroomlabs-ai/headroom/issues/1618)).
 - **install:** `headroom install apply` now accepts `--code-aware/--no-code-aware`, `--intercept-tool-results`, `--protect-tool-results`, and `--bedrock-profile`, mirroring the equivalent flags already on `headroom proxy`. Previously the only way to run a persistent deployment with these settings was to hand-edit `manifest.json` after the fact, which silently reverts on the next `install apply`.
 - **install:** `headroom install apply --env KEY=VALUE` (repeatable) passes environment variables into supervised runners (macOS launchd, Linux systemd/cron, Windows services/tasks). These runners previously started with a bare environment and did not inherit the interactive shell's exports — e.g. a custom `HEADROOM_WORKSPACE_DIR` never reached the supervised process, so `headroom install agent run` looked for its manifest in the wrong location and failed outright even though `install apply` itself succeeded. `--env` values are merged into `DeploymentManifest.base_env` last, so they can override auto-derived defaults, and are threaded into the generated `run-headroom.sh`/`ensure-headroom.sh` (and Windows equivalents) as `export`/`$env:` lines before the `exec`.
 

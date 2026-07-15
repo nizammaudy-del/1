@@ -1572,9 +1572,7 @@ class AnthropicHandlerMixin:
                     # Split timeout from other errors: a timeout means the
                     # compression budget was too tight, not a code bug.
                     reason = (
-                        "timeout"
-                        if isinstance(e, (asyncio.TimeoutError, TimeoutError))
-                        else "error"
+                        "timeout" if isinstance(e, asyncio.TimeoutError | TimeoutError) else "error"
                     )
                     self.metrics.record_compression_failed(reason)
 
@@ -3661,7 +3659,7 @@ class AnthropicHandlerMixin:
                 # Same fail-open accounting as the single-message path: a
                 # timeout means the budget was too tight, not a code bug.
                 reason = (
-                    "timeout" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else "error"
+                    "timeout" if isinstance(e, asyncio.TimeoutError | TimeoutError) else "error"
                 )
                 self.metrics.record_compression_failed(reason)
                 # Pass through unchanged on failure
