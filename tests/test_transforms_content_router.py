@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -189,6 +190,44 @@ def test_mixed_content_section_splitting_and_json_extraction() -> None:
     assert json_block == '[\n{"id": 1}\n]'
     assert end_idx == 2
     assert _extract_json_block(["{", '"a": 1'], 0) == (None, 0)
+
+
+def test_short_instruction_with_embedded_json_compresses_without_kompress() -> None:
+    rows = [
+        {
+            "id": i,
+            "source": "opencode",
+            "status": "ok",
+            "message": "routine event with repeated fields",
+            "needle": "CRITICAL_NEEDLE_42" if i == 17 else "ordinary",
+        }
+        for i in range(40)
+    ]
+    content = "\n".join(
+        [
+            "Compress this OpenCode context. Preserve critical values.",
+            json.dumps(rows, indent=2),
+            "Return a concise answer.",
+        ]
+    )
+    router = ContentRouter(
+        ContentRouterConfig(
+            enable_kompress=False,
+            skip_user_messages=False,
+        )
+    )
+
+    assert is_mixed_content(content) is True
+    assert router._determine_strategy(content) is CompressionStrategy.MIXED
+
+    result = router.compress(content, context="CRITICAL_NEEDLE_42 opencode")
+
+    assert result.strategy_used is CompressionStrategy.MIXED
+    assert result.tokens_saved > 0
+    assert "CRITICAL_NEEDLE_42" in result.compressed
+    assert any(
+        decision.strategy is CompressionStrategy.SMART_CRUSHER for decision in result.routing_log
+    )
 
 
 def test_extract_json_block_ignores_brackets_inside_strings() -> None:
