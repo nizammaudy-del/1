@@ -2678,10 +2678,19 @@ class OpenAIHandlerMixin:
         optimized_messages = messages
         optimized_tokens = original_tokens
 
-        # Get prefix cache tracker for this session
-        openai_session_id = self.session_tracker_store.compute_session_id(request, model, messages)
-        openai_prefix_tracker = self.session_tracker_store.get_or_create(
-            openai_session_id, "openai"
+        # Get prefix cache tracker for this session, resolved by conversation
+        # lineage within the session id (#2085) so concurrent conversations
+        # sharing a fallback id (same model + system prompt) do not thrash one
+        # tracker's frozen-prefix state. Both the id and the lineage derive
+        # from the SAME original client bytes — pre image compression and
+        # pre_compress hook, both of which may rewrite history bytes
+        # differently turn-to-turn (a turn-dependent rewrite of the leading
+        # system text would rotate the id mid-conversation).
+        openai_session_id = self.session_tracker_store.compute_session_id(
+            request, model, original_client_messages
+        )
+        openai_prefix_tracker = self.session_tracker_store.resolve_tracker(
+            openai_session_id, "openai", messages=original_client_messages
         )
 
         # PR-A6 (P5-50, preps P0-6): session-sticky `OpenAI-Beta` merge.

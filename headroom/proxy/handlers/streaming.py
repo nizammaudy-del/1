@@ -70,7 +70,12 @@ class StreamingMixin:
     def _get_session_key(body: dict, session_header: str | None = None) -> str:
         """Return session identity from an explicit header or a body-derived hash.
 
-        Fallback mirrors prefix_tracker.compute_session_id: md5(model:system[:500]).
+        The fallback is a coarse, self-contained hash (md5 of
+        ``model:system[:500]``) used ONLY to key the mid-turn steering state
+        below. It is NOT the same derivation as
+        ``prefix_tracker.compute_session_id`` (which json-encodes the full
+        leading system-text run) — do not key cross-subsystem state on the
+        assumption that the two fallbacks agree.
         """
         if session_header:
             return session_header
