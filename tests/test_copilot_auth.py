@@ -55,6 +55,21 @@ def test_read_cached_oauth_token_prefers_headroom_login(
     assert copilot_auth.read_cached_oauth_token() == "gho-headroom"
 
 
+def test_default_oauth_domain_uses_enterprise_url_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "https://ghe.example.com")
+
+    assert copilot_auth.default_oauth_domain() == "ghe.example.com"
+
+
+def test_default_oauth_domain_falls_back_to_github_com_when_env_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_URL", "   ")
+    monkeypatch.setenv("GITHUB_COPILOT_ENTERPRISE_DOMAIN", "")
+
+    assert copilot_auth.default_oauth_domain() == "github.com"
+
+
 def test_read_cached_oauth_token_prefers_copilot_cli_before_generic_github_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

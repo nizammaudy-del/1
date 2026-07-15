@@ -49,7 +49,7 @@ Headroom compresses everything your AI agent reads — tool outputs, logs, RAG c
 
 - **Library** — `compress(messages)` in Python or TypeScript, inline in any app
 - **Proxy** — `headroom proxy --port 8787`, zero code changes, any language
-- **Agent wrap** — `headroom wrap claude|codex|copilot|cursor|aider|opencode|cline|continue|goose|openhands|openclaw|vibe` in one command; undo with `headroom unwrap <tool>`
+- **Agent wrap** — `headroom wrap claude|codex|copilot|cursor|aider|opencode|cline|continue|goose|openhands|openclaw|vibe|zcode` in one command; undo with `headroom unwrap <tool>`
 - **MCP server** — `headroom_compress`, `headroom_retrieve`, `headroom_stats` for any MCP client
 - **Cross-agent memory** — shared store across Claude, Codex, Gemini, auto-dedup
 - **`headroom learn`** — mines failed sessions, writes corrections to `CLAUDE.local.md` (default, gitignored) or `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`
@@ -237,9 +237,10 @@ shows an **Output Tokens Saved** card next to input compression, labelled
 | OpenHands    | ✅              | starts proxy + launches          |
 | Mistral Vibe | ✅              | starts proxy + launches          |
 | Cortex Code  | Library only    | 60–65% savings (library mode; no `wrap`) |
+| ZCode        | ✅              | starts proxy and prints base URLs for ZCode settings |
 
 Any OpenAI-compatible client works via `headroom proxy`. MCP-native: `headroom mcp install`.
-Undo durable wrapping with `headroom unwrap <tool>` (supports: `claude`, `copilot`, `codex`, `opencode`, `openclaw`).
+Undo durable wrapping with `headroom unwrap <tool>` (supports: `claude`, `copilot`, `codex`, `opencode`, `openclaw`, `zcode`).
 Registry authors can use the canonical [`server.json`](server.json) in the repo root instead of reconstructing the `headroom mcp serve` contract from prose.
 
 ### GitHub Copilot CLI subscription mode
@@ -258,12 +259,17 @@ This avoids relying on generic GitHub or Copilot CLI tokens that can read
 Copilot account metadata but may still be rejected by Copilot's token-exchange
 endpoint.
 
-For GitHub Enterprise Server or custom-domain Copilot deployments, set the
-deployment domain before launching:
+For GitHub Enterprise Server or custom-domain Copilot deployments, set one of
+these before launching:
 
 ```bash
 export GITHUB_COPILOT_ENTERPRISE_DOMAIN=ghe.example.com
+# or
+export GITHUB_COPILOT_ENTERPRISE_URL=https://ghe.example.com
 ```
+
+Both variables are supported. If both are set,
+`GITHUB_COPILOT_ENTERPRISE_URL` takes precedence.
 
 For GitHub.com Enterprise Cloud URLs such as
 `github.com/enterprises/your-enterprise`, do not set an enterprise-domain
