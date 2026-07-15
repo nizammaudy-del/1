@@ -64,7 +64,9 @@ from headroom.proxy.body_forwarding import (
 from headroom.proxy.body_forwarding import (
     prepare_outbound_body_bytes as prepare_outbound_body_bytes,  # noqa: F401 - compatibility export
 )
-from headroom.proxy.body_forwarding import serialize_body_canonical
+from headroom.proxy.body_forwarding import (
+    serialize_body_canonical as serialize_body_canonical,  # noqa: F401 - compatibility export
+)
 from headroom.proxy.ccr_golden_policy import (
     create_fresh_ccr_tool_definition,
     replay_golden_ccr_tool_definition,
@@ -87,6 +89,9 @@ from headroom.proxy.internal_header_policy import (
 from headroom.proxy.memory_golden_policy import (
     replay_golden_memory_tool_definition,
     serialize_memory_tool_definition_canonical,
+)
+from headroom.proxy.tool_definition_serialization import (
+    serialize_tool_definition_canonical as _serialize_tool_definition_canonical,
 )
 from headroom.proxy.tool_injection_config import (
     ToolInjectionStickyMode,
@@ -1828,7 +1833,7 @@ def serialize_tool_definition_canonical(tool_definition: dict[str, Any]) -> byte
     follow-up turn must inject byte-equal output to keep the prefix
     cache hot.
     """
-    return serialize_body_canonical(tool_definition)
+    return _serialize_tool_definition_canonical(tool_definition)
 
 
 class SessionToolTracker(_SessionToolTracker):
