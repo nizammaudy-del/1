@@ -627,12 +627,45 @@ class HeadroomConfig:
     # Env var HEADROOM_INTERCEPT_ENABLED=1 also enables (for CLI `--intercept-tool-results`).
     intercept_tool_results: bool = False
 
+    # Minimum input token count for compression to kick in. Short inputs
+    # (< threshold) expand rather than shrink because transform overhead
+    # exceeds the savings. Set to 0 to disable the guard.
+    # Env var: HEADROOM_MIN_INPUT_TOKENS (int, default 100).
+    min_input_tokens: int = 100
+
     # Debugging - opt-in diff artifact generation
     generate_diff_artifact: bool = False  # Enable to get detailed transform diffs
 
     # Canonical pipeline lifecycle extensions
     pipeline_extensions: list[Any] = field(default_factory=list)
     discover_pipeline_extensions: bool = True
+
+    def __post_init__(self, content_router_enabled: bool | None) -> None:
+        """Validate configuration fields after initialization.
+
+        Args:
+            content_router_enabled: Deprecated InitVar field (ignored, kept for
+                backward compatibility with dataclass __init__).
+
+        Production: negative values are clamped to 0 (guard disabled) with a
+        warning, and min_input_tokens=0 logs an informational note so operators
+        know the guard is off. No exception is raised — bad config degrades
+        gracefully.
+        """
+        import logging as _logging
+
+        _log = _logging.getLogger(__name__)
+        if self.min_input_tokens < 0:
+            _log.warning(
+                "min_input_tokens=%d is negative; clamping to 0 (guard disabled)",
+                self.min_input_tokens,
+            )
+            self.min_input_tokens = 0
+        elif self.min_input_tokens == 0:
+            _log.info(
+                "min_input_tokens=0: compression guard is disabled; "
+                "all inputs will be compressed regardless of size"
+            )
 
     def get_context_limit(self, model: str) -> int | None:
         """
