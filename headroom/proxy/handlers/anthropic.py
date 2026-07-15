@@ -2094,6 +2094,7 @@ class AnthropicHandlerMixin:
                                         decision="injected_live_zone_tail",
                                         bytes_injected=len(memory_context),
                                         query=user_query,
+                                        tags=tags,
                                     )
                                 else:
                                     log_memory_injection(

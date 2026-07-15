@@ -3059,6 +3059,7 @@ class OpenAIHandlerMixin:
                                     decision="injected_live_zone_tail_chat",
                                     bytes_injected=bytes_appended,
                                     query=None,
+                                    tags=tags,
                                 )
                                 logger.info(
                                     f"[{request_id}] Memory: Injected {bytes_appended} chars "
@@ -4203,6 +4204,7 @@ class OpenAIHandlerMixin:
                                     decision="injected_live_zone_tail_string",
                                     bytes_injected=len(memory_context),
                                     query=user_query,
+                                    tags=tags,
                                 )
                             elif isinstance(current_input, list):
                                 new_input, bytes_appended = append_text_to_latest_user_input_item(
@@ -4217,6 +4219,7 @@ class OpenAIHandlerMixin:
                                         decision="injected_live_zone_tail",
                                         bytes_injected=bytes_appended,
                                         query=user_query,
+                                        tags=tags,
                                     )
                                 else:
                                     log_memory_injection(
@@ -5541,7 +5544,7 @@ class OpenAIHandlerMixin:
 
             memory_user_id: str | None = None
             memory_request_ctx = None
-            from headroom.proxy.helpers import get_memory_injection_mode
+            from headroom.proxy.helpers import get_memory_injection_mode, log_memory_injection
             from headroom.proxy.memory_decision import MemoryDecision
             from headroom.proxy.memory_query import MemoryQuery
 
@@ -5655,6 +5658,14 @@ class OpenAIHandlerMixin:
                                 logger.info(
                                     f"[{request_id}] WS Memory: Injected {len(memory_context)} chars "
                                     f"into input tail (string-shaped input)"
+                                )
+                                log_memory_injection(
+                                    request_id=request_id,
+                                    session_id=session_id,
+                                    decision="injected_live_zone_tail_ws",
+                                    bytes_injected=len(memory_context),
+                                    query=None,
+                                    tags=ws_tags,
                                 )
                             else:
                                 # List-shaped WS input is owned by the

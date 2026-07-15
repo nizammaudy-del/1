@@ -353,6 +353,7 @@ def log_memory_injection(
     decision: str,
     bytes_injected: int,
     query: str | None = None,
+    tags: dict[str, str] | None = None,
 ) -> None:
     """Emit a structured log line for every memory-context routing decision.
 
@@ -360,6 +361,8 @@ def log_memory_injection(
     Never log raw query content or Authorization header — only a stable
     hash of the query.
     """
+    if tags is not None and bytes_injected > 0:
+        tags["memory_injected"] = "true"
     query_hash = hash_query_for_log(query) if query else ""
     logger.info(
         "event=memory_injection request_id=%s session_id=%s decision=%s "

@@ -336,7 +336,7 @@ class GeminiHandlerMixin:
         # Pre-PR-this Gemini's memory site silently ignored
         # `x-headroom-bypass: true`, mutating request bytes under the
         # user's "don't touch my bytes" signal.
-        from headroom.proxy.helpers import get_memory_injection_mode
+        from headroom.proxy.helpers import get_memory_injection_mode, log_memory_injection
         from headroom.proxy.memory_decision import MemoryDecision
         from headroom.proxy.memory_query import MemoryQuery
 
@@ -573,6 +573,14 @@ class GeminiHandlerMixin:
                             logger.info(
                                 f"[{request_id}] Memory: Injected {bytes_appended} chars "
                                 f"into latest user message tail for user {memory_user_id} (gemini)"
+                            )
+                            log_memory_injection(
+                                request_id=request_id,
+                                session_id=None,
+                                decision="injected_live_zone_tail_gemini",
+                                bytes_injected=bytes_appended,
+                                query=None,
+                                tags=tags,
                             )
                         else:
                             logger.debug(
