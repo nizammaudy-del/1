@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from headroom._subprocess import run
+from headroom.ignore import IgnorePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,10 @@ class CodeGraphWatcher:
         project_dir: Root directory to watch.
         debounce_seconds: Wait this long after last change before reindexing.
         cbm_binary: Path to codebase-memory-mcp binary. Auto-detected if None.
+        ignore_config: Optional ``headroom.config.IgnoreConfig`` (or
+            equivalent object exposing ``paths``/``memory``/... list-of-str
+            attributes) merged with any ``.headroomignore`` file at
+            ``project_dir`` for ``ignore.memory`` enforcement (issue #1150).
     """
 
     def __init__(
@@ -111,10 +116,12 @@ class CodeGraphWatcher:
         project_dir: str | Path,
         debounce_seconds: float = 2.0,
         cbm_binary: str | None = None,
+        ignore_config: object | None = None,
     ) -> None:
         self.project_dir = str(project_dir)
         self.debounce_seconds = debounce_seconds
         self.cbm_binary: str | None = None
+        self._ignore_policy = IgnorePolicy.load(project_dir, ignore_config)
         if cbm_binary:
             self.cbm_binary = cbm_binary
         else:
@@ -165,6 +172,12 @@ class CodeGraphWatcher:
 
                 # Skip temporary/swap files
                 if path.name.startswith(".") or path.name.endswith("~"):
+                    return
+
+                # Skip paths ignored for indexing/memory (.headroomignore /
+                # ignore.memory config — e.g. generated agent-harness files
+                # projected from a canonical source; issue #1150).
+                if self._watcher._ignore_policy.is_ignored(path, "memory"):
                     return
 
                 self._watcher._schedule_reindex()

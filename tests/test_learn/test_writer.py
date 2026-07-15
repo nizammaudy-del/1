@@ -257,6 +257,88 @@ def _legacy_block(section: str, body: str) -> str:
     )
 
 
+class TestIgnorePolicyEnforcement:
+    """Writers must not mutate paths ignored for the 'mutate' behavior (#1150)."""
+
+    def test_headroomignore_blocks_context_file_write(self, tmp_path):
+        proj = _project(tmp_path)
+        (proj.project_path / ".headroomignore").write_text("CLAUDE.local.md\n")
+        writer = ClaudeCodeWriter()
+        recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
+
+        result = writer.write(recs, proj, dry_run=False)
+
+        claude_local = proj.project_path / "CLAUDE.local.md"
+        assert not claude_local.exists()
+        assert result.files_written == []
+        assert any("ignored for mutation" in w for w in result.warnings)
+
+    def test_headroomignore_blocks_memory_file_write(self, tmp_path):
+        proj = _project(tmp_path)
+        writer = ClaudeCodeWriter()
+        memory_path = writer._resolve_memory_path(proj)
+        # MEMORY.md lives under data_path (outside project_path in this
+        # fixture); a bare-name rule still matches it by basename.
+        (proj.project_path / ".headroomignore").write_text("MEMORY.md\n")
+        recs = [_rec(RecommendationTarget.MEMORY_FILE, "Preference", "- Use pytest")]
+
+        result = writer.write(recs, proj, dry_run=False)
+
+        assert not memory_path.exists()
+        assert any("ignored for mutation" in w for w in result.warnings)
+
+    def test_unrelated_file_still_written_when_ignore_present(self, tmp_path):
+        proj = _project(tmp_path)
+        (proj.project_path / ".headroomignore").write_text("AGENTS.md\n")
+        writer = ClaudeCodeWriter()
+        recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
+
+        result = writer.write(recs, proj, dry_run=False)
+
+        claude_local = proj.project_path / "CLAUDE.local.md"
+        assert claude_local.exists()
+        assert result.warnings == []
+
+    def test_config_ignore_mutate_blocks_context_file_write(self, tmp_path):
+        """HeadroomConfig.ignore.mutate — not just .headroomignore — is honored.
+
+        Exercises the real `ClaudeCodeWriter.write(..., config=...)` production
+        path (not just `IgnorePolicy` directly), per issue review: config-driven
+        ignore.mutate must actually stop a writer mutation.
+        """
+        from headroom.config import HeadroomConfig, IgnoreConfig
+
+        proj = _project(tmp_path)
+        writer = ClaudeCodeWriter()
+        recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
+        config = HeadroomConfig(ignore=IgnoreConfig(mutate=["CLAUDE.local.md"]))
+
+        result = writer.write(recs, proj, dry_run=False, config=config)
+
+        claude_local = proj.project_path / "CLAUDE.local.md"
+        assert not claude_local.exists()
+        assert result.files_written == []
+        assert any("ignored for mutation" in w for w in result.warnings)
+
+    def test_config_ignore_mutate_not_applied_without_passing_config(self, tmp_path):
+        """Backward compatibility: omitting `config` behaves exactly as before."""
+        from headroom.config import HeadroomConfig, IgnoreConfig
+
+        proj = _project(tmp_path)
+        writer = ClaudeCodeWriter()
+        recs = [_rec(RecommendationTarget.CONTEXT_FILE, "Environment", "- Use uv")]
+        # A HeadroomConfig with a matching ignore.mutate rule exists, but the
+        # caller doesn't pass it in — matches today's `headroom learn` CLI,
+        # which has no config-file loader.
+        HeadroomConfig(ignore=IgnoreConfig(mutate=["CLAUDE.local.md"]))
+
+        result = writer.write(recs, proj, dry_run=False)
+
+        claude_local = proj.project_path / "CLAUDE.local.md"
+        assert claude_local.exists()
+        assert result.warnings == []
+
+
 class TestContextTargetOverride:
     """--target / set_context_target controls where CONTEXT_FILE recs are written."""
 
