@@ -31,7 +31,6 @@ import tempfile
 import time
 import urllib.parse
 from collections.abc import Callable
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,6 +43,11 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import click
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised only on Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from headroom import fsutil
 from headroom._version import __version__ as _HEADROOM_VERSION
@@ -1556,32 +1560,135 @@ def _codex_home_dir() -> Path:
     return Path.home() / ".codex"
 
 
-@contextmanager
-def _codex_session_home_overlay() -> Any:
-    """Seed a temporary Codex home from the active home and point the process at it."""
-    source_home = _codex_home_dir()
-    original_codex_home = os.environ.get("CODEX_HOME")
+def _codex_profile_from_args(codex_args: tuple[str, ...]) -> str | None:
+    """Return the profile selected by Codex CLI arguments, if any."""
+    for index, argument in enumerate(codex_args):
+        if argument.startswith("--profile="):
+            return argument.partition("=")[2]
+        if argument in {"--profile", "-p"} and index + 1 < len(codex_args):
+            return codex_args[index + 1]
+    return None
 
-    with tempfile.TemporaryDirectory(prefix="headroom-codex-home-") as tmp_dir:
-        session_home = Path(tmp_dir)
-        if source_home.exists():
-            shutil.copytree(
-                source_home,
-                session_home,
-                dirs_exist_ok=True,
-                ignore=lambda directory, names: [
-                    name for name in names if (Path(directory) / name).is_socket()
-                ],
+
+def _codex_model_provider_from_args(codex_args: tuple[str, ...]) -> str | None:
+    """Return the last top-level model_provider CLI override, if present."""
+    provider: str | None = None
+    for index, argument in enumerate(codex_args):
+        override: str | None = None
+        if argument.startswith("--config=") or argument.startswith("-c="):
+            override = argument.partition("=")[2]
+        elif argument in {"--config", "-c"} and index + 1 < len(codex_args):
+            override = codex_args[index + 1]
+        if override is None:
+            continue
+        key, separator, value = override.partition("=")
+        if separator and key.strip() == "model_provider":
+            provider = value.strip().strip("\"'")
+    return provider
+
+
+def _codex_toml_value(value: Any) -> str:
+    """Serialize values accepted by Codex's TOML command-line overrides."""
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    raise TypeError(f"unsupported Codex config override: {type(value).__name__}")
+
+
+def _codex_dotted_key(*parts: str) -> str:
+    return ".".join(json.dumps(part) for part in parts)
+
+
+def _codex_session_launch_settings(
+    *, port: int, codex_args: tuple[str, ...], environ: dict[str, str]
+) -> tuple[tuple[str, ...], dict[str, str], list[str]]:
+    """Build process-local routing while preserving the selected provider id."""
+    config_file, _ = _codex_config_paths()
+    try:
+        config = tomllib.loads(_read_text(config_file)) if config_file.exists() else {}
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise click.ClickException(
+            f"could not read Codex config for session routing: {exc}"
+        ) from exc
+
+    profile_name = _codex_profile_from_args(codex_args)
+    profiles = config.get("profiles", {})
+    profile = profiles.get(profile_name, {}) if profile_name and isinstance(profiles, dict) else {}
+    provider = _codex_model_provider_from_args(codex_args) or (
+        profile.get("model_provider")
+        if isinstance(profile, dict) and profile.get("model_provider")
+        else config.get("model_provider", "openai")
+    )
+    provider = str(provider)
+
+    project = _project_name_from_cwd()
+    proxy_url = _with_project_prefix(f"http://127.0.0.1:{port}/v1", project)
+    overrides: list[str] = []
+    env = dict(environ)
+    display = [f"OPENAI_BASE_URL={proxy_url}"]
+    env["OPENAI_BASE_URL"] = proxy_url
+
+    if provider == "openai":
+        overrides.append(f"openai_base_url={_codex_toml_value(proxy_url)}")
+    else:
+        providers = config.get("model_providers", {})
+        provider_config = providers.get(provider) if isinstance(providers, dict) else None
+        if not isinstance(provider_config, dict):
+            raise click.ClickException(
+                f"Codex provider {provider!r} cannot be redirected without changing its identity"
             )
+        upstream = provider_config.get("base_url")
+        if not isinstance(upstream, str) or not upstream.strip():
+            raise click.ClickException(
+                f"Codex custom provider {provider!r} has no upstream base_url"
+            )
+        prefix = ("model_providers", provider)
+        overrides.extend(
+            (
+                f"{_codex_dotted_key(*prefix, 'base_url')}={_codex_toml_value(proxy_url)}",
+                f"{_codex_dotted_key(*prefix, 'supports_websockets')}=true",
+            )
+        )
+        env[_UPSTREAM_BASE_URL_ENV_VAR] = upstream.rstrip("/")
+        display.append(f"{_UPSTREAM_BASE_URL_ENV_VAR}={upstream.rstrip('/')}")
+        overrides.append(
+            f"{_codex_dotted_key(*prefix, 'env_http_headers', _UPSTREAM_BASE_URL_HEADER_NAME)}="
+            f"{_codex_toml_value(_UPSTREAM_BASE_URL_ENV_VAR)}"
+        )
 
-        os.environ["CODEX_HOME"] = str(session_home)
-        try:
-            yield session_home
-        finally:
-            if original_codex_home is None:
-                os.environ.pop("CODEX_HOME", None)
-            else:
-                os.environ["CODEX_HOME"] = original_codex_home
+    if project and "HEADROOM_PROJECT" not in env:
+        env["HEADROOM_PROJECT"] = project
+    config_args = tuple(item for override in overrides for item in ("--config", override))
+    return (*config_args, *codex_args), env, display
+
+
+def _offer_dangling_codex_recovery(active_home: Path) -> None:
+    """Offer recovery before an interactive wrap creates more Codex state."""
+    if not sys.stdin.isatty():
+        return
+    from headroom.providers.codex.recovery import (
+        discover_dangling_homes,
+        recover_codex_home,
+    )
+
+    candidates = [path for path in discover_dangling_homes() if path != active_home]
+    if not candidates:
+        return
+    click.echo("\nFound Codex state left by an earlier Headroom temporary home:")
+    for candidate in candidates:
+        click.echo(f"  {candidate}")
+    if not click.confirm(
+        "Back up both homes and recover this state before launching Codex?",
+        default=True,
+    ):
+        click.echo("Skipped recovery. Run `headroom recover codex` to recover it later.")
+        return
+    for candidate in candidates:
+        report = recover_codex_home(source=candidate, target=active_home)
+        click.echo(f"Recovered Codex state. Backup retained at {report.backup_dir}")
 
 
 def _codex_config_paths() -> tuple[Path, Path]:
@@ -3592,6 +3699,11 @@ def _launch_tool(
     copilot_api_token: str | None = None,
     copilot_refresh_oauth_token: str | None = None,
     copilot_api_token_expires_at: float | None = None,
+    configure_launch: Callable[
+        [int, tuple, dict[str, str], list[str]],
+        tuple[tuple, dict[str, str], list[str]],
+    ]
+    | None = None,
 ) -> None:
     """Common logic: start proxy, launch tool, clean up."""
     proxy_holder: list[subprocess.Popen | None] = [None]
@@ -3634,6 +3746,9 @@ def _launch_tool(
         if actual_port != port:
             for k, v in dict(env).items():
                 env[k] = v.replace(f"127.0.0.1:{port}", f"127.0.0.1:{actual_port}")
+
+        if configure_launch is not None:
+            args, env, env_vars_display = configure_launch(actual_port, args, env, env_vars_display)
 
         if code_graph:
             _setup_code_graph(verbose=False)
@@ -4741,23 +4856,18 @@ def _prepare_codex_wrap_state(
     memory: bool,
     verbose: bool,
     rtk_home: Path | None = None,
-) -> str | None:
-    """Prepare the active Codex home for a wrap or prepare-only invocation.
-
-    Returns the custom upstream base URL detected in the user's Codex config
-    (or None). Callers that launch Codex must export this into
-    ``HEADROOM_CODEX_UPSTREAM_BASE_URL`` so the injected provider's
-    ``X-Headroom-Base-Url`` header carries it; otherwise the proxy falls back to
-    ``api.openai.com`` and the user's gateway key is sent to the wrong host.
-    """
+    persistent_routing: bool = True,
+) -> None:
+    """Prepare the active Codex home for a wrap or prepare-only invocation."""
     # Snapshot Codex config.toml BEFORE any wrap-time mutation so
     # `headroom unwrap codex` can restore the user's pre-wrap state
     # byte-for-byte. The snapshot is a no-op if the backup already exists
     # or if the file already has Headroom markers, so this is safe to
     # call repeatedly. Crucially this must run before MCP install, which
     # writes its marker block to the same file.
-    _codex_config_file, _codex_backup_file = _codex_config_paths()
-    _snapshot_codex_config_if_unwrapped(_codex_config_file, _codex_backup_file)
+    if persistent_routing:
+        _codex_config_file, _codex_backup_file = _codex_config_paths()
+        _snapshot_codex_config_if_unwrapped(_codex_config_file, _codex_backup_file)
 
     # Setup CLI context tool for Codex.
     if not no_rtk:
@@ -4844,10 +4954,10 @@ def _prepare_codex_wrap_state(
     # transport unless a custom provider declares supports_websockets = true.
     # NOTE: this must run BEFORE _inject_memory_mcp_config because it rewrites
     # the config file.  Re-inject MCP config after if memory is enabled.
-    custom_upstream = _inject_codex_provider_config(port)
-    if memory:
-        _inject_memory_mcp_config(os.environ.get("USER", os.environ.get("USERNAME", "default")))
-    return custom_upstream
+    if persistent_routing:
+        _inject_codex_provider_config(port)
+        if memory:
+            _inject_memory_mcp_config(os.environ.get("USER", os.environ.get("USERNAME", "default")))
 
 
 def _run_codex_wrap(
@@ -4869,7 +4979,7 @@ def _run_codex_wrap(
     prepare_only: bool,
     codex_args: tuple,
 ) -> None:
-    """Execute the Codex wrap flow with the session overlay when launching."""
+    """Execute the Codex wrap flow against the durable Codex home."""
     if prepare_only:
         _prepare_codex_wrap_state(
             port=port,
@@ -4890,55 +5000,53 @@ def _run_codex_wrap(
         raise SystemExit(1)
 
     active_codex_home = _codex_home_dir()
-    with _codex_session_home_overlay() as session_codex_home:
-        custom_upstream = _prepare_codex_wrap_state(
-            port=port,
-            no_rtk=no_rtk,
-            no_mcp=no_mcp,
-            no_tokensave=no_tokensave,
-            serena=serena,
-            no_serena=no_serena,
-            memory=memory,
-            verbose=verbose,
-            rtk_home=active_codex_home,
+    _offer_dangling_codex_recovery(active_codex_home)
+    _prepare_codex_wrap_state(
+        port=port,
+        no_rtk=no_rtk,
+        no_mcp=no_mcp,
+        no_tokensave=no_tokensave,
+        serena=serena,
+        no_serena=no_serena,
+        memory=memory,
+        verbose=verbose,
+        rtk_home=active_codex_home,
+        persistent_routing=False,
+    )
+
+    env, env_vars_display = _build_codex_launch_env(port, os.environ)
+    env["CODEX_HOME"] = str(active_codex_home)
+
+    def configure_codex_launch(
+        actual_port: int,
+        current_args: tuple,
+        current_env: dict[str, str],
+        current_display: list[str],
+    ) -> tuple[tuple, dict[str, str], list[str]]:
+        del current_display
+        return _codex_session_launch_settings(
+            port=actual_port,
+            codex_args=current_args,
+            environ=current_env,
         )
 
-        env, env_vars_display = _build_codex_launch_env(port, os.environ)
-
-        # Export the detected custom upstream so Codex actually emits the
-        # X-Headroom-Base-Url header the injected provider declares. Without
-        # this the proxy falls back to api.openai.com and a user with an
-        # OpenAI-compatible gateway in ~/.codex/config.toml has their gateway
-        # key sent to OpenAI (regression of #1614). A user-set value wins.
-        if custom_upstream and _UPSTREAM_BASE_URL_ENV_VAR not in env:
-            env[_UPSTREAM_BASE_URL_ENV_VAR] = custom_upstream
-            env_vars_display.append(f"{_UPSTREAM_BASE_URL_ENV_VAR}={custom_upstream}")
-
-        # Per-project savings attribution: the injected provider config maps the
-        # X-Headroom-Project header to HEADROOM_PROJECT via env_http_headers, so
-        # Codex sends it only when this var is set.  A user-set value wins.
-        _codex_project = _project_name_from_cwd()
-        if _codex_project and "HEADROOM_PROJECT" not in env:
-            env["HEADROOM_PROJECT"] = _codex_project
-
-        env["CODEX_HOME"] = str(session_codex_home)
-
-        _launch_tool(
-            binary=codex_bin,
-            args=codex_args,
-            env=env,
-            port=port,
-            no_proxy=no_proxy,
-            tool_label="CODEX",
-            env_vars_display=env_vars_display,
-            learn=learn,
-            memory=memory,
-            agent_type="codex",
-            code_graph=code_graph,
-            backend=backend,
-            anyllm_provider=anyllm_provider,
-            region=region,
-        )
+    _launch_tool(
+        binary=codex_bin,
+        args=codex_args,
+        env=env,
+        port=port,
+        no_proxy=no_proxy,
+        tool_label="CODEX",
+        env_vars_display=env_vars_display,
+        learn=learn,
+        memory=memory,
+        agent_type="codex",
+        code_graph=code_graph,
+        backend=backend,
+        anyllm_provider=anyllm_provider,
+        region=region,
+        configure_launch=configure_codex_launch,
+    )
 
 
 @wrap.command(context_settings={"ignore_unknown_options": True})
