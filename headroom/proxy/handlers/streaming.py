@@ -845,12 +845,17 @@ class StreamingMixin:
                     stream_state[key] = late_usage[key]
 
         output_tokens = stream_state["output_tokens"]
+        output_tokens_source = "provider"
         if output_tokens is None:
             output_tokens = stream_state["total_bytes"] // 40
+            output_tokens_source = "estimated_bytes"
             logger.warning(
                 f"[{request_id}] Could not parse output_tokens from SSE, "
                 f"estimating {output_tokens} from {stream_state['total_bytes']} bytes"
             )
+
+        outcome_tags = dict(tags or {})
+        outcome_tags["output_tokens_source"] = output_tokens_source
 
         provider_input_tokens = stream_state.get("input_tokens")
         effective_optimized_tokens = optimized_tokens
@@ -940,7 +945,7 @@ class StreamingMixin:
             transforms_applied=transforms_applied,
             total_latency_ms=total_latency,
             overhead_ms=optimization_latency,
-            tags=tags,
+            tags=outcome_tags,
             client=client,
             log_full_messages=getattr(self.config, "log_full_messages", False),
             cache_read_tokens=cache_read_tokens,
