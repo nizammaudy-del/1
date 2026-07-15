@@ -488,20 +488,26 @@ class LocalBackend:
                 new_memory_ids = related_memory_ids - seen_memory_ids
                 for mem_id in new_memory_ids:
                     memory = await self._hierarchical_memory.get(mem_id)
-                    if memory and memory.user_id == user_id:
-                        # Filter by session_id if specified (security: prevent session leakage)
-                        if session_id is not None and memory.session_id != session_id:
-                            continue
-                        # Add with lower score since it's from graph expansion
-                        results.append(
-                            MemorySearchResult(
-                                memory=memory,
-                                score=0.5,  # Default score for graph-expanded results
-                                related_entities=list(memory.entity_refs),
-                                related_memories=[],
-                            )
+                    if (
+                        memory is None
+                        or memory.user_id != user_id
+                        or memory.valid_until is not None
+                        or memory.superseded_by is not None
+                    ):
+                        continue
+                    # Filter by session_id if specified (security: prevent session leakage)
+                    if session_id is not None and memory.session_id != session_id:
+                        continue
+                    # Add with lower score since it's from graph expansion
+                    results.append(
+                        MemorySearchResult(
+                            memory=memory,
+                            score=0.5,  # Default score for graph-expanded results
+                            related_entities=list(memory.entity_refs),
+                            related_memories=[],
                         )
-                        seen_memory_ids.add(mem_id)
+                    )
+                    seen_memory_ids.add(mem_id)
 
         # Filter by specified entities if provided
         if entities:
