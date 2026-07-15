@@ -10,6 +10,7 @@ Supported content types:
 - SEARCH_RESULTS: grep/ripgrep output (file:line:content)
 - BUILD_OUTPUT: Compiler, test, lint logs
 - GIT_DIFF: Unified diff format
+- STRUCTURED_CONFIG: YAML/TOML/INI config files
 - PLAIN_TEXT: Generic text (fallback)
 """
 
@@ -31,6 +32,7 @@ class ContentType(Enum):
     GIT_DIFF = "diff"  # Unified diff format
     HTML = "html"  # Web pages (needs content extraction, not compression)
     TABULAR = "tabular"  # CSV/TSV, markdown tables, fixed-width tables
+    STRUCTURED_CONFIG = "structured_config"  # YAML/TOML/INI config files
     PLAIN_TEXT = "text"  # Fallback
 
 
@@ -111,6 +113,18 @@ _CODE_PATTERNS = {
     ],
 }
 
+# Structured-config (YAML/TOML/INI) patterns. TOML and INI share the
+# `[section]` header shape; the stdlib parsers disambiguate. YAML is
+# heuristic-only (PyYAML is not a dependency): key/list/document-marker
+# line share plus structure signals, with prose and front-matter guards.
+_CONFIG_SECTION_RE = re.compile(r"^\s*\[\[?[\w.\-\"' ]+\]\]?\s*$")
+_TOML_ASSIGN_RE = re.compile(r"""^\s*(?:[\w.\-]+|"[^"]+"|'[^']+')\s*=\s*\S""")
+_INI_ASSIGN_RE = re.compile(r"^\s*[\w.\-@ ]+?\s*[=:]\s*")
+_YAML_KEY_RE = re.compile(r"""^\s*(?:-\s+)?(?:[\w.\-/]+|"[^"]+"|'[^']+')\s*:(?:\s|$)""")
+_YAML_LIST_RE = re.compile(r"^\s*-\s+\S")
+_YAML_DOC_RE = re.compile(r"^---\s*$|^\.\.\.\s*$")
+_CONFIG_COMMENT_RE = re.compile(r"^\s*[#;]")
+
 # Log/build output patterns
 _LOG_PATTERNS = [
     re.compile(r"\b(ERROR|FAIL|FAILED|FATAL|CRITICAL)\b", re.IGNORECASE),
@@ -181,12 +195,19 @@ def detect_content_type(content: str) -> DetectionResult:
     if tabular_result and tabular_result.confidence >= 0.6:
         return tabular_result
 
-    # 7. Check for source code
+    # 7. Check for structured config (YAML/TOML/INI). Runs after tabular so
+    #    delimited data keeps its claim, and before code so config files with
+    #    code-ish lines route to the structure-aware config compressor.
+    config_result = _try_detect_structured_config(content)
+    if config_result and config_result.confidence >= 0.6:
+        return config_result
+
+    # 8. Check for source code
     code_result = _try_detect_code(content)
     if code_result and code_result.confidence >= 0.5:
         return code_result
 
-    # 8. Fallback to plain text
+    # 9. Fallback to plain text
     return DetectionResult(ContentType.PLAIN_TEXT, 0.5, {})
 
 
@@ -579,6 +600,128 @@ def _try_detect_tabular(content: str) -> DetectionResult | None:
         return md_result
 
     return _try_detect_delimited(lines)
+
+
+def _try_parse_toml(content: str) -> bool:
+    """True if `content` parses as TOML (stdlib tomllib, or the tomli backport)."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ModuleNotFoundError:
+            return False
+    try:
+        tomllib.loads(content)
+        return True
+    except Exception:
+        return False
+
+
+def _parse_config_flavor(content: str) -> str | None:
+    """Disambiguate `[section]`-shaped config: TOML first, then INI.
+
+    Both flavors share the section-header line shape; only the stdlib parsers
+    can tell them apart reliably. Returns "toml", "ini", or None when neither
+    parser accepts the content (then it is not claimed as config at all).
+    """
+    if len(content) > 1_000_000:
+        return None
+    if _try_parse_toml(content):
+        return "toml"
+    import configparser
+
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read_string(content)
+    except Exception:
+        return None
+    return "ini" if parser.sections() else None
+
+
+def _try_detect_structured_config(content: str) -> DetectionResult | None:
+    """Try to detect structured config content (YAML, TOML, INI).
+
+    TOML/INI claims are parser-confirmed (stdlib), so they carry high
+    confidence. YAML has no stdlib parser, so its claim is heuristic:
+    key/list/document-marker line share plus a structure signal, guarded
+    against prose and markdown front-matter.
+    """
+    head = content.lstrip()[:1]
+    if not head or head in "{<":
+        # JSON objects and markup are never config; JSON arrays and real
+        # TOML/INI `[section]` headers disambiguate below.
+        return None
+
+    lines = content.split("\n")[:200]
+    non_empty = [ln for ln in lines if ln.strip()]
+    if len(non_empty) < 3:
+        return None
+    # Comment lines are neutral: excluded from the line-share ratio so
+    # comment-heavy configs and #-heading markdown don't skew it either way.
+    body = [ln for ln in non_empty if not _CONFIG_COMMENT_RE.match(ln)]
+    if len(body) < 3:
+        return None
+
+    # TOML / INI: require a section header plus assignment-dominant body,
+    # then let the stdlib parsers confirm and disambiguate.
+    sections = sum(1 for ln in body if _CONFIG_SECTION_RE.match(ln))
+    if sections >= 1:
+        assigns = sum(1 for ln in body if _TOML_ASSIGN_RE.match(ln) or _INI_ASSIGN_RE.match(ln))
+        if assigns >= 2 and (sections + assigns) / len(body) >= 0.6:
+            flavor = _parse_config_flavor(content)
+            if flavor is not None:
+                share = (sections + assigns) / len(body)
+                return DetectionResult(
+                    ContentType.STRUCTURED_CONFIG,
+                    min(0.95, 0.7 + share * 0.25),
+                    {"flavor": flavor, "sections": sections, "assignments": assigns},
+                )
+
+    # Markdown front-matter guard: a `---` fence closed within 60 lines and
+    # followed by non-YAML content is a markdown document, not standalone YAML.
+    if lines and lines[0].strip() == "---":
+        for idx in range(1, min(len(lines), 60)):
+            if lines[idx].strip() in ("---", "..."):
+                tail = [ln for ln in lines[idx + 1 :] if ln.strip()]
+                tail_yaml = sum(
+                    1 for ln in tail if _YAML_KEY_RE.match(ln) or _YAML_LIST_RE.match(ln)
+                )
+                if tail and tail_yaml / len(tail) < 0.3:
+                    return None
+                break
+
+    # YAML heuristic.
+    yaml_keys = sum(1 for ln in body if _YAML_KEY_RE.match(ln))
+    yaml_lists = sum(1 for ln in body if _YAML_LIST_RE.match(ln) and not _YAML_KEY_RE.match(ln))
+    doc_marks = sum(1 for ln in body if _YAML_DOC_RE.match(ln.strip()))
+    if yaml_keys < 3:
+        return None
+    share = (yaml_keys + yaml_lists + doc_marks) / len(body)
+    if share < 0.6:
+        return None
+    # Prose guards: config lines are short field-ish tuples, prose reads like
+    # sentences (mirrors _looks_like_prose for delimited data).
+    enders = sum(1 for ln in body if ln.rstrip().endswith((".", "!", "?")))
+    if enders / len(body) >= 0.5:
+        return None
+    avg_words = sum(len(ln.split()) for ln in body) / len(body)
+    if avg_words > 8:
+        return None
+    # Structure signal: nested indentation, a document marker, or a real list.
+    indents = {
+        len(ln) - len(ln.lstrip(" "))
+        for ln in body
+        if _YAML_KEY_RE.match(ln) or _YAML_LIST_RE.match(ln)
+    }
+    if len(indents) < 2 and doc_marks == 0 and yaml_lists < 3:
+        return None
+
+    return DetectionResult(
+        ContentType.STRUCTURED_CONFIG,
+        min(0.9, 0.55 + share * 0.35),
+        {"flavor": "yaml", "keys": yaml_keys, "list_items": yaml_lists},
+    )
 
 
 def _try_detect_code(content: str) -> DetectionResult | None:
