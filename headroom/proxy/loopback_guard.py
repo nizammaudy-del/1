@@ -50,6 +50,7 @@ except ImportError:  # pragma: no cover - fastapi is a hard dep in practice
 
 __all__ = [
     "LOOPBACK_HOSTS",
+    "is_ip_literal_host_header",
     "is_loopback_host",
     "is_loopback_host_header",
     "require_loopback",
@@ -126,6 +127,46 @@ def is_loopback_host_header(header_value: str | None) -> bool:
     else:
         host_part = candidate
     return is_loopback_host(host_part)
+
+
+def is_ip_literal_host_header(header_value: str | None) -> bool:
+    """Return whether ``Host:`` contains an IPv4 or bracketed IPv6 literal.
+
+    Dashboard clients may use a non-loopback server address, but retaining an
+    IP-literal Host requirement prevents DNS-rebinding requests from using an
+    attacker-controlled hostname. Ports are accepted in normal HTTP forms.
+    """
+    if not header_value:
+        return False
+
+    candidate = header_value.strip()
+    if not candidate or "/" in candidate or "@" in candidate:
+        return False
+
+    if candidate.startswith("["):
+        closing = candidate.find("]")
+        if closing == -1 or candidate.count("[") != 1 or candidate.count("]") != 1:
+            return False
+        host_part = candidate[1:closing]
+        suffix = candidate[closing + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+        try:
+            return isinstance(ipaddress.ip_address(host_part), ipaddress.IPv6Address)
+        except ValueError:
+            return False
+
+    if candidate.count(":") == 1:
+        host_part, port = candidate.rsplit(":", 1)
+        if not port.isdigit():
+            return False
+    else:
+        host_part = candidate
+
+    try:
+        return isinstance(ipaddress.ip_address(host_part), ipaddress.IPv4Address)
+    except ValueError:
+        return False
 
 
 def require_loopback(request: Request) -> None:  # type: ignore[valid-type]
