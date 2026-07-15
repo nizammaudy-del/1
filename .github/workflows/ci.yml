@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -124,6 +125,19 @@ jobs:
         run: ruff format --check .
       - name: mypy
         run: mypy headroom --ignore-missing-imports
+
+  architectural-guardrails:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PY_VERSION }}
+      - name: Run Headroom architectural guardrails
+        run: python scripts/headroom_guardrails.py
 
   build-wheel:
     needs: changes
