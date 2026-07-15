@@ -146,6 +146,7 @@ from headroom.proxy.loopback_guard import is_loopback_host
 from headroom.proxy.memory_handler import MemoryConfig, MemoryHandler
 
 # Data models (extracted to headroom/proxy/models.py for maintainability)
+from headroom.proxy.model_router import ModelRouter, ModelRouterConfig
 from headroom.proxy.models import CacheEntry, ProxyConfig, RateLimitState, RequestLog  # noqa: F401
 from headroom.proxy.modes import (
     PROXY_MODE_CACHE,
@@ -687,6 +688,10 @@ class HeadroomProxy(
             else None
         )
         self.metrics = PrometheusMetrics(cost_tracker=self.cost_tracker, stateless=config.stateless)
+
+        # Cost-aware model routing (issue #1706). Disabled unless configured, so
+        # the default request path is unchanged.
+        self.model_router = ModelRouter(config.model_router)
 
         # Initialize transforms based on routing mode.
         #
@@ -4412,6 +4417,10 @@ def _proxy_config_from_env() -> ProxyConfig:
         read_maturation_max_hold_turns=_get_env_int("HEADROOM_READ_MATURATION_MAX_HOLD_TURNS", 25),
         read_maturation_min_size_bytes=_get_env_int(
             "HEADROOM_READ_MATURATION_MIN_SIZE_BYTES", 2048
+        ),
+        model_router=ModelRouterConfig.from_env(
+            os.environ.get("HEADROOM_MODEL_ROUTER_ENABLED"),
+            os.environ.get("HEADROOM_MODEL_ROUTES"),
         ),
     )
 

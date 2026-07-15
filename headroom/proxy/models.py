@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from headroom.memory import qdrant_env
 from headroom.providers.registry import ProviderApiOverrides
+from headroom.proxy.model_router import ModelRouterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,11 @@ class ProxyConfig:
     max_items_after_crush: int = 50
     smart_crusher_with_compaction: bool | None = None
     keep_last_turns: int = 4
+
+    # Cost-aware model routing (issue #1706). Opt-in and disabled by default;
+    # when configured, an ordered rule set can rewrite the outgoing model based
+    # on request size / tool presence. None keeps behavior unchanged.
+    model_router: ModelRouterConfig | None = None
 
     # CCR Tool Injection
     ccr_inject_tool: bool = True
