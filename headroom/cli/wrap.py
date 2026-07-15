@@ -793,6 +793,11 @@ _HEADROOM_HOOK_MARKERS = ("rtk-rewrite", "headroom-init-claude")
 # (GH #746), paired with init/wrap setting it.
 _HEADROOM_ENV_KEYS = ("ANTHROPIC_BASE_URL", "ENABLE_TOOL_SEARCH")
 
+# Stable marker embedded in the SessionStart self-heal hook that ``wrap claude``
+# installs (issue #2221). Lets that hook be found (idempotent install) and
+# removed (unwrap) by its command string.
+_WRAP_SELFHEAL_HOOK_MARKER = "headroom-wrap-selfheal"
+
 
 def _remove_claude_rtk_hooks(settings_path: Path | None = None) -> bool:
     """Remove Headroom-managed entries from Claude settings.json.
@@ -998,6 +1003,43 @@ def _wrap_marker_is_stale(marker: dict[str, Any]) -> bool:
     return _identity_mismatch(marker.get("start_src"), marker.get("start_time"), pid)
 
 
+def _wrap_proxy_alive(port: int, *, attempts: int = 3, delay: float = 0.25) -> bool:
+    """Retry-hardened liveness probe for a wrap proxy ``port`` (issue #2221).
+
+    A single 1s TCP connect can spuriously fail against a live-but-busy proxy
+    (full accept queue, scheduler delay). Clearing a live session's base_url on
+    such a transient blip stops its cc-daemon workers from routing through the
+    proxy mid-session, so the proxy is declared ALIVE on the FIRST successful
+    connect and DEAD only when all ``attempts`` (spaced ~``delay`` s apart)
+    fail. Returns early on the first success, so a live proxy pays no delay.
+    """
+    for attempt in range(attempts):
+        if _check_proxy(port):
+            return True
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return False
+
+
+def _wrap_marker_proxy_is_dead(marker: dict[str, Any]) -> bool:
+    """True if ``marker`` records a proxy ``port`` that no longer accepts
+    connections.
+
+    Port liveness is the authoritative signal for a wrap session that vanished
+    without running its cleanup (hard reboot / SIGKILL, issue #2221): the
+    recorded PID is unreliable because a reboot can recycle it onto an
+    unrelated live process, so a PID that still looks alive does not prove the
+    proxy is up. A marker with no recorded port returns False here (fall back
+    to PID-based staleness); a marker whose port IS responding is a live
+    session and must never be treated as dead. Uses the retry-hardened
+    ``_wrap_proxy_alive`` so a momentary blip never reads as dead.
+    """
+    port = marker.get("port")
+    if not isinstance(port, int):
+        return False
+    return not _wrap_proxy_alive(port)
+
+
 def _clear_wrap_marker(settings_path: Path, *, key: str) -> None:
     marker = _read_wrap_marker(settings_path)
     if marker is not None and marker.get("key") == key:
@@ -1022,6 +1064,191 @@ def _check_and_clear_stale_wrap_marker(settings_path: Path, *, key: str) -> str 
     )
     _restore_claude_wrap_base_url(previous, settings_path=settings_path, _key_override=key)
     return previous
+
+
+def _check_and_clear_dead_wrap_marker(settings_path: Path, *, key: str) -> str | None:
+    """Session-start self-heal for a wrap base_url left by a dead proxy (#2221).
+
+    Like ``_check_and_clear_stale_wrap_marker`` (PID/identity based), but also
+    clears when the marker's recorded proxy PORT is no longer accepting
+    connections — even if its PID still looks alive. A hard reboot / SIGKILL
+    runs no signal/atexit cleanup, so the ``ANTHROPIC_BASE_URL`` persisted for
+    cc-daemon conversation workers keeps pointing at a dead proxy and bricks a
+    later bare ``claude`` with ConnectionRefused. Because those workers read
+    settings.local.json fresh per conversation, clearing it at session start
+    (before any worker reads it) also unblocks the current session.
+
+    CRITICAL: a marker whose port IS responding is a live wrapped session and
+    is never cleared. Returns the restored prior value, or None when there was
+    nothing dead to clean up.
+    """
+    marker = _read_wrap_marker(settings_path)
+    if marker is None or marker.get("key") != key:
+        return None
+    port = marker.get("port")
+    if isinstance(port, int):
+        # Port is the authoritative signal (it survives PID reuse after a
+        # reboot). A single retry-hardened probe decides it: a responding port
+        # is a live session (never cleared); only a port that fails the whole
+        # retry window is dead. One probe here — no correlated double check.
+        if _wrap_proxy_alive(port):
+            return None
+    elif not _wrap_marker_is_stale(marker):
+        # No recorded port → fall back to PID-based staleness.
+        return None
+    previous = marker.get("previous")
+    click.echo(
+        f"headroom: clearing stale {key} left by a proxy that is no longer "
+        f"running (issue #2221); restoring prior value",
+        err=True,
+    )
+    _restore_claude_wrap_base_url(previous, settings_path=settings_path, _key_override=key)
+    return previous
+
+
+def _selfheal_dead_wrap_base_url() -> None:
+    """Clear a project-local wrap base_url left pointing at a dead proxy (#2221).
+
+    Runs at every Claude session start via the SessionStart hook that
+    ``wrap claude`` installs. When ``wrap claude`` persists
+    ``ANTHROPIC_BASE_URL=<proxy>`` into ``.claude/settings.local.json`` and the
+    proxy later dies via hard reboot / SIGKILL, no signal/atexit cleanup fires,
+    so the stale URL lingers and bricks a later bare ``claude`` with
+    ConnectionRefused. cc-daemon reads settings.local.json fresh per
+    conversation, so clearing it here — before any conversation worker reads
+    it — also unblocks the current session.
+
+    Must never raise: a broken self-heal must not break session startup.
+    """
+    try:
+        settings_path = Path.cwd() / ".claude" / "settings.local.json"
+        for key in (
+            _claude_wrap_base_url_env_key(),
+            _claude_wrap_base_url_env_key(foundry_mode=True),
+            _claude_wrap_base_url_env_key(vertex_mode=True),
+        ):
+            _check_and_clear_dead_wrap_marker(settings_path, key=key)
+    except Exception:  # noqa: BLE001 - hook must never break session startup
+        pass
+
+
+def _wrap_selfheal_hook_command() -> str:
+    """Command string for the SessionStart self-heal hook (mirrors init hooks)."""
+    from headroom.cli.init import _command_string
+    from headroom.install.runtime import resolve_headroom_command
+
+    return _command_string(
+        [*resolve_headroom_command(), "wrap", "selfheal", "--marker", _WRAP_SELFHEAL_HOOK_MARKER]
+    )
+
+
+def _ensure_claude_wrap_selfheal_hook(settings_path: Path) -> None:
+    """Install a SessionStart-only self-heal hook into settings.local.json (#2221).
+
+    ``wrap claude`` writes the proxy base_url + a sidecar marker but installs no
+    hook of its own, so a session that only ran ``wrap`` (never ``init``) had no
+    reader to clear a dead-proxy URL — the reported bug. This pairs the marker
+    with a SessionStart hook that runs the hidden ``wrap selfheal`` command.
+    SessionStart ONLY (never PreToolUse): the self-heal must not run per Bash
+    call mid-session, where a transient probe blip could clear a live session.
+    Idempotent — an existing entry carrying the marker is not duplicated.
+    """
+    payload: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            payload = json.loads(_read_text(settings_path))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    hooks = dict(payload.get("hooks") or {}) if isinstance(payload.get("hooks"), dict) else {}
+    entries = list(hooks.get("SessionStart") or []) if isinstance(
+        hooks.get("SessionStart"), list
+    ) else []
+    already = any(
+        isinstance(entry, dict)
+        and isinstance(entry.get("hooks"), list)
+        and any(
+            isinstance(item, dict) and _WRAP_SELFHEAL_HOOK_MARKER in str(item.get("command", ""))
+            for item in entry["hooks"]
+        )
+        for entry in entries
+    )
+    if already:
+        return
+    entries.append(
+        {
+            "matcher": "startup|resume",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": _wrap_selfheal_hook_command(),
+                    "timeout": 10,
+                }
+            ],
+        }
+    )
+    hooks["SessionStart"] = entries
+    payload["hooks"] = hooks
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_text(settings_path, json.dumps(payload, indent=2) + "\n")
+
+
+def _remove_claude_wrap_selfheal_hook(settings_path: Path) -> bool:
+    """Remove the SessionStart self-heal hook that ``wrap claude`` installed (#2221).
+
+    Mirrors ``_remove_claude_rtk_hooks`` but matches only the wrap self-heal
+    marker in the project-local settings.local.json. Returns True if anything
+    was removed. Unrelated hooks and user-authored entries are left untouched.
+    """
+    if not settings_path.exists():
+        return False
+    try:
+        payload = json.loads(_read_text(settings_path))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    changed = False
+    for event, entries in list(hooks.items()):
+        if not isinstance(entries, list):
+            continue
+        retained: list[Any] = []
+        for entry in entries:
+            if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
+                kept = [
+                    item
+                    for item in entry["hooks"]
+                    if not (
+                        isinstance(item, dict)
+                        and _WRAP_SELFHEAL_HOOK_MARKER in str(item.get("command", ""))
+                    )
+                ]
+                if len(kept) != len(entry["hooks"]):
+                    changed = True
+                    if kept:
+                        retained.append({**entry, "hooks": kept})
+                    continue
+            retained.append(entry)
+        if retained:
+            hooks[event] = retained
+        else:
+            del hooks[event]
+            changed = True
+    if not changed:
+        return False
+    if hooks:
+        payload["hooks"] = hooks
+    else:
+        payload.pop("hooks", None)
+    if payload:
+        _write_text(settings_path, json.dumps(payload, indent=2) + "\n")
+    else:
+        settings_path.unlink(missing_ok=True)
+    return True
 
 
 def _write_claude_wrap_base_url(
@@ -3881,6 +4108,19 @@ def unwrap() -> None:
     """Undo durable Headroom wrapping for supported tools."""
 
 
+@wrap.command("selfheal", hidden=True)
+@click.option("--marker", default=None, hidden=True)
+def wrap_selfheal(marker: str | None) -> None:
+    """Session-start self-heal for a wrap base_url left by a dead proxy (#2221).
+
+    Installed as a SessionStart-only hook by ``wrap claude`` so a session that
+    only ran ``wrap`` (never ``init``) still recovers a stale ``ANTHROPIC_BASE_URL``
+    when its proxy died without cleanup. Best-effort and never raises.
+    """
+    del marker
+    _selfheal_dead_wrap_base_url()
+
+
 # =============================================================================
 # Claude Code
 # =============================================================================
@@ -4268,6 +4508,10 @@ def claude(
             settings_path=_wrap_settings_path,
             port=port,
         )
+        # Issue #2221: pair the marker just written with a reader. wrap installs
+        # no hook of its own, so a session that only ran `wrap` (never `init`)
+        # had nothing to clear a dead-proxy base_url. SessionStart-only.
+        _ensure_claude_wrap_selfheal_hook(_wrap_settings_path)
 
         # Per-project savings attribution: tag every request with the launch
         # directory's name via X-Headroom-Project (user override wins).
@@ -4386,6 +4630,8 @@ def unwrap_claude(
         click.echo("  Kept rtk Claude hooks (--keep-rtk).")
 
     _unwrap_settings_path = Path.cwd() / ".claude" / "settings.local.json"
+    if _remove_claude_wrap_selfheal_hook(_unwrap_settings_path):
+        click.echo("  Removed Headroom wrap self-heal SessionStart hook (issue #2221).")
     for _foundry, _vertex in ((False, False), (True, False), (False, True)):
         _key = _claude_wrap_base_url_env_key(foundry_mode=_foundry, vertex_mode=_vertex)
         _marker = _read_wrap_marker(_unwrap_settings_path)
