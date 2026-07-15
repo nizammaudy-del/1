@@ -26,6 +26,7 @@ SUPPORTED_TARGETS = [
     ToolTarget.CODEX,
     ToolTarget.AIDER,
     ToolTarget.CURSOR,
+    ToolTarget.GROK,
     ToolTarget.OPENCLAW,
     ToolTarget.OPENCODE,
 ]

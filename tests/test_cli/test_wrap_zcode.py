@@ -121,7 +121,7 @@ def test_wrap_prints_proxy_urls(
     def fake_watcher(**kwargs):  # noqa: ANN003
         print_fn = kwargs.get("print_setup_lines")
         if callable(print_fn):
-            print_fn()
+            print_fn(kwargs["port"])
 
     with patch.object(wrap_mod, "_ensure_rtk_binary", return_value=fake_rtk):
         with patch.object(wrap_mod, "_run_proxy_only_watcher", side_effect=fake_watcher):
