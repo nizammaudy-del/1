@@ -22,6 +22,7 @@ from typing import Any
 
 from headroom import paths as _paths
 from headroom.proxy import project_name_policy
+from headroom.proxy.persistent_metrics import PersistentMetricsState
 
 PROJECT_NAME_MAX_LENGTH = project_name_policy.PROJECT_NAME_MAX_LENGTH
 sanitize_project_name = project_name_policy.sanitize_project_name
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 HEADROOM_SAVINGS_PATH_ENV_VAR = _paths.HEADROOM_SAVINGS_PATH_ENV
 DEFAULT_SAVINGS_DIR = ".headroom"
 DEFAULT_SAVINGS_FILE = "proxy_savings.json"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_MAX_HISTORY_POINTS = 5000
 DEFAULT_MAX_PROJECTS = 50
 DEFAULT_MAX_HISTORY_AGE_DAYS = 365
@@ -546,7 +547,13 @@ class SavingsTracker:
         self._save_flush_every = max(_coerce_int(save_flush_every, 1), 1)
         self._since_save = 0
         self._lock = threading.Lock()
+        self._persistence_healthy = True
+        self._persistence_error: str | None = None
+        self._needs_schema_save = False
         self._state = self._load_state()
+        self._persistent_metrics = PersistentMetricsState(
+            self._state.pop("lifetime_metrics", None)
+        )
 
     @property
     def storage_path(self) -> str:
@@ -784,6 +791,66 @@ class SavingsTracker:
             self._maybe_save_locked()
             return True
 
+    def record_lifetime_request(self, *, persist: bool = True, **metrics: Any) -> None:
+        """Record one completed request in the durable Lifetime aggregate."""
+
+        model = _normalize_model(metrics.get("model"))
+        input_tokens = _coerce_int(metrics.get("input_tokens"))
+        cache_read_tokens = _coerce_int(metrics.get("cache_read_tokens"))
+        cache_write_tokens = _coerce_int(metrics.get("cache_write_tokens"))
+        uncached_input_tokens = _coerce_int(metrics.get("uncached_input_tokens"))
+        metrics.setdefault(
+            "input_usd",
+            _estimate_input_cost_usd(
+                model,
+                input_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                uncached_input_tokens=uncached_input_tokens,
+            ),
+        )
+        metrics.setdefault(
+            "compression_savings_usd",
+            _estimate_compression_savings_usd(model, _coerce_int(metrics.get("tokens_saved"))),
+        )
+        metrics.setdefault("cache_savings_usd", _estimate_cache_savings_usd(model, cache_read_tokens))
+        with self._lock:
+            self._persistent_metrics.record_request(**metrics)
+            if persist:
+                self._maybe_save_locked()
+
+    def record_lifetime_stack(self, stack: str | None) -> None:
+        """Mirror the existing inbound stack dimension without another save."""
+
+        with self._lock:
+            self._persistent_metrics.record_stack(stack)
+
+    def record_lifetime_failed(self, *, provider: str | None = None, model: str | None = None) -> None:
+        """Record a failed proxy request without changing legacy history."""
+
+        with self._lock:
+            self._persistent_metrics.record_failed(provider=provider, model=model)
+            self._maybe_save_locked()
+
+    def record_lifetime_rate_limited(
+        self, *, provider: str | None = None, model: str | None = None
+    ) -> None:
+        """Record a rate-limited proxy request without changing legacy history."""
+
+        with self._lock:
+            self._persistent_metrics.record_rate_limited(provider=provider, model=model)
+            self._maybe_save_locked()
+
+    def record_lifetime_cache_bust(self, *, tokens_lost: int) -> None:
+        with self._lock:
+            self._persistent_metrics.record_cache_bust(tokens_lost=tokens_lost)
+            self._maybe_save_locked()
+
+    def record_lifetime_cache_miss(self, *, provider: str | None, reason: str | None) -> None:
+        with self._lock:
+            self._persistent_metrics.record_cache_miss(provider=provider, reason=reason)
+            self._maybe_save_locked()
+
     def _record_project_locked(
         self,
         project: str | None,
@@ -891,6 +958,24 @@ class SavingsTracker:
             )
             result[model] = view
         return result
+    def lifetime_response(self) -> dict[str, Any]:
+        """Return the durable aggregate used only by ``/stats-lifetime``."""
+
+        with self._lock:
+            response = self._persistent_metrics.snapshot(
+                persistence={
+                    "enabled": not self._stateless,
+                    "healthy": self._persistence_healthy,
+                    "error": (
+                        "Lifetime metrics unavailable in stateless mode"
+                        if self._stateless
+                        else self._persistence_error
+                    ),
+                    "pending_records": 0 if self._stateless else self._since_save,
+                }
+            )
+            response["projects"] = self._projects_snapshot_locked()
+            return response
 
     def stats_preview(self, recent_points: int = 20) -> dict[str, Any]:
         """Return a compact preview for `/stats`."""
@@ -1031,9 +1116,29 @@ class SavingsTracker:
                 raw = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load savings history from %s: %s", self._path, e)
+            self._persistence_healthy = False
+            self._persistence_error = str(e)
+            self._preserve_corrupt_file()
             return self._default_state()
 
+        if not isinstance(raw, dict):
+            self._persistence_healthy = False
+            self._persistence_error = "Savings state root must be a JSON object"
+            self._preserve_corrupt_file()
+            return self._default_state()
+        if _coerce_int(raw.get("schema_version")) != SCHEMA_VERSION:
+            self._needs_schema_save = True
         return self._sanitize_state(raw)
+
+    def _preserve_corrupt_file(self) -> None:
+        """Best-effort retention of unreadable state before starting fresh."""
+
+        timestamp = _to_utc_iso(_utc_now()).replace(":", "-")
+        corrupt_path = self._path.with_name(f"{self._path.name}.corrupt-{timestamp}")
+        try:
+            self._path.replace(corrupt_path)
+        except OSError:
+            logger.warning("Could not preserve corrupt savings history at %s", self._path)
 
     def _sanitize_state(self, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, dict):
@@ -1101,6 +1206,12 @@ class SavingsTracker:
             "projects": _normalize_projects(raw.get("projects")),
             "by_model": _normalize_by_model(raw.get("by_model")),
         }
+        raw_lifetime_metrics = raw.get("lifetime_metrics")
+        if isinstance(raw_lifetime_metrics, dict):
+            state["lifetime_metrics"] = raw_lifetime_metrics
+        else:
+            state["lifetime_metrics"] = self._migrate_v4_lifetime_metrics(state)
+            self._needs_schema_save = True
 
         if normalized_history:
             reference_time = _parse_timestamp(normalized_history[-1]["timestamp"]) or _utc_now()
@@ -1114,6 +1225,49 @@ class SavingsTracker:
                     self._state = original_state
 
         return state
+
+    def _migrate_v4_lifetime_metrics(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Seed the v5 aggregate from the best information available in v4."""
+
+        history = state["history"]
+        display_session = state["display_session"]
+        started_at = (
+            history[0]["timestamp"]
+            if history
+            else display_session.get("started_at") or _to_utc_iso(_utc_now())
+        )
+        last_activity_at = (
+            history[-1]["timestamp"] if history else display_session.get("last_activity_at")
+        )
+        legacy = state["lifetime"]
+        return {
+            "started_at": started_at,
+            "last_activity_at": last_activity_at,
+            "full_fidelity_started_at": _to_utc_iso(_utc_now()),
+            "requests": {"total": legacy["requests"]},
+            "tokens": {
+                "input": legacy["total_input_tokens"],
+                "attempted_input": legacy["total_input_tokens"] + legacy["tokens_saved"],
+                "saved": legacy["tokens_saved"],
+            },
+            "prefix_cache": {"cache_read_tokens": legacy["cache_read_tokens"]},
+            "cost": {
+                "input_usd": legacy["total_input_cost_usd"],
+                "compression_savings_usd": legacy["compression_savings_usd"],
+                "cache_savings_usd": legacy["cache_savings_usd"],
+            },
+            "models": {
+                "tracked": {},
+                "other": {
+                    "requests": legacy["requests"],
+                    "input_tokens": legacy["total_input_tokens"],
+                    "attempted_input_tokens": legacy["total_input_tokens"]
+                    + legacy["tokens_saved"],
+                    "tokens_saved": legacy["tokens_saved"],
+                    "last_activity_at": last_activity_at,
+                },
+            },
+        }
 
     def _trim_history_locked(self, reference_time: datetime | None = None) -> None:
         history = self._state["history"]
@@ -1190,7 +1344,7 @@ class SavingsTracker:
         recent requests. No-op when nothing is buffered.
         """
         with self._lock:
-            if self._since_save > 0:
+            if self._since_save > 0 or self._needs_schema_save:
                 self._save_locked()
 
     def _maybe_save_locked(self) -> None:
@@ -1206,9 +1360,13 @@ class SavingsTracker:
         if self._stateless:
             # Stateless mode: live counters stay in memory; nothing is persisted.
             self._since_save = 0
+            self._needs_schema_save = False
             return
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+            saved_at = _to_utc_iso(_utc_now())
+            lifetime_metrics = self._persistent_metrics.to_dict()
+            lifetime_metrics["persistence"]["last_saved_at"] = saved_at
             payload = {
                 "schema_version": SCHEMA_VERSION,
                 "lifetime": self._state["lifetime"],
@@ -1216,6 +1374,7 @@ class SavingsTracker:
                 "history": self._state["history"],
                 "projects": self._state.get("projects", {}),
                 "by_model": self._state.get("by_model", {}),
+                "lifetime_metrics": lifetime_metrics,
             }
             json_data = json.dumps(payload, indent=2)
 
@@ -1255,9 +1414,15 @@ class SavingsTracker:
 
             # Reset only after a durable write. A failed save leaves the counter
             # untouched so the next record retries instead of waiting a full window.
+            self._persistent_metrics.set_last_saved_at(saved_at)
+            self._persistence_healthy = True
+            self._persistence_error = None
+            self._needs_schema_save = False
             self._since_save = 0
         except OSError as e:
             logger.warning("Failed to save savings history to %s: %s", self._path, e)
+            self._persistence_healthy = False
+            self._persistence_error = str(e)
 
     def _display_session_snapshot_locked(
         self,

@@ -122,6 +122,7 @@ def test_tracker_accumulates_per_project_and_persists(tmp_path):
     # Survives a restart via the persisted JSON state.
     reloaded = SavingsTracker(path=str(path))
     assert reloaded.stats_preview()["projects"]["api"]["tokens_saved"] == 500
+    assert reloaded.lifetime_response()["projects"]["api"]["tokens_saved"] == 500
 
 
 def test_tracker_migrates_v2_state_without_projects(tmp_path):

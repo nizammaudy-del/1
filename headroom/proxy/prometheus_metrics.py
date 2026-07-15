@@ -446,6 +446,7 @@ class PrometheusMetrics:
         ):
             return
         self.requests_by_stack[slug] += 1
+        self.savings_tracker.record_lifetime_stack(slug)
 
     def record_compression(
         self,
@@ -732,6 +733,24 @@ class PrometheusMetrics:
             if len(self.savings_history) > 500:
                 self.savings_history = self.savings_history[-500:]
 
+            self.savings_tracker.record_lifetime_request(
+                persist=False,
+                provider=provider,
+                stack=None,
+                record_stack=False,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                attempted_input_tokens=attempted_input_tokens,
+                tokens_saved=tokens_saved,
+                cached=cached,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                cache_write_5m_tokens=cache_write_5m_tokens,
+                cache_write_1h_tokens=cache_write_1h_tokens,
+                uncached_input_tokens=uncached_input_tokens,
+                waste_signals=waste_signals,
+            )
             total_input_tokens, total_input_cost_usd = self._current_savings_tracker_totals()
             self.savings_tracker.record_request(
                 model=model,
@@ -828,6 +847,7 @@ class PrometheusMetrics:
         async with self._lock:
             self.cache_bust_tokens_lost += tokens_lost
             self.cache_bust_count += 1
+        self.savings_tracker.record_lifetime_cache_bust(tokens_lost=tokens_lost)
         self._get_otel_metrics().record_proxy_cache_bust(tokens_lost=tokens_lost)
 
     async def record_cache_miss_attribution(self, provider: str, reason: str) -> None:
@@ -841,6 +861,7 @@ class PrometheusMetrics:
         """
         async with self._lock:
             self.cache_miss_attribution_by_provider[provider][reason] += 1
+        self.savings_tracker.record_lifetime_cache_miss(provider=provider, reason=reason)
 
     # ------------------------------------------------------------------
     # Unit 3: WS session lifecycle gauges / histogram
@@ -886,11 +907,13 @@ class PrometheusMetrics:
     async def record_rate_limited(self, *, provider: str | None = None, model: str | None = None):
         async with self._lock:
             self.requests_rate_limited += 1
+        self.savings_tracker.record_lifetime_rate_limited(provider=provider, model=model)
         self._get_otel_metrics().record_proxy_rate_limited(provider=provider, model=model)
 
     async def record_failed(self, *, provider: str | None = None, model: str | None = None):
         async with self._lock:
             self.requests_failed += 1
+        self.savings_tracker.record_lifetime_failed(provider=provider, model=model)
         self._get_otel_metrics().record_proxy_failed(provider=provider, model=model)
 
     async def export(self) -> str:
