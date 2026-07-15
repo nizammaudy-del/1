@@ -207,6 +207,16 @@ class ProxyConfig:
 
     lossless: bool = False  # CLI: --lossless; env: HEADROOM_LOSSLESS=1. No-CCR mode: compress without any retrieval marker.
 
+    # Compress requests that fall through to the catch-all passthrough handler
+    # (custom proxy paths that don't match a built-in API route, e.g.
+    # `/api/codex-proxy/<key>/v1/responses` fronted by another proxy). Off by
+    # default because passthrough targets are unknown upstreams; opt-in for
+    # wrapper-proxy architectures that need coding-agent traffic compressed.
+    # Currently applies to OpenAI Responses-shaped bodies (paths ending in
+    # `/responses`). CLI: --compress-passthrough; env:
+    # HEADROOM_COMPRESS_PASSTHROUGH=1.
+    compress_passthrough: bool = False
+
     # Code graph live watcher (triggers incremental reindex on file changes)
     code_graph_watcher: bool = False
 

@@ -7616,6 +7616,52 @@ class OpenAIHandlerMixin:
                 },
             )
 
+    async def _maybe_compress_passthrough_responses(self, body: bytes) -> bytes:
+        """Compress an OpenAI Responses-shaped passthrough body, fail-open.
+
+        Reuses the native `/v1/responses` compression path so custom
+        wrapper-proxy routes get the same ContentRouter/Kompress treatment.
+        Any parse/compression failure returns the original body unchanged so a
+        catch-all request is never dropped by opting into compression.
+        """
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return body
+        if not isinstance(payload, dict) or "input" not in payload:
+            # Not a Responses payload (no `input` array) — leave it alone.
+            return body
+
+        model = str(payload.get("model") or "passthrough")
+        request_id = await self._next_request_id()
+        try:
+            (
+                compressed_payload,
+                modified,
+                *_rest,
+            ) = await self._compress_openai_responses_payload_in_executor(
+                payload,
+                model=model,
+                request_id=request_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open on any compressor error
+            logger.warning(
+                "[%s] passthrough Responses compression failed, forwarding verbatim: %s",
+                request_id,
+                exc,
+            )
+            return body
+        if not modified:
+            return body
+        try:
+            return json.dumps(
+                compressed_payload,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return body
+
     async def handle_passthrough(
         self,
         request: Request,
@@ -7698,6 +7744,26 @@ class OpenAIHandlerMixin:
         )
         if body is not original_body:
             headers["content-length"] = str(len(body))
+
+        # Opt-in: compress requests that fall through here because their path
+        # doesn't match a built-in API route (custom wrapper-proxy paths like
+        # `/api/codex-proxy/<key>/v1/responses`). Off by default; only touches
+        # OpenAI Responses-shaped bodies (path ends in `/responses`) so we reuse
+        # the exact same ContentRouter/Kompress path the native handler runs.
+        _pt_config = getattr(self, "config", None)
+        if (
+            getattr(_pt_config, "compress_passthrough", False)
+            and getattr(_pt_config, "optimize", False)
+            and request.method == "POST"
+            and path.rstrip("/").endswith("/responses")
+            and body
+        ):
+            compressed = await self._maybe_compress_passthrough_responses(body)
+            if compressed != body:
+                body = compressed
+                # Body size changed — let httpx recompute Content-Length.
+                for _hk in [k for k in headers if k.lower() == "content-length"]:
+                    headers.pop(_hk, None)
 
         headers = await apply_copilot_api_auth(headers, url=url)
         # Cloudflare bot-management challenges our HTTP/2 fingerprint on
