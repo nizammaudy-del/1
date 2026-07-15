@@ -694,3 +694,97 @@ def test_runtime_status_survives_winerror87_systemerror(monkeypatch, tmp_path: P
     )
 
     assert runtime_status(_python_service_manifest()) == "stopped"
+
+
+class TestRestartCurrentDeployment:
+    """detect_current_deployment / restart_current_deployment (settings apply)."""
+
+    def _clear_deployment_env(self, monkeypatch) -> None:
+        monkeypatch.delenv("HEADROOM_DEPLOYMENT_PROFILE", raising=False)
+        monkeypatch.delenv("HEADROOM_DEPLOYMENT_PRESET", raising=False)
+
+    def test_foreground_when_no_deployment_env(self, monkeypatch) -> None:
+        from headroom.install import runtime as rt
+
+        self._clear_deployment_env(monkeypatch)
+        popen_calls: list = []
+        monkeypatch.setattr(rt.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+
+        manifest, mode = rt.detect_current_deployment()
+        assert manifest is None
+        assert mode == "foreground"
+
+        result = rt.restart_current_deployment()
+        assert result["restarted"] is False
+        assert result["mode"] == "foreground"
+        assert "instruction" in result
+        assert popen_calls == []  # never restarts a foreground proxy
+
+    def test_docker_returns_host_command_without_restarting(self, monkeypatch) -> None:
+        from headroom.install import runtime as rt
+
+        monkeypatch.setenv("HEADROOM_DEPLOYMENT_PROFILE", "default")
+        monkeypatch.setenv("HEADROOM_DEPLOYMENT_PRESET", InstallPreset.PERSISTENT_DOCKER.value)
+        monkeypatch.setattr(rt, "load_manifest", lambda profile: None)
+        popen_calls: list = []
+        monkeypatch.setattr(rt.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+
+        _manifest, mode = rt.detect_current_deployment()
+        assert mode == "docker"
+
+        result = rt.restart_current_deployment()
+        assert result["restarted"] is False
+        assert result["mode"] == "docker"
+        assert result["command"] == "headroom install restart --profile default"
+        assert popen_calls == []  # cannot run docker from inside the container
+
+    def test_task_mode_detected_and_not_restarted(self, monkeypatch) -> None:
+        """A persistent-task deployment must not be told it's a self-restartable 'service'.
+
+        ``headroom install start/stop/restart`` all reject SupervisorKind.TASK
+        deployments (see cli/install.py:_reject_task_lifecycle); a detached
+        ``headroom install restart`` against a task manifest would previously
+        fail silently (stdout/stderr to DEVNULL) after the API had already
+        returned ``{"restarted": true}``.
+        """
+        from headroom.install import runtime as rt
+
+        monkeypatch.setenv("HEADROOM_DEPLOYMENT_PROFILE", "default")
+        monkeypatch.setenv("HEADROOM_DEPLOYMENT_PRESET", "persistent-task")
+        stub = types.SimpleNamespace(profile="default", supervisor_kind="task")
+        monkeypatch.setattr(rt, "load_manifest", lambda profile: stub)
+        popen_calls: list = []
+        monkeypatch.setattr(rt.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
+
+        _manifest, mode = rt.detect_current_deployment()
+        assert mode == "task"
+
+        result = rt.restart_current_deployment()
+        assert result["restarted"] is False
+        assert result["mode"] == "task"
+        assert "instruction" in result
+        assert popen_calls == []  # never spawns `headroom install restart` for task deployments
+
+    def test_service_spawns_detached_restart(self, monkeypatch) -> None:
+        from headroom.install import runtime as rt
+
+        monkeypatch.setenv("HEADROOM_DEPLOYMENT_PROFILE", "default")
+        monkeypatch.setenv("HEADROOM_DEPLOYMENT_PRESET", "persistent-service")
+        stub = types.SimpleNamespace(profile="default", supervisor_kind="service")
+        monkeypatch.setattr(rt, "load_manifest", lambda profile: stub)
+        recorded: dict = {}
+
+        def fake_popen(command, **kwargs):
+            recorded["command"] = command
+            recorded["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(rt.subprocess, "Popen", fake_popen)
+
+        _manifest, mode = rt.detect_current_deployment()
+        assert mode == "service"
+
+        result = rt.restart_current_deployment()
+        assert result["restarted"] is True
+        assert result["mode"] == "service"
+        assert recorded["command"][-4:] == ["install", "restart", "--profile", "default"]

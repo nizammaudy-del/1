@@ -2504,10 +2504,15 @@ class OpenAIHandlerMixin:
         # uses `request.headers.get(...)` above; memory user-id reads
         # `request.headers` below. From this point on, `headers` is the
         # upstream-bound copy.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count_chat = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.openai_extra_headers)
         log_outbound_headers(
             forwarder="openai_chat_completions",
             stripped_count=_pre_strip_count_chat,
@@ -4011,10 +4016,15 @@ class OpenAIHandlerMixin:
         # PR-A5 (P5-49): strip internal x-headroom-* from upstream-bound
         # headers AFTER `_extract_tags` reads them. Memory user-id reads
         # `request.headers` below.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count_resp = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.openai_extra_headers)
         # Mirror the WS handler: never forward Codex's client-only lite header
         # upstream. OpenAI rejects newer Codex models when it leaks, and the HTTP
         # POST path (unlike the WS path) otherwise forwards request headers verbatim.
@@ -5230,6 +5240,9 @@ class OpenAIHandlerMixin:
             _upstream_connect_recorded = False
             _upstream_first_event_started: float | None = None
             upstream: Any = None
+            from headroom.proxy.helpers import merge_extra_headers
+
+            upstream_headers = merge_extra_headers(upstream_headers, self.config.openai_extra_headers)
 
             for ws_attempt in range(ws_connect_attempts):
                 try:
@@ -7084,10 +7097,23 @@ class OpenAIHandlerMixin:
                 # Session-end residual: tokens not captured by any
                 # per-turn record (e.g. signaling frames after the
                 # last response.completed). The funnel emits the full
-                # bookkeeping quartet for the residual; the explicit
-                # session-summary RequestLog below remains a separate
-                # entry (different semantics — cumulative session
-                # totals vs delta residual).
+                # bookkeeping quartet for the residual. This is the
+                # session's ONLY end-of-session RequestLog row: per-turn
+                # rows already carry the session's tokens as deltas, so a
+                # separate cumulative session-summary row would double-count
+                # Codex WS traffic in the recent-requests feed and every
+                # log-derived stat (savings, throughput).
+                from headroom.proxy.helpers import compute_turn_id
+
+                ws_messages_for_log: list[dict[str, Any]] = []
+                ws_input_for_log = ws_inner_for_telemetry.get("input")
+                ws_instructions_for_log = ws_inner_for_telemetry.get("instructions")
+                if isinstance(ws_instructions_for_log, str) and ws_instructions_for_log:
+                    ws_messages_for_log.append(
+                        {"role": "system", "content": ws_instructions_for_log}
+                    )
+                if isinstance(ws_input_for_log, str) and ws_input_for_log:
+                    ws_messages_for_log.append({"role": "user", "content": ws_input_for_log})
                 await self._record_request_outcome(
                     RequestOutcome(
                         request_id=request_id,
@@ -7108,44 +7134,6 @@ class OpenAIHandlerMixin:
                         transforms_applied=tuple(transforms_applied),
                         tags=ws_session_tags,
                         client=client,
-                    )
-                )
-                ws_recorded_overhead_ms_total = _current_ws_overhead_ms()
-                if final_ttfb_ms > 0:
-                    ws_recorded_ttfb_ms = True
-            if getattr(self, "logger", None) is not None:
-                from headroom.proxy.helpers import compute_turn_id
-                from headroom.proxy.models import RequestLog
-
-                ws_messages_for_log: list[dict[str, Any]] = []
-                ws_input_for_log = ws_inner_for_telemetry.get("input")
-                ws_instructions_for_log = ws_inner_for_telemetry.get("instructions")
-                if isinstance(ws_instructions_for_log, str) and ws_instructions_for_log:
-                    ws_messages_for_log.append(
-                        {"role": "system", "content": ws_instructions_for_log}
-                    )
-                if isinstance(ws_input_for_log, str) and ws_input_for_log:
-                    ws_messages_for_log.append({"role": "user", "content": ws_input_for_log})
-                self.logger.log(
-                    RequestLog(
-                        request_id=request_id,
-                        timestamp=datetime.now().isoformat(),
-                        provider="openai",
-                        model=model_name,
-                        input_tokens_original=ws_input_tokens_total + tokens_saved,
-                        input_tokens_optimized=ws_input_tokens_total,
-                        output_tokens=ws_output_tokens_total,
-                        tokens_saved=tokens_saved,
-                        savings_percent=(
-                            tokens_saved / (ws_input_tokens_total + tokens_saved) * 100
-                        )
-                        if ws_input_tokens_total + tokens_saved > 0
-                        else 0.0,
-                        optimization_latency_ms=_current_ws_overhead_ms(),
-                        total_latency_ms=ws_session_duration_ms,
-                        tags=ws_session_tags,
-                        cache_hit=False,
-                        transforms_applied=transforms_applied,
                         request_messages=ws_messages_for_log
                         if getattr(self.config, "log_full_messages", False)
                         else None,
@@ -7156,6 +7144,9 @@ class OpenAIHandlerMixin:
                         ),
                     )
                 )
+                ws_recorded_overhead_ms_total = _current_ws_overhead_ms()
+                if final_ttfb_ms > 0:
+                    ws_recorded_ttfb_ms = True
 
         except Exception as e:
             if "WebSocketDisconnect" in type(e).__name__:

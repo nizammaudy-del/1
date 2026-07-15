@@ -9,7 +9,11 @@ from typing import Any, Literal, cast
 import click
 
 from headroom import paths as _paths
-from headroom.providers.registry import resolve_api_overrides, resolve_api_targets
+from headroom.providers.registry import (
+    resolve_api_overrides,
+    resolve_api_targets,
+    resolve_extra_headers,
+)
 from headroom.proxy.modes import PROXY_MODE_CACHE, normalize_proxy_mode
 
 from .main import main
@@ -872,6 +876,22 @@ def dashboard(port: int, no_open: bool) -> None:
     "Default: /tmp/headroom-embed-{port}.sock. "
     "(env: HEADROOM_EMBEDDING_SERVER_SOCKET)",
 )
+@click.option(
+    "--anthropic-extra-headers",
+    default=None,
+    help=(
+        "JSON object of extra headers merged into (and overriding) headers forwarded to "
+        'the Anthropic endpoint, e.g. \'{"Api-Key": "..."}\' (env: ANTHROPIC_TARGET_API_HEADERS)'
+    ),
+)
+@click.option(
+    "--openai-extra-headers",
+    default=None,
+    help=(
+        "JSON object of extra headers merged into (and overriding) headers forwarded to "
+        "the OpenAI endpoint (env: OPENAI_TARGET_API_HEADERS)"
+    ),
+)
 @click.pass_context
 def proxy(
     ctx: click.Context,
@@ -943,6 +963,8 @@ def proxy(
     backend: str,
     anyllm_provider: str,
     anthropic_api_url: str | None,
+    anthropic_extra_headers: str | None,
+    openai_extra_headers: str | None,
     openai_api_url: str | None,
     gemini_api_url: str | None,
     cloudcode_api_url: str | None,
@@ -1047,6 +1069,17 @@ def proxy(
             sys.exit(1)
         os.environ["HEADROOM_INTERCEPT_ENABLED"] = "1"
 
+    try:
+        resolved_anthropic_extra_headers = resolve_extra_headers(
+            anthropic_extra_headers, "ANTHROPIC_TARGET_API_HEADERS"
+        )
+        resolved_openai_extra_headers = resolve_extra_headers(
+            openai_extra_headers, "OPENAI_TARGET_API_HEADERS"
+        )
+    except ValueError as exc:
+        click.secho(f"error: {exc}", fg="red", err=True)
+        sys.exit(1)
+
     provider_api_overrides = resolve_api_overrides(
         anthropic_api_url=anthropic_api_url,
         openai_api_url=openai_api_url,
@@ -1056,8 +1089,17 @@ def proxy(
         environ=os.environ,
     )
 
-    # Resolve anyllm provider: env var takes precedence over CLI default (matches argparse path)
-    effective_anyllm_provider = os.environ.get("HEADROOM_ANYLLM_PROVIDER") or anyllm_provider
+    # Resolve anyllm provider. An explicit --anyllm-provider flag always wins;
+    # otherwise honor HEADROOM_ANYLLM_PROVIDER, which the settings store may
+    # have exported into os.environ after Click parsed the option (so the
+    # already-parsed param can't see it).
+    _anyllm_source = click.get_current_context().get_parameter_source("anyllm_provider")
+    if _anyllm_source is click.core.ParameterSource.COMMANDLINE:
+        effective_anyllm_provider = anyllm_provider
+    else:
+        effective_anyllm_provider = (
+            os.environ.get("HEADROOM_ANYLLM_PROVIDER") or anyllm_provider
+        )
 
     # Resolve mode: CLI flag > env var > default. Default is CACHE (Headroom's
     # coding posture): delta-only compression at ~0 prefix-cache busts.
@@ -1110,6 +1152,8 @@ def proxy(
         host=host,
         port=port,
         anthropic_api_url=provider_api_overrides.anthropic,
+        anthropic_extra_headers=resolved_anthropic_extra_headers,
+        openai_extra_headers=resolved_openai_extra_headers,
         openai_api_url=provider_api_overrides.openai,
         gemini_api_url=provider_api_overrides.gemini,
         cloudcode_api_url=provider_api_overrides.cloudcode,

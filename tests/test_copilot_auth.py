@@ -413,6 +413,9 @@ def test_read_cached_oauth_token_falls_back_to_gh_cli(monkeypatch: pytest.Monkey
     monkeypatch.setattr(copilot_auth, "_read_windows_copilot_cli_oauth_token", lambda: None)
     monkeypatch.setattr(copilot_auth, "_read_macos_keychain_oauth_token", lambda: None)
     monkeypatch.setattr(copilot_auth, "_read_gh_cli_oauth_token", lambda: "gho-gh-cli")
+    # No cached token files — a developer machine may have a real
+    # ~/.config/github-copilot token that would win before the gh fallback.
+    monkeypatch.setattr(copilot_auth, "_resolve_token_file_paths", lambda: [])
 
     assert copilot_auth.read_cached_oauth_token() == "gho-gh-cli"
 

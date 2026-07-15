@@ -1594,7 +1594,13 @@ def test_wrap_codex_prepare_only_registers_serena_when_uvx_exists(
 
     with patch("headroom.cli.wrap._ensure_rtk_binary", return_value=None):
         with patch("headroom.cli.wrap.shutil.which", side_effect=fake_which):
-            result = runner.invoke(main, ["wrap", "codex", "--prepare-only"])
+            # tokensave is the primary code-graph compressor; Serena is only
+            # the backup, registered when tokensave is unavailable. Force it
+            # unavailable so this test deterministically exercises the Serena
+            # path regardless of whether a real tokensave binary was installed
+            # in the shared bin dir by an earlier test in the suite.
+            with patch("headroom.cli.wrap._ensure_tokensave_binary", return_value=None):
+                result = runner.invoke(main, ["wrap", "codex", "--prepare-only"])
 
     assert result.exit_code == 0, result.output
     content = config_file.read_text(encoding="utf-8")
