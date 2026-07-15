@@ -67,7 +67,7 @@ flate2 = "1"
 # crate depends on `ort`, which is already in our dep tree via
 # `fastembed`, so adding it doesn't pull a new ML runtime — both
 # crates share the ONNX Runtime singleton.
-magika = "1"
+magika = { version = "1", optional = true }
 # `unidiff` is the Stage-3d Tier-2 diff detector. We use the parser
 # itself as the "is this a diff?" oracle — anything that successfully
 # parses to ≥1 PatchedFile is a diff. The deterministic parser
@@ -132,15 +132,25 @@ http = "1"
 # runtime AVX2 guard could run (#1278). With `ort-load-dynamic` the
 # library is only dlopen'd at first use, where the AVX2 guard falls
 # back to the non-ONNX detection tiers.
-fastembed = { version = "5", default-features = false, features = [
+fastembed = { version = "5", default-features = false, optional = true, features = [
     "hf-hub-rustls-tls",
     "ort-load-dynamic",
     "image-models",
 ] }
-ort = { version = "2.0.0-rc.12", default-features = false, features = ["load-dynamic"] }
+ort = { version = "2.0.0-rc.12", default-features = false, optional = true, features = ["load-dynamic"] }
 
 [features]
-default = []
+# `ml` is ON by default, so a stock build is byte-for-byte what it was before:
+# the ONNX-backed transforms (fastembed embeddings, magika detection, the
+# smart-crusher ML path) are all compiled in. Turning it OFF
+# (`default-features = false`) drops `ort`/`fastembed`/`magika` from the tree
+# entirely, so a consumer that only uses the lexical path (`TextCrusher` /
+# BM25 relevance) builds with no ONNX Runtime at all — which is what lets that
+# consumer ship a fully-static musl binary. See the source `#[cfg(feature =
+# "ml")]` gates (TODO: the module + dispatch gating is the collaborative half
+# of this change — flagged in the PR).
+default = ["ml"]
+ml = ["dep:ort", "dep:fastembed", "dep:magika"]
 # Compile in the Redis CCR backend. Enable for multi-worker deployments
 # that want a shared CCR store with no sticky-session at the LB. The
 # SQLite backend (always compiled) is the production default for
