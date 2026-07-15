@@ -109,6 +109,10 @@ from headroom.providers.copilot import (
 )
 from headroom.providers.cursor import render_setup_lines as _render_cursor_setup_lines
 from headroom.providers.mistral_vibe import build_launch_env as _build_mistral_vibe_launch_env
+from headroom.providers.omp import build_launch_env as _build_omp_launch_env
+from headroom.providers.omp import inject_models_override as _inject_omp_models_override
+from headroom.providers.omp import models_yml_path as _omp_models_yml_path
+from headroom.providers.omp import restore_models_override as _restore_omp_models_override
 from headroom.providers.openclaw import (
     OPENCLAW_NPM_PACKAGE,
 )
@@ -3862,6 +3866,8 @@ def wrap() -> None:
         headroom wrap openhands           # OpenHands CLI
         headroom wrap openclaw            # OpenClaw plugin bootstrap
         headroom wrap opencode            # OpenCode CLI
+        headroom wrap omp                 # Oh My Pi CLI
+        headroom wrap zcode               # ZCode desktop app setup
 
     \b
     `wrap` vs `proxy`:
@@ -6753,6 +6759,142 @@ def unwrap_codex(port: int, no_stop_proxy: bool) -> None:
 
     click.echo()
     click.echo("✓ Codex is no longer routed through the Headroom proxy.")
+    if not no_stop_proxy and status != "noop":
+        _echo_unwrap_proxy_stop_status(_stop_local_proxy_for_unwrap(port), port)
+    click.echo()
+
+
+# =============================================================================
+# Oh My Pi (omp)
+# =============================================================================
+
+
+@wrap.command(context_settings={"ignore_unknown_options": True})
+@click.option(
+    "--port", "-p", default=8787, type=click.IntRange(1, 65535), help="Proxy port (default: 8787)"
+)
+@click.option(
+    "--no-context-tool",
+    "--no-rtk",
+    "no_rtk",
+    is_flag=True,
+    help="Skip CLI context-tool setup",
+)
+@click.option(
+    "--code-graph",
+    is_flag=True,
+    help="Enable code graph indexing via codebase-memory-mcp (optional)",
+)
+@click.option("--no-proxy", is_flag=True, help="Skip proxy startup (use existing proxy)")
+@click.option("--learn", is_flag=True, help="Enable live traffic learning")
+@click.option("--memory", is_flag=True, help="Enable persistent cross-session memory")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--prepare-only", is_flag=True, hidden=True)
+@click.argument("omp_args", nargs=-1, type=click.UNPROCESSED)
+def omp(
+    port: int,
+    no_rtk: bool,
+    code_graph: bool,
+    no_proxy: bool,
+    learn: bool,
+    memory: bool,
+    verbose: bool,
+    prepare_only: bool,
+    omp_args: tuple,
+) -> None:
+    """Launch Oh My Pi (omp) through Headroom proxy.
+
+    \b
+    Points omp's built-in `anthropic` provider at Headroom by injecting a
+    marker-fenced `providers.anthropic.baseUrl` override into
+    ~/.omp/agent/models.yml (pre-wrap file backed up byte-for-byte; undo with
+    `headroom unwrap omp`). omp resolves its Anthropic chat endpoint from
+    models.yml — ANTHROPIC_BASE_URL only affects its web-search helper — and a
+    same-ID override keeps omp's bundled model catalog and stored credentials.
+    omp's other providers (OpenAI-direct, Gemini, ...) keep their normal
+    endpoints; route those via your own custom provider in models.yml.
+
+    \b
+    Examples:
+        headroom wrap omp                       # Start proxy + context tool + omp
+        headroom wrap omp -- -p "fix the bug"   # omp in non-interactive print mode
+        headroom wrap omp -- --model opus       # Pick a model (fuzzy match)
+        headroom wrap omp --no-context-tool     # Skip CLI context-tool setup
+        headroom unwrap omp                     # Restore pre-wrap models.yml
+    """
+    # Setup CLI context tool for omp — it reads AGENTS.md from the project root.
+    if not no_rtk:
+        if _selected_context_tool() == _CONTEXT_TOOL_LEAN_CTX:
+            click.echo("  Setting up lean-ctx for omp...")
+            _setup_lean_ctx_agent("omp", verbose=verbose)
+        else:
+            click.echo("  Setting up rtk for omp...")
+            rtk_path = _ensure_rtk_binary(verbose=verbose)
+            if rtk_path:
+                agents_md = Path.cwd() / "AGENTS.md"
+                _inject_rtk_instructions(agents_md, verbose=verbose)
+
+    if prepare_only:
+        _inject_omp_models_override(port, _project_name_from_cwd())
+        return
+
+    omp_bin = shutil.which("omp")
+    if not omp_bin:
+        click.echo("Error: 'omp' not found in PATH.")
+        click.echo("Install Oh My Pi: npm install -g @oh-my-pi/pi-coding-agent")
+        raise SystemExit(1)
+
+    env, env_vars_display = _build_omp_launch_env(
+        port, os.environ, project=_project_name_from_cwd()
+    )
+
+    # Durable endpoint redirect (survives omp-spawned child sessions, which
+    # re-read models.yml rather than inheriting a parent env) — same durable
+    # wrap + backup + unwrap contract as the Codex config.toml injection.
+    models_file, _ = _inject_omp_models_override(port, _project_name_from_cwd())
+    click.echo(f"  models.yml override written: {models_file}")
+
+    _launch_tool(
+        binary=omp_bin,
+        args=omp_args,
+        env=env,
+        port=port,
+        no_proxy=no_proxy,
+        tool_label="OMP",
+        env_vars_display=env_vars_display,
+        learn=learn,
+        memory=memory,
+        agent_type="omp",
+        code_graph=code_graph,
+    )
+
+
+@unwrap.command("omp")
+@click.option(
+    "--port", "-p", default=8787, type=click.IntRange(1, 65535), help="Proxy port (default: 8787)"
+)
+@click.option("--no-stop-proxy", is_flag=True, help="Do not stop the local Headroom proxy")
+def unwrap_omp(port: int, no_stop_proxy: bool) -> None:
+    """Undo ``headroom wrap omp`` edits to omp's models.yml.
+
+    Restores the byte-for-byte pre-wrap backup when one exists, or removes the
+    wrap-created file when there was no models.yml before wrapping. A
+    models.yml the wrap does not manage is never touched. Also removes the
+    marker-fenced rtk guidance from the current project's AGENTS.md.
+    """
+    status = _restore_omp_models_override()
+    if status == "restored":
+        click.echo(f"  Restored pre-wrap models.yml from backup: {_omp_models_yml_path()}")
+    elif status == "removed":
+        click.echo(f"  Removed wrap-created models.yml: {_omp_models_yml_path()}")
+    else:
+        click.echo("  No Headroom-managed models.yml found — nothing to restore.")
+
+    if _remove_rtk_instructions(Path.cwd() / "AGENTS.md"):
+        click.echo("  Removed Headroom rtk instructions from AGENTS.md.")
+
+    click.echo()
+    click.echo("✓ omp is no longer routed through the Headroom proxy.")
     if not no_stop_proxy and status != "noop":
         _echo_unwrap_proxy_stop_status(_stop_local_proxy_for_unwrap(port), port)
     click.echo()
