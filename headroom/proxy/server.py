@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from ..backends.base import Backend
     from ..cache.compression_cache import CompressionCache
     from ..memory.tracker import MemoryTracker
+    from .capabilities import CapabilityReport
     from .outcome import RequestOutcome
 
 
@@ -111,6 +112,11 @@ from headroom.proxy import runtime_env
 from headroom.proxy.audit import is_auditable_path, record_admin_action
 from headroom.proxy.auth_mode import should_stamp_codex_client
 from headroom.proxy.background_compression import BackgroundCompressor
+from headroom.proxy.capabilities import (
+    build_capability_report,
+    enforce_detached_profile,
+    render_capability_matrix,
+)
 
 # =============================================================================
 # Extracted modules (re-exported for backward compatibility)
@@ -642,6 +648,7 @@ class HeadroomProxy(
     def __init__(self, config: ProxyConfig):
         self.config = config
         self.config.mode = normalize_proxy_mode(self.config.mode)
+        self.capabilities: CapabilityReport | None = None
         # Record process-wide stateless mode so module-level persisters
         # (output-savings recorder, etc.) can skip workspace writes.
         from headroom import paths as _hr_paths
@@ -2049,13 +2056,20 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
     from contextlib import asynccontextmanager
 
+    config = config or ProxyConfig()
+    capability_report = build_capability_report(config)
+    enforce_detached_profile(capability_report)
+    if capability_report.detached and capability_report.profile != "silent":
+        logger.info(
+            "event=detached_capability_matrix\n%s", render_capability_matrix(capability_report)
+        )
+
     # Always-on file logging to ~/.headroom/logs/ for `headroom perf` analysis.
     # Installed here (not at module import) so importing headroom.proxy.server
     # in tests or library contexts does not silently attach a RotatingFileHandler
     # to the user's live proxy.log.
-    _setup_file_logging()
-
-    config = config or ProxyConfig()
+    if not config.stateless:
+        _setup_file_logging()
 
     # Air-gap master switch. Propagate config.offline to the env so the
     # env-based egress predicates (telemetry, update check, license) all honor
@@ -2071,6 +2085,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         )
 
     proxy = HeadroomProxy(config)
+    proxy.capabilities = capability_report
+    proxy.metrics.set_feature_capabilities(capability_report.features)
 
     # cc-switch reconciler (opt-in: HEADROOM_CC_SWITCH_RECONCILE=1).
     # Keeps Headroom in the request path while cc-switch overwrites
@@ -2254,6 +2270,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     # request) sees an honest "missing" rather than a stale "loaded".
     app.state.rust_core_status = "missing"
     app.state.rust_core_error = None
+    app.state.capabilities = capability_report.to_dict()
 
     def _iso_utc_now() -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -2439,6 +2456,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             "uptime_seconds": _uptime_seconds(),
             "checks": checks,
             "runtime": _runtime_payload(),
+            "capabilities": capability_report.to_dict(),
             # Hotfix-A0: surface rust core load state so operators can alert
             # on `rust_core != "loaded"` (Finding #2).
             "rust_core": getattr(app.state, "rust_core_status", "missing"),
@@ -2478,6 +2496,8 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
                 "gemini_api_url": config.gemini_api_url,
                 "cloudcode_api_url": config.cloudcode_api_url,
                 "vertex_api_url": config.vertex_api_url,
+                "stateless": config.stateless,
+                "detached_profile": capability_report.profile,
                 "savings_profile": config.savings_profile,
                 "target_ratio": effective_target_ratio,
                 "target_savings_percent": (
@@ -2848,6 +2868,10 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
         # remain the unauthenticated probes for orchestration health.
         payload = _health_payload(include_config=_request_is_loopback(request))
         return JSONResponse(status_code=200, content=payload)
+
+    @app.get("/capabilities")
+    async def capabilities():
+        return JSONResponse(status_code=200, content=capability_report.to_dict())
 
     # Loopback-only debug introspection (Unit 5). A remote IP gets 404 —
     # debug endpoints are invisible to external scanners.
@@ -3580,6 +3604,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
             },
             "cli_filtering": cli_filtering_stats,
             "proxy_inbound": proxy.metrics.inbound_snapshot(),
+            "capabilities": capability_report.to_dict(),
             "cache": await proxy.cache.stats() if proxy.cache else None,
             "rate_limiter": await proxy.rate_limiter.stats() if proxy.rate_limiter else None,
             **recent_request_payload,
@@ -4396,6 +4421,11 @@ def _proxy_config_from_env() -> ProxyConfig:
         max_keepalive_connections=_get_env_int("HEADROOM_MAX_KEEPALIVE", 100),
         keepalive_expiry=_get_env_float("HEADROOM_KEEPALIVE_EXPIRY", 90.0),
         http2=_get_env_bool("HEADROOM_HTTP2", True),
+        stateless=_get_env_bool("HEADROOM_STATELESS", False),
+        detached_profile=cast(
+            Literal["strict", "lenient", "silent"],
+            _get_env_str("HEADROOM_DETACHED_PROFILE", "lenient").strip().lower(),
+        ),
         http_proxy=os.environ.get("HEADROOM_HTTP_PROXY") or None,
         periodic_toin_stats_enabled=_get_env_bool("HEADROOM_PERIODIC_TOIN_STATS", True),
         proxy_token=os.environ.get("HEADROOM_PROXY_TOKEN") or None,
@@ -4543,6 +4573,7 @@ def run_server(
 ║    /livez                   Process liveness                         ║
 ║    /readyz                  Traffic readiness                        ║
 ║    /health                  Aggregate health                         ║
+║    /capabilities            Detached-mode capability matrix          ║
 ║    /stats                   Detailed statistics                      ║
 ║    /metrics                 Prometheus metrics                       ║
 ║    /cache/clear             Clear response cache                     ║
@@ -4985,6 +5016,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable code-aware compression",
     )
+    parser.add_argument(
+        "--stateless",
+        action="store_true",
+        help="Disable filesystem writes and expose detached-mode capability degradations.",
+    )
+    parser.add_argument(
+        "--detached-profile",
+        choices=["strict", "lenient", "silent"],
+        default=None,
+        help="Detached-mode capability policy (env: HEADROOM_DETACHED_PROFILE).",
+    )
 
     args = parser.parse_args()
 
@@ -5005,6 +5047,7 @@ if __name__ == "__main__":
     optimize = env_optimize if not args.no_optimize else False
     cache_enabled = env_cache if not args.no_cache else False
     rate_limit_enabled = env_rate_limit if not args.no_rate_limit else False
+    stateless = args.stateless or _get_env_bool("HEADROOM_STATELESS", False)
     disable_kompress = args.disable_kompress or _get_env_bool("HEADROOM_DISABLE_KOMPRESS", False)
     disable_kompress_fallback = args.disable_kompress_fallback or _get_env_bool(
         "HEADROOM_DISABLE_KOMPRESS_FALLBACK", False
@@ -5099,6 +5142,14 @@ if __name__ == "__main__":
         mode=normalize_proxy_mode(_get_env_str("HEADROOM_MODE", PROXY_MODE_CACHE)),
         compress_user_messages=args.compress_user_messages
         or _get_env_bool("HEADROOM_COMPRESS_USER_MESSAGES", False),
+        stateless=stateless,
+        detached_profile=cast(
+            Literal["strict", "lenient", "silent"],
+            (
+                args.detached_profile
+                or _get_env_str("HEADROOM_DETACHED_PROFILE", "lenient").strip().lower()
+            ),
+        ),
         savings_profile=os.environ.get("HEADROOM_SAVINGS_PROFILE") or "coding",
         # Default 0.4 keep-ratio so the Kompress text (prose/code) path compresses
         # meaningfully out of the box; HEADROOM_TARGET_RATIO overrides.
