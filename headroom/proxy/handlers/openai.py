@@ -2504,10 +2504,15 @@ class OpenAIHandlerMixin:
         # uses `request.headers.get(...)` above; memory user-id reads
         # `request.headers` below. From this point on, `headers` is the
         # upstream-bound copy.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count_chat = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.openai_extra_headers)
         log_outbound_headers(
             forwarder="openai_chat_completions",
             stripped_count=_pre_strip_count_chat,
@@ -4011,10 +4016,15 @@ class OpenAIHandlerMixin:
         # PR-A5 (P5-49): strip internal x-headroom-* from upstream-bound
         # headers AFTER `_extract_tags` reads them. Memory user-id reads
         # `request.headers` below.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count_resp = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.openai_extra_headers)
         # Mirror the WS handler: never forward Codex's client-only lite header
         # upstream. OpenAI rejects newer Codex models when it leaks, and the HTTP
         # POST path (unlike the WS path) otherwise forwards request headers verbatim.
@@ -5230,6 +5240,9 @@ class OpenAIHandlerMixin:
             _upstream_connect_recorded = False
             _upstream_first_event_started: float | None = None
             upstream: Any = None
+            from headroom.proxy.helpers import merge_extra_headers
+
+            upstream_headers = merge_extra_headers(upstream_headers, self.config.openai_extra_headers)
 
             for ws_attempt in range(ws_connect_attempts):
                 try:

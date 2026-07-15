@@ -268,6 +268,8 @@ headroom proxy --mode cache
 | `--anyllm-provider` | `openai` | Provider name for `anyllm` |
 | `--anthropic-api-url` | unset | Custom Anthropic passthrough API URL |
 | `--openai-api-url` | unset | Custom OpenAI passthrough API URL |
+| `--anthropic-extra-headers` | unset | JSON object of extra headers merged into (and overriding) forwarded Anthropic requests |
+| `--openai-extra-headers` | unset | JSON object of extra headers merged into (and overriding) forwarded OpenAI requests |
 | `--gemini-api-url` | unset | Custom Gemini passthrough API URL |
 | `--region` | `us-west-2` | Cloud region for Bedrock / Vertex / related backends |
 | `--bedrock-region` | unset | Deprecated Bedrock region override |
@@ -278,7 +280,7 @@ headroom proxy --mode cache
 Notes:
 
 - `--learn` implies memory unless `--no-learn` is also set.
-- Proxy startup can also read environment variables such as `HEADROOM_HOST`, `HEADROOM_PORT`, `HEADROOM_BUDGET`, `HEADROOM_MODE`, `HEADROOM_ANYLLM_PROVIDER`, `HEADROOM_ANTHROPIC_PRE_UPSTREAM_CONCURRENCY`, `HEADROOM_ANTHROPIC_PRE_UPSTREAM_ACQUIRE_TIMEOUT_SECONDS`, `HEADROOM_REQUEST_TIMEOUT`, `HEADROOM_ANTHROPIC_PRE_UPSTREAM_MEMORY_CONTEXT_TIMEOUT_SECONDS`, `ANTHROPIC_TARGET_API_URL`, `OPENAI_TARGET_API_URL`, and `GEMINI_TARGET_API_URL`. CLI flags take precedence over environment variables.
+- Proxy startup can also read environment variables such as `HEADROOM_HOST`, `HEADROOM_PORT`, `HEADROOM_BUDGET`, `HEADROOM_MODE`, `HEADROOM_ANYLLM_PROVIDER`, `HEADROOM_ANTHROPIC_PRE_UPSTREAM_CONCURRENCY`, `HEADROOM_ANTHROPIC_PRE_UPSTREAM_ACQUIRE_TIMEOUT_SECONDS`, `HEADROOM_REQUEST_TIMEOUT`, `HEADROOM_ANTHROPIC_PRE_UPSTREAM_MEMORY_CONTEXT_TIMEOUT_SECONDS`, `ANTHROPIC_TARGET_API_URL`, `OPENAI_TARGET_API_URL`, `GEMINI_TARGET_API_URL`, `ANTHROPIC_TARGET_API_HEADERS`, and `OPENAI_TARGET_API_HEADERS`. CLI flags take precedence over environment variables.
 - The default Anthropic pre-upstream cap is intentionally conservative for CPU/ONNX-heavy work. Larger containers may want to raise it after checking the resolved runtime values on `/readyz` or `/debug/warmup`.
 
 See also: [Proxy Server](proxy.md), [Configuration](configuration.md)

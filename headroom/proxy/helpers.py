@@ -1507,6 +1507,24 @@ def _strip_internal_headers(headers: dict[str, str]) -> dict[str, str]:
     return strip_internal_headers(headers, mode=get_strip_internal_headers_mode())
 
 
+def merge_extra_headers(headers: dict[str, str], extra: dict[str, str] | None) -> dict[str, str]:
+    """Merge configured extra headers into ``headers``, overriding same-named keys.
+
+    ``extra`` comes from ``ProxyConfig.anthropic_extra_headers``/``openai_extra_headers``
+    (settings-panel/CLI-configured, for gateways that need one extra header alongside the
+    client's own auth). Returns ``headers`` unchanged (no copy) when nothing is configured.
+    """
+    if not extra:
+        return headers
+    # HTTP header names are case-insensitive: drop any existing key that
+    # case-insensitively collides with a configured extra so the extra wins.
+    # A plain {**headers, **extra} would emit both casings upstream.
+    lowered = {k.lower() for k in extra}
+    merged = {k: v for k, v in headers.items() if k.lower() not in lowered}
+    merged.update(extra)
+    return merged
+
+
 def log_outbound_headers(
     *,
     forwarder: str,

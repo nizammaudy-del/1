@@ -798,10 +798,15 @@ class AnthropicHandlerMixin:
             # uses `request.headers.get(...)` directly above; memory user-id
             # is read from `request.headers` below if needed. From this
             # point on, `headers` is the upstream-bound copy.
-            from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+            from headroom.proxy.helpers import (
+                _strip_internal_headers,
+                log_outbound_headers,
+                merge_extra_headers,
+            )
 
             _pre_strip_count = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
             headers = _strip_internal_headers(headers)
+            headers = merge_extra_headers(headers, self.config.anthropic_extra_headers)
             log_outbound_headers(
                 forwarder="anthropic_messages",
                 stripped_count=_pre_strip_count
@@ -2776,8 +2781,11 @@ class AnthropicHandlerMixin:
 
                                 # Sanitize headers (redact API keys)
                                 safe_headers = {}
+                                _sensitive_header_names = {"x-api-key", "authorization"} | {
+                                    k.lower() for k in (self.config.anthropic_extra_headers or {})
+                                }
                                 for k, v in headers.items():
-                                    if k.lower() in ("x-api-key", "authorization"):
+                                    if k.lower() in _sensitive_header_names:
                                         safe_headers[k] = v[:12] + "..." if v else ""
                                     else:
                                         safe_headers[k] = v
@@ -3519,10 +3527,15 @@ class AnthropicHandlerMixin:
         client = classify_client(headers, default="claude")
         tags = extract_tags(headers)
         # PR-A5 (P5-49): strip internal x-headroom-* before forwarding upstream.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.anthropic_extra_headers)
         log_outbound_headers(
             forwarder="anthropic_batch",
             stripped_count=_pre_strip_count,
@@ -3798,10 +3811,15 @@ class AnthropicHandlerMixin:
         client = classify_client(headers, default="claude")
         tags = extract_tags(headers)
         # PR-A5 (P5-49): strip internal x-headroom-* before forwarding upstream.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.anthropic_extra_headers)
         log_outbound_headers(
             forwarder="anthropic_batch_passthrough",
             stripped_count=_pre_strip_count,
@@ -3929,10 +3947,15 @@ class AnthropicHandlerMixin:
         client = classify_client(headers, default="claude")
         tags = extract_tags(headers)
         # PR-A5 (P5-49): strip internal x-headroom-* before forwarding upstream.
-        from headroom.proxy.helpers import _strip_internal_headers, log_outbound_headers
+        from headroom.proxy.helpers import (
+            _strip_internal_headers,
+            log_outbound_headers,
+            merge_extra_headers,
+        )
 
         _pre_strip_count = sum(1 for k in headers if k.lower().startswith("x-headroom-"))
         headers = _strip_internal_headers(headers)
+        headers = merge_extra_headers(headers, self.config.anthropic_extra_headers)
         log_outbound_headers(
             forwarder="anthropic_batch_results",
             stripped_count=_pre_strip_count,
