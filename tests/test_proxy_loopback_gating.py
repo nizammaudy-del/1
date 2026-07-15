@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
 
 from headroom.cache.backends import InMemoryBackend
 from headroom.cache.compression_store import get_compression_store, reset_compression_store
-from headroom.proxy.server import ProxyConfig, create_app
 from headroom.proxy.loopback_guard import is_ip_literal_host_header
+from headroom.proxy.server import ProxyConfig, create_app
 
 GATED = [
     ("get", "/transformations/feed"),
@@ -242,9 +242,7 @@ def test_dashboard_client_cidr_grants_stats_metadata_to_same_origin_browser(
         client=("100.90.0.5", 12345),
     )
 
-    payload = client.get(
-        "/stats", params={"cached": int(cached)}, headers=headers
-    ).json()
+    payload = client.get("/stats", params={"cached": int(cached)}, headers=headers).json()
 
     assert "recent_requests" in payload
     assert "request_logs" in payload
@@ -269,9 +267,7 @@ def test_dashboard_client_cidr_hides_stats_metadata_from_cross_origin_browser(
         client=("100.90.0.5", 12345),
     )
 
-    response = client.get(
-        "/stats", params={"cached": int(cached)}, headers=headers
-    )
+    response = client.get("/stats", params={"cached": int(cached)}, headers=headers)
     payload = response.json()
 
     assert response.status_code == 200
@@ -305,17 +301,21 @@ def test_dashboard_client_cidr_only_uses_forwarded_proto_from_trusted_gateway(
     assert "request_logs" in payload
     assert "config" in payload
 
-    spoofed = TestClient(
-        _make_app(),
-        base_url="http://100.82.0.2:8787",
-        client=("100.90.0.5", 12345),
-    ).get(
-        "/stats",
-        headers={
-            "origin": "https://100.82.0.2:8787",
-            "x-forwarded-proto": "https",
-        },
-    ).json()
+    spoofed = (
+        TestClient(
+            _make_app(),
+            base_url="http://100.82.0.2:8787",
+            client=("100.90.0.5", 12345),
+        )
+        .get(
+            "/stats",
+            headers={
+                "origin": "https://100.82.0.2:8787",
+                "x-forwarded-proto": "https",
+            },
+        )
+        .json()
+    )
 
     assert "recent_requests" not in spoofed
     assert "request_logs" not in spoofed
@@ -328,16 +328,24 @@ def test_dashboard_client_cidr_rejects_unlisted_clients_and_hostname_hosts(
     monkeypatch.setenv("HEADROOM_PROXY_TRUSTED_DASHBOARD_CLIENT_CIDRS", "100.90.0.5/32")
     app = _make_app()
 
-    unlisted = TestClient(
-        app,
-        base_url="http://100.82.0.2:8787",
-        client=("100.90.0.6", 12345),
-    ).get("/stats").json()
-    hostname = TestClient(
-        app,
-        base_url="http://100.82.0.2:8787",
-        client=("100.90.0.5", 12345),
-    ).get("/stats", headers={"host": "attacker.example"}).json()
+    unlisted = (
+        TestClient(
+            app,
+            base_url="http://100.82.0.2:8787",
+            client=("100.90.0.6", 12345),
+        )
+        .get("/stats")
+        .json()
+    )
+    hostname = (
+        TestClient(
+            app,
+            base_url="http://100.82.0.2:8787",
+            client=("100.90.0.5", 12345),
+        )
+        .get("/stats", headers={"host": "attacker.example"})
+        .json()
+    )
 
     for payload in (unlisted, hostname):
         assert "recent_requests" not in payload
@@ -352,16 +360,24 @@ def test_dashboard_client_cidr_only_accepts_forwarded_client_from_trusted_gatewa
     monkeypatch.setenv("HEADROOM_PROXY_TRUSTED_GATEWAY_CIDRS", "172.18.0.0/16")
     app = _make_app()
 
-    trusted = TestClient(
-        app,
-        base_url="http://100.82.0.2:8787",
-        client=("172.18.0.1", 12345),
-    ).get("/stats", headers={"x-forwarded-for": "100.90.0.5"}).json()
-    forged = TestClient(
-        app,
-        base_url="http://100.82.0.2:8787",
-        client=("198.51.100.10", 12345),
-    ).get("/stats", headers={"x-forwarded-for": "100.90.0.5"}).json()
+    trusted = (
+        TestClient(
+            app,
+            base_url="http://100.82.0.2:8787",
+            client=("172.18.0.1", 12345),
+        )
+        .get("/stats", headers={"x-forwarded-for": "100.90.0.5"})
+        .json()
+    )
+    forged = (
+        TestClient(
+            app,
+            base_url="http://100.82.0.2:8787",
+            client=("198.51.100.10", 12345),
+        )
+        .get("/stats", headers={"x-forwarded-for": "100.90.0.5"})
+        .json()
+    )
 
     assert "recent_requests" in trusted
     assert "recent_requests" not in forged
@@ -372,11 +388,15 @@ def test_dashboard_client_cidr_normalizes_ipv4_mapped_ipv6(
 ) -> None:
     monkeypatch.setenv("HEADROOM_PROXY_TRUSTED_DASHBOARD_CLIENT_CIDRS", "100.90.0.0/24")
     app = _make_app()
-    payload = TestClient(
-        app,
-        base_url="http://100.82.0.2:8787",
-        client=("::ffff:100.90.0.5", 12345),
-    ).get("/stats").json()
+    payload = (
+        TestClient(
+            app,
+            base_url="http://100.82.0.2:8787",
+            client=("::ffff:100.90.0.5", 12345),
+        )
+        .get("/stats")
+        .json()
+    )
 
     assert "recent_requests" in payload
 

@@ -2040,9 +2040,7 @@ def _request_is_loopback(request: Request) -> bool:
 
 def _request_can_view_dashboard_metadata(
     request: Request,
-    trusted_dashboard_client_cidrs: tuple[
-        ipaddress.IPv4Network | ipaddress.IPv6Network, ...
-    ],
+    trusted_dashboard_client_cidrs: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...],
 ) -> bool:
     """Authorize sensitive ``/stats`` metadata without widening admin access."""
     if _request_is_loopback(request):
@@ -2072,9 +2070,7 @@ def _request_can_view_dashboard_metadata(
     )
 
 
-def _request_has_same_origin_or_no_provenance(
-    request: Request, host_header: str
-) -> bool:
+def _request_has_same_origin_or_no_provenance(request: Request, host_header: str) -> bool:
     """Accept no browser provenance, otherwise require same-origin headers."""
 
     from headroom.proxy.forwarded_headers import trusted_forwarded_headers
@@ -3045,7 +3041,7 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
 
     def _is_recent_request_number(value: Any) -> bool:
         return (
-            isinstance(value, (int, float))
+            isinstance(value, int | float)
             and not isinstance(value, bool)
             and math.isfinite(float(value))
         )
