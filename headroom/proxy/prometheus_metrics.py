@@ -636,6 +636,7 @@ class PrometheusMetrics:
         cache_write_1h_tokens: int = 0,
         uncached_input_tokens: int = 0,
         attempted_input_tokens: int = 0,
+        output_tokens_saved: int = 0,
         project: str | None = None,
         client: str | None = None,
     ):
@@ -744,6 +745,7 @@ class PrometheusMetrics:
                 uncached_input_tokens=uncached_input_tokens,
                 total_input_tokens=total_input_tokens,
                 total_input_cost_usd=total_input_cost_usd,
+                output_tokens_saved=output_tokens_saved,
             )
 
             # Also append to the durable, multi-process savings ledger so

@@ -38,6 +38,8 @@ DEFAULT_MAX_HISTORY_AGE_DAYS = 365
 DEFAULT_MAX_RESPONSE_HISTORY_POINTS = 500
 DEFAULT_DISPLAY_SESSION_INACTIVITY_MINUTES = 60
 DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN = 3.0 / 1_000_000
+# Blended output price used only when litellm cannot price the model.
+DEFAULT_FALLBACK_OUTPUT_COST_PER_TOKEN = 15.0 / 1_000_000
 
 LITELLM_AVAILABLE = importlib.util.find_spec("litellm") is not None
 litellm: Any | None = None
@@ -220,6 +222,28 @@ def _estimate_compression_savings_usd(model: str, tokens_saved: int) -> float:
         return float(tokens_saved) * float(DEFAULT_FALLBACK_INPUT_COST_PER_TOKEN)
 
 
+def _estimate_output_savings_usd(model: str, tokens_saved: int) -> float:
+    """Estimate output-shaping savings in USD from saved *output* tokens.
+
+    Mirrors ``_estimate_compression_savings_usd`` but prices at the model's
+    output rate, since the shaper reduces generated (output) tokens, not input.
+    """
+    litellm = _get_litellm_module()
+    if tokens_saved <= 0:
+        return 0.0
+    if litellm is None:
+        return float(tokens_saved) * float(DEFAULT_FALLBACK_OUTPUT_COST_PER_TOKEN)
+    try:
+        resolved = _resolve_litellm_model(model)
+        info = litellm.model_cost.get(resolved, {})
+        output_cost_per_token = info.get("output_cost_per_token")
+        if not output_cost_per_token:
+            raise RuntimeError("output cost unavailable")
+        return float(tokens_saved) * float(output_cost_per_token)
+    except Exception:
+        return float(tokens_saved) * float(DEFAULT_FALLBACK_OUTPUT_COST_PER_TOKEN)
+
+
 def _estimate_cache_savings_usd(model: str, cache_read_tokens: int) -> float:
     """Estimate cache-read savings in USD — the discount delta vs list price.
 
@@ -328,6 +352,8 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
     cache_savings_usd = 0.0
     total_input_tokens = 0
     total_input_cost_usd = 0.0
+    output_tokens_saved = 0
+    output_savings_usd = 0.0
     provider = PROVIDER_UNKNOWN
     model = MODEL_UNKNOWN
 
@@ -342,6 +368,8 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
         cache_savings_usd = _coerce_float(entry.get("cache_savings_usd"))
         total_input_tokens = _coerce_int(entry.get("total_input_tokens"))
         total_input_cost_usd = _coerce_float(entry.get("total_input_cost_usd"))
+        output_tokens_saved = _coerce_int(entry.get("output_tokens_saved"))
+        output_savings_usd = _coerce_float(entry.get("output_savings_usd"))
         provider = _normalize_provider(entry.get("provider"))
         model = _normalize_model(entry.get("model"))
     elif isinstance(entry, list | tuple) and len(entry) >= 2:
@@ -369,6 +397,8 @@ def _normalize_history_entry(entry: Any) -> dict[str, Any] | None:
         "cache_savings_usd": round(cache_savings_usd, 6),
         "total_input_tokens": total_input_tokens,
         "total_input_cost_usd": round(total_input_cost_usd, 6),
+        "output_tokens_saved": output_tokens_saved,
+        "output_savings_usd": round(output_savings_usd, 6),
     }
 
 
@@ -627,6 +657,7 @@ class SavingsTracker:
         model: str,
         input_tokens: int,
         tokens_saved: int,
+        output_tokens_saved: int = 0,
         provider: str | None = None,
         project: str | None = None,
         cache_read_tokens: int = 0,
@@ -650,6 +681,8 @@ class SavingsTracker:
         delta_tokens_saved = _coerce_int(tokens_saved)
         delta_input_tokens = _coerce_int(input_tokens)
         delta_savings_usd = _estimate_compression_savings_usd(model, delta_tokens_saved)
+        delta_output_tokens_saved = max(_coerce_int(output_tokens_saved), 0)
+        delta_output_savings_usd = _estimate_output_savings_usd(model, delta_output_tokens_saved)
         delta_cache_read_tokens = _coerce_int(cache_read_tokens)
         delta_cache_savings_usd = _estimate_cache_savings_usd(model, delta_cache_read_tokens)
         delta_input_cost_usd = _estimate_input_cost_usd(
@@ -704,6 +737,13 @@ class SavingsTracker:
             )
             lifetime["total_input_tokens"] = next_total_input_tokens
             lifetime["total_input_cost_usd"] = next_total_input_cost_usd
+            lifetime["output_tokens_saved"] = (
+                lifetime.get("output_tokens_saved", 0) + delta_output_tokens_saved
+            )
+            lifetime["output_savings_usd"] = round(
+                lifetime.get("output_savings_usd", 0.0) + delta_output_savings_usd,
+                6,
+            )
 
             session = self._state["display_session"]
             last_activity = _parse_timestamp(session.get("last_activity_at"))
@@ -764,8 +804,12 @@ class SavingsTracker:
             # not lossy-compressed, to keep Bedrock's prompt cache warm. Gating
             # on tokens_saved alone silently dropped every history point on
             # those requests even though real cache-read savings occurred.
-            # Append whenever either mechanism produced a saving.
-            if delta_tokens_saved > 0 or delta_cache_read_tokens > 0:
+            # Append whenever any savings mechanism produced a saving.
+            if (
+                delta_tokens_saved > 0
+                or delta_cache_read_tokens > 0
+                or delta_output_tokens_saved > 0
+            ):
                 self._state["history"].append(
                     {
                         "timestamp": _to_utc_iso(timestamp_dt),
@@ -777,6 +821,8 @@ class SavingsTracker:
                         "cache_savings_usd": lifetime["cache_savings_usd"],
                         "total_input_tokens": lifetime["total_input_tokens"],
                         "total_input_cost_usd": lifetime["total_input_cost_usd"],
+                        "output_tokens_saved": lifetime.get("output_tokens_saved", 0),
+                        "output_savings_usd": lifetime.get("output_savings_usd", 0.0),
                     }
                 )
                 self._trim_history_locked(reference_time=timestamp_dt)
@@ -974,6 +1020,8 @@ class SavingsTracker:
                 "total_input_tokens",
                 "total_input_cost_usd_delta",
                 "total_input_cost_usd",
+                "output_tokens_saved_delta",
+                "output_savings_usd_delta",
             ]
 
         buffer = StringIO()
@@ -1313,6 +1361,8 @@ class SavingsTracker:
         prev_total_usd = 0.0
         prev_total_input_tokens = 0
         prev_total_input_cost_usd = 0.0
+        prev_output_tokens = 0
+        prev_output_usd = 0.0
 
         for point in history:
             timestamp = _parse_timestamp(point["timestamp"])
@@ -1326,6 +1376,8 @@ class SavingsTracker:
             total_usd = _coerce_float(point.get("compression_savings_usd"))
             total_input_tokens = _coerce_int(point.get("total_input_tokens"))
             total_input_cost_usd = _coerce_float(point.get("total_input_cost_usd"))
+            total_output_tokens = _coerce_int(point.get("output_tokens_saved"))
+            total_output_usd = _coerce_float(point.get("output_savings_usd"))
             delta_tokens = max(total_tokens_saved - prev_total_tokens, 0)
             delta_usd = max(total_usd - prev_total_usd, 0.0)
             delta_input_tokens = max(total_input_tokens - prev_total_input_tokens, 0)
@@ -1334,10 +1386,15 @@ class SavingsTracker:
                 0.0,
             )
 
+            delta_output_tokens = max(total_output_tokens - prev_output_tokens, 0)
+            delta_output_usd = max(total_output_usd - prev_output_usd, 0.0)
+
             prev_total_tokens = total_tokens_saved
             prev_total_usd = total_usd
             prev_total_input_tokens = total_input_tokens
             prev_total_input_cost_usd = total_input_cost_usd
+            prev_output_tokens = total_output_tokens
+            prev_output_usd = total_output_usd
 
             entry = aggregated.setdefault(
                 bucket_key,
@@ -1351,6 +1408,8 @@ class SavingsTracker:
                     "total_input_tokens": total_input_tokens,
                     "total_input_cost_usd_delta": 0.0,
                     "total_input_cost_usd": total_input_cost_usd,
+                    "output_tokens_saved_delta": 0,
+                    "output_savings_usd_delta": 0.0,
                     "by_provider": {},
                     "by_model": {},
                 },
@@ -1369,6 +1428,11 @@ class SavingsTracker:
             entry["compression_savings_usd"] = round(total_usd, 6)
             entry["total_input_tokens"] = total_input_tokens
             entry["total_input_cost_usd"] = round(total_input_cost_usd, 6)
+            entry["output_tokens_saved_delta"] += delta_output_tokens
+            entry["output_savings_usd_delta"] = round(
+                entry["output_savings_usd_delta"] + delta_output_usd,
+                6,
+            )
 
             # Attribute this checkpoint's delta to the provider that produced
             # it. Each checkpoint comes from a single request, so its delta is
